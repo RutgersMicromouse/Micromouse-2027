@@ -14,6 +14,9 @@ public:
     MazeGraph& graph;
     RobotState  state;
 
+    // Hand Passed Values
+    bool isEncoder = false;
+
 
     // (x,y) -> node_id for loop detection
     std::unordered_map<int, int> positionMap; // key = x*100+y

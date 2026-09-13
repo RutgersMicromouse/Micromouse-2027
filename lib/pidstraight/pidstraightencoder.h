@@ -12,8 +12,7 @@
 #include "ioexpander.h"
 
 // use PID to drive forward in mm
-void pidForward(double distance, bool isEncoder = false); 
-void pidReverse(double distance);
+void pidEncoderForward(double distance);
 
 // left wall following logic
 /*  
@@ -28,4 +27,3 @@ void pidReverse(double distance);
 // use PID to drive straight infinitely until condition
 // if (!wallLeft() || wallFront()) { return };
 
-void pidForwardLeftWallFollow();
