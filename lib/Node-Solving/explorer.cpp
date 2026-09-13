@@ -76,7 +76,7 @@ void Explorer::explore() {
         Direction original_heading = state.heading;
         //smart_delay(1000);
         if (front() >= 10) {
-            pidForward(50);
+            pidForward(50, isEncoder);
             smart_delay(25);
             pidReverse(40);
         }
@@ -103,7 +103,7 @@ void Explorer::explore() {
     // Direction original2_heading = state.heading;
     // //smart_delay(1000);
     // if (front() >= 10) {
-    //     pidForward(50);
+    //     pidForward(50, isEncoder);
     //     delay(3000);
     //     pidReverse(40);
     // }
@@ -291,7 +291,7 @@ void Explorer::executeInstructions(const std::vector<Instruction>& instructions)
         switch (instr.type) {
             case InstructionType::FORWARD:
                 Serial.println("Reverse (Forward)");
-                pidForward(instr.value * CELL_SIZE_MM);
+                pidForward(instr.value * CELL_SIZE_MM, isEncoder);
                 updatePosition(instr.value);
                 break;
             
@@ -321,7 +321,7 @@ void Explorer::executeInstructions(const std::vector<Instruction>& instructions)
 std::vector<Instruction> Explorer::condenseInstructions(std::vector<Instruction> slow_instructions) {
     std::vector<Instruction> faster_instructions;
     int move;
-    double value = 0;
+    int value = 0;
     for(auto it = slow_instructions.rbegin(); it != slow_instructions.rend(); ++it) {
         Instruction instr = *it;
 
@@ -329,9 +329,9 @@ std::vector<Instruction> Explorer::condenseInstructions(std::vector<Instruction>
             case InstructionType::ROTATE_RELATIVE:
                 if (move == 1) {
                     faster_instructions.push_back({
-                    InstructionType::FORWARD,
-                    (value * 1.10)
-                });
+                        InstructionType::FORWARD,
+                        value
+                    });
                 }
                 faster_instructions.push_back({
                     InstructionType::ROTATE_RELATIVE,
@@ -349,9 +349,9 @@ std::vector<Instruction> Explorer::condenseInstructions(std::vector<Instruction>
     }
     if (move == 1) {
         faster_instructions.push_back({
-        InstructionType::FORWARD,
-        (value)
-    });
+            InstructionType::FORWARD,
+            value
+        });
     }
     return faster_instructions;
 }
@@ -383,7 +383,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
             Serial.print("Left: "); Serial.print(left()); Serial.print(" | Front: "); Serial.print(front()); Serial.print(" | Right: "); Serial.println(right());
             if (front() > WALL_THRESHOLD_MM) {
                 Serial.println("Move forward");
-                pidForward(CELL_SIZE_MM);
+                pidForward(CELL_SIZE_MM, isEncoder);
                 updatePosition(1);
                 steps++;
                 out_instructions.push_back({InstructionType::FORWARD, 1});
@@ -392,7 +392,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
                 pidRotate(-90);
                 state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 1) % 4);
                 smart_delay(25);
-                pidForward(CELL_SIZE_MM);
+                pidForward(CELL_SIZE_MM, isEncoder);
                 updatePosition(1);
                 steps+=2;
                 out_instructions.push_back({InstructionType::ROTATE_RELATIVE, -90});
@@ -402,7 +402,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
                 pidRotate(90);
                 state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4);
                 smart_delay(25);
-                pidForward(CELL_SIZE_MM);
+                pidForward(CELL_SIZE_MM, isEncoder);
                 updatePosition(1);
                 steps+=2;
                 out_instructions.push_back({InstructionType::ROTATE_RELATIVE, 90});
@@ -445,7 +445,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
         // if (isDeadEnd && beacon_node_id == 0) {
         //     //smart_delay(1000);
         //     if (front() >= 60) {
-        //         pidForward(50);
+        //         pidForward(50, isEncoder);
         //         beaconDetected = true;
         //         digitalWrite(LED_BUILTIN, HIGH);
         //         //smart_delay(3000);

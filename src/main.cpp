@@ -12,6 +12,9 @@
 MazeGraph graph;
 Explorer explorer(graph);
 
+int maxHandStates = 3;
+int maxHandDistance = 100;
+
 
 void distancePrint() {
     Serial.print(left());
@@ -55,31 +58,40 @@ void setup() {
     while(true) {
         double t_current = micros();
         int front_dist = front();
-        if(front_dist < 100 && front_dist > 0 && t_current > t_buffer + 300000UL) {
+        if(front_dist < maxHandDistance && front_dist > 0 && t_current > t_buffer + 300000UL) {
             t_buffer = micros();
-            handState = front_dist / 50 + 1;
+            handState = front_dist / (maxHandDistance / maxHandStates) + 1;
             Serial.print("Hand Found: "); Serial.println(handState);
         }
 
-        if ((front_dist > 140) && handState > 0) {
+        if ((front_dist > maxHandDistance * 1.5) && handState > 0) {
             digitalWrite(LED_BUILTIN, HIGH);
+
+            delay (250);
+            if (handState == maxHandStates) {
+                return;
+            } else if (handState == 2) {
+                explorer.isEncoder = true;
+                pidForward(50, true);
+                delay(2000);
+                Serial.println("First Done");
+            } else if (handState == 1) {
+                pidForward(50);
+            }
             break;
         }
 
         int ledState = ((long)(t_current - t_start) / 100000) % (1 + handState);
         
 
-        if (ledState == 0) {
-            digitalWrite(LED_BUILTIN, LOW);
-        } else {
+        if (ledState != 0 || ledState == maxHandStates) {
             digitalWrite(LED_BUILTIN, HIGH);
+        } else {
+            digitalWrite(LED_BUILTIN, LOW);
         }
     }
-    delay(250);
     
     // Center in starting cell
-    pidForward(50);
-    
     digitalWrite(LED_BUILTIN, HIGH);
     smart_delay(25); // let robot settle before loop starts
 
@@ -93,26 +105,24 @@ void setup() {
             Serial.print(" cost: "); Serial.println(edge.cost);
         }
     }
-
-    
 }
 
-// int numbers[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-// int check = 0; 
+int numbers[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+int check = 0; 
 
 void loop() {
-    // int sum = 0;
+    int sum = 0;
 
-    // for (int i = 0; i < 10; ++i) {
-    //     sum += numbers[i];
-    // }
+    for (int i = 0; i < 10; ++i) {
+        sum += numbers[i];
+    }
 
 
 
-    // Serial.print("Left: "); Serial.print(left()); Serial.print(" | Front: "); Serial.print(sum / 10); Serial.print(" | Right: "); Serial.println(right()); 
-    // numbers[check] = front();
-    // check++;
-    // if (check > 9) {
-    //     check = 0;
-    // }
+    Serial.print("Left: "); Serial.print(left()); Serial.print(" | Front: "); Serial.print(sum / 10); Serial.print(" | Right: "); Serial.println(right()); 
+    numbers[check] = front();
+    check++;
+    if (check > 9) {
+        check = 0;
+    }
 }

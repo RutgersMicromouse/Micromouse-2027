@@ -1,47 +1,53 @@
 #include "pidstraight.h"
+#include "pidstraightencoder.h"
 #include "tof.h"
 
-// Variable Settings
-double max_speed = 200;
+namespace {
+    // Variable Settings
+    double max_speed = 100;
 
-// PID for distance
-double Kp_dist  = 6.0;
-double Ki_dist  = 0;
-double Kd_dist  = 0;
-
-
-// PID for angle offset
-double Kp_angle = 4.1;
-double Ki_angle = 0;
-double Kd_angle = 0.4;
-
-// PID for lateral correction
-double Kp_lat = 2.00;
-double Kd_lat = 0.4;
-
-double lat_error_old = 0;
-
-// TOF
-// double Kp_wall = 0.5;
-// double Kd_wall = 0.0;
+    // PID for distance
+    double Kp_dist  = 6.0;
+    double Ki_dist  = 0;
+    double Kd_dist  = 0;
 
 
-double identity_diag[8] = {0.0, 45, 90, 135, 180, 225, 270, 315};
+    // PID for angle offset
+    double Kp_angle = 4.1;
+    double Ki_angle = 0;
+    double Kd_angle = 0.4;
+
+    // PID for lateral correction
+    double Kp_lat = 2.00;
+    double Kd_lat = 0.4;
+
+    double lat_error_old = 0;
+
+    // TOF
+    // double Kp_wall = 0.5;
+    // double Kd_wall = 0.0;
 
 
-// const double CELL_MM = 180.0;
+    double identity_diag[8] = {0.0, 45, 90, 135, 180, 225, 270, 315};
 
 
-// Opening detection window
-// const double OPENING_START_MM = 55;
-// const double OPENING_END_MM   = 120;
+    // const double CELL_MM = 180.0;
 
 
-// Edge detection threshold
-// const double OPENING_DELTA = 25;
+    // Opening detection window
+    // const double OPENING_START_MM = 55;
+    // const double OPENING_END_MM   = 120;
 
 
-void pidForward(double distance) {
+    // Edge detection threshold
+    // const double OPENING_DELTA = 25;
+}
+
+void pidForward(double distance, bool isEncoder = false) {
+    if (isEncoder) {
+        pidEncoderForward(distance);
+        return;
+    }
 
     int goal_front_distance = -1;
     int possible_front_distance = front();
@@ -100,7 +106,7 @@ void pidForward(double distance) {
 
                     int distance_cells = (unnormalized_goal_front_distance + 90) / 180;
 
-                    goal_front_distance = distance_cells * 180 + 50;
+                    goal_front_distance = distance_cells * 180 + 48;
 
                     Serial.print("Stop: "); Serial.println(goal_front_distance);
                 }
