@@ -119,3 +119,11 @@
 
 #define NOMINAL_CENTER_L45     850      // Expected reading for FL45 when centered
 #define NOMINAL_CENTER_R45     850      // Expected reading for FR45 when centered
+
+// ==============================================================================
+// 6. WIRELESS TELEMETRY & BLE DEBUGGING
+// ==============================================================================
+
+#define ENABLE_BLE_DEBUG       1        // 1 = Nordic UART Service active, 0 = RF disabled for competition
+#define BLE_DEVICE_NAME        "Antigrav-Mouse"
+

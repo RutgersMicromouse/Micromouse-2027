@@ -15,6 +15,7 @@
 
 #include "control/motion_controller.h"
 #include "navigation/navigator.h"
+#include "hardware/ble_debug.h"
 
 // ==============================================================================
 // GLOBAL HARDWARE & CONTROL INSTANCES
@@ -49,6 +50,37 @@ void flashRGB(bool red, bool green, bool blue, int count = 3, int delay_ms = 150
         delay(delay_ms);
         setRGB(false, false, false);
         delay(delay_ms);
+    }
+}
+
+void updateModeLED(uint8_t mode) {
+    switch (mode) {
+        case 0: setRGB(false, true, false); break; // Green (Search / Exploration)
+        case 1: setRGB(true, true, false);  break; // Yellow (Hybrid Auto-Optimizer)
+        case 2: setRGB(false, true, true);  break; // Cyan (Pure Diagonal Specialist)
+        case 3: setRGB(true, false, true);  break; // Magenta (Pure Continuous Curves)
+        default: setRGB(false, false, true); break; // Blue (Ready / Idle)
+    }
+}
+
+void launchRunForMode(uint8_t mode, const IRReadings& ir_snapshot) {
+    if (mode == 0) {
+        Serial.println("[UI] CONFIRMED -> Launching Search Run!");
+        g_navigator->startSearchRun();
+        g_navigator->step(ir_snapshot);
+        updateModeLED(0);
+    } else if (mode == 1) {
+        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: ⚡ HYBRID AUTO-OPTIMIZER!");
+        g_navigator->startSpeedRun(SPEEDRUN_HYBRID_AUTO);
+        updateModeLED(1);
+    } else if (mode == 2) {
+        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: 📐 PURE DIAGONAL SPECIALIST!");
+        g_navigator->startSpeedRun(SPEEDRUN_DIAGONALS_ONLY);
+        updateModeLED(2);
+    } else {
+        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: 🏎 PURE CONTINUOUS CURVES!");
+        g_navigator->startSpeedRun(SPEEDRUN_CURVES_ONLY);
+        updateModeLED(3);
     }
 }
 
@@ -140,20 +172,17 @@ void navigationTask(void* pvParameters) {
 #ifdef FORCE_PURE_DIAGONALS
     uint8_t selected_mode = 2; // Dedicated Pure Diagonal Specialist
     Serial.println("[UI] Default Profile: PURE DIAGONAL SPECIALIST (Cyan LED)");
-    setRGB(false, true, true);  // Cyan
 #elif defined(FORCE_PURE_CURVES)
     uint8_t selected_mode = 3; // Dedicated Pure Continuous Curves
     Serial.println("[UI] Default Profile: PURE CONTINUOUS CURVES (Magenta LED)");
-    setRGB(true, false, true);  // Magenta
 #elif defined(FORCE_HYBRID_AUTO)
     uint8_t selected_mode = 1; // Dedicated Hybrid Auto-Optimizer
     Serial.println("[UI] Default Profile: HYBRID AUTO-OPTIMIZER (Yellow LED)");
-    setRGB(true, true, false);  // Yellow
 #else
     uint8_t selected_mode = 0; // Search Run
     Serial.println("[UI] Default Profile: SEARCH / EXPLORATION RUN (Green LED)");
-    setRGB(false, true, false); // Green
 #endif
+    updateModeLED(selected_mode);
 
     uint32_t confirm_press_start = 0;
 
@@ -173,6 +202,78 @@ void navigationTask(void* pvParameters) {
                               cur_nav_state == NAV_STATE_RETURNING_TO_START ||
                               cur_nav_state == NAV_STATE_SPEED_RUNNING);
 
+#if ENABLE_BLE_DEBUG
+        // --- BLUETOOTH LOW ENERGY REMOTE CONTROL COMMANDS ---
+        if (BLEDebug::hasCommand()) {
+            String ble_cmd = BLEDebug::readCommand();
+            ble_cmd.toLowerCase();
+            Serial.printf("[BLE CMD] Received: '%s'\n", ble_cmd.c_str());
+
+            if (ble_cmd == "stop" || ble_cmd == "estop" || ble_cmd == "halt") {
+                Serial.println("[BLE] 🛑 Emergency stop triggered via Bluetooth!");
+                g_navigator->stop();
+                flashRGB(true, false, false, 3, 100);
+                updateModeLED(selected_mode);
+                BLEDebug::println("ACK: STOPPED");
+            } else if (ble_cmd == "start" || ble_cmd == "go") {
+                if (!is_active_run) {
+                    launchRunForMode(selected_mode, ir_snapshot);
+                    BLEDebug::printf("ACK: STARTED MODE %d\n", selected_mode);
+                } else {
+                    BLEDebug::println("ERR: ALREADY_RUNNING");
+                }
+            } else if (ble_cmd == "mode 0" || ble_cmd == "search") {
+                selected_mode = 0;
+                updateModeLED(selected_mode);
+                BLEDebug::println("ACK: MODE 0 (SEARCH - Green LED)");
+            } else if (ble_cmd == "mode 1" || ble_cmd == "hybrid") {
+                selected_mode = 1;
+                updateModeLED(selected_mode);
+                BLEDebug::println("ACK: MODE 1 (HYBRID - Yellow LED)");
+            } else if (ble_cmd == "mode 2" || ble_cmd == "diag") {
+                selected_mode = 2;
+                updateModeLED(selected_mode);
+                BLEDebug::println("ACK: MODE 2 (DIAGONALS - Cyan LED)");
+            } else if (ble_cmd == "mode 3" || ble_cmd == "curve") {
+                selected_mode = 3;
+                updateModeLED(selected_mode);
+                BLEDebug::println("ACK: MODE 3 (CURVES - Magenta LED)");
+            } else if (ble_cmd == "calib") {
+                if (!is_active_run) {
+                    BLEDebug::println("Starting in-cell IR auto-calibration...");
+                    setRGB(true, true, false);
+                    bool ok = g_ir_sensors.calibrateInCell(200);
+                    if (ok) {
+                        flashRGB(false, true, false, 3, 120);
+                        BLEDebug::println("ACK: CALIB SUCCESS");
+                    } else {
+                        flashRGB(true, false, false, 3, 120);
+                        BLEDebug::println("ERR: CALIB FAILED");
+                    }
+                    updateModeLED(selected_mode);
+                } else {
+                    BLEDebug::println("ERR: CANNOT_CALIB_WHILE_RUNNING");
+                }
+            } else if (ble_cmd == "clear") {
+                if (!is_active_run) {
+                    g_navigator->clearSavedMaze();
+                    flashRGB(false, false, true, 4, 100);
+                    updateModeLED(selected_mode);
+                    BLEDebug::println("ACK: MAZE CLEARED");
+                } else {
+                    BLEDebug::println("ERR: CANNOT_CLEAR_WHILE_RUNNING");
+                }
+            } else if (ble_cmd == "status") {
+                float vbat = readBatteryVoltage();
+                BLEDebug::printf("STATUS: VBat=%.2fV | Mode=%d | State=%d\n", vbat, selected_mode, (int)cur_nav_state);
+            } else if (ble_cmd == "help") {
+                BLEDebug::println("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status");
+            } else {
+                BLEDebug::printf("ERR: UNKNOWN COMMAND '%s' (type 'help')\n", ble_cmd.c_str());
+            }
+        }
+#endif
+
         // --- MANUAL E-STOP / PAUSE WHILE MOVING ---
         // Tapping either button while the robot is running immediately brakes and halts navigation
         if (is_active_run) {
@@ -181,7 +282,7 @@ void navigationTask(void* pvParameters) {
                 Serial.println("\n[UI] 🛑 USER EMERGENCY STOP ENGAGED! Halting robot.");
                 g_navigator->stop();
                 flashRGB(true, false, false, 3, 100); // Flash Red
-                setRGB(false, false, true);           // Blue = Idle Ready
+                updateModeLED(selected_mode);
                 last_state_btn = curr_state_btn;
                 last_confirm_btn = curr_confirm_btn;
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -204,22 +305,16 @@ void navigationTask(void* pvParameters) {
                     } else {
                         flashRGB(true, false, false, 3, 120); // Flash Red = Failed
                     }
-                    setRGB(false, false, true); // Return to Blue
+                    updateModeLED(selected_mode);
                 } else if (hold_time > 50) {
                     // Short press: cycle between 4 operating modes
                     selected_mode = (selected_mode + 1) % 4;
-                    if (selected_mode == 0) {
-                        Serial.println("[UI] Selected Mode [0]: SEARCH / EXPLORATION RUN");
-                        setRGB(false, true, false); // Green
-                    } else if (selected_mode == 1) {
-                        Serial.println("[UI] Selected Mode [1]: SPEED RUN -> ⚡ HYBRID AUTO-OPTIMIZER (Curves vs Diagonals)");
-                        setRGB(true, true, false);  // Yellow
-                    } else if (selected_mode == 2) {
-                        Serial.println("[UI] Selected Mode [2]: SPEED RUN -> 📐 PURE DIAGONAL SPECIALIST (Maximum Diagonal Sprints)");
-                        setRGB(false, true, true);  // Cyan
-                    } else {
-                        Serial.println("[UI] Selected Mode [3]: SPEED RUN -> 🏎 PURE CONTINUOUS CURVES (Zero Diagonals)");
-                        setRGB(true, false, true);  // Magenta
+                    updateModeLED(selected_mode);
+                    switch (selected_mode) {
+                        case 0: Serial.println("[UI] Selected Mode [0]: SEARCH / EXPLORATION RUN (Green LED)"); break;
+                        case 1: Serial.println("[UI] Selected Mode [1]: SPEED RUN -> ⚡ HYBRID AUTO-OPTIMIZER (Yellow LED)"); break;
+                        case 2: Serial.println("[UI] Selected Mode [2]: SPEED RUN -> 📐 PURE DIAGONAL SPECIALIST (Cyan LED)"); break;
+                        case 3: Serial.println("[UI] Selected Mode [3]: SPEED RUN -> 🏎 PURE CONTINUOUS CURVES (Magenta LED)"); break;
                     }
                 }
             }
@@ -234,27 +329,10 @@ void navigationTask(void* pvParameters) {
                     Serial.println("\n[UI] Long Press CONFIRM Detected -> Clearing Saved Flash Maze!");
                     g_navigator->clearSavedMaze();
                     flashRGB(false, false, true, 4, 100); // Flash Blue = Cleared
-                    setRGB(false, false, true);
+                    updateModeLED(selected_mode);
                 } else if (confirm_hold > 50) {
                     // Short press CONFIRM: Launch selected run
-                    if (selected_mode == 0) {
-                        Serial.println("[UI] CONFIRMED -> Launching Search Run!");
-                        g_navigator->startSearchRun();
-                        g_navigator->step(ir_snapshot);
-                        setRGB(false, true, false);     // Solid Green
-                    } else if (selected_mode == 1) {
-                        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: ⚡ HYBRID AUTO-OPTIMIZER!");
-                        g_navigator->startSpeedRun(SPEEDRUN_HYBRID_AUTO);
-                        setRGB(true, true, false);      // Solid Yellow
-                    } else if (selected_mode == 2) {
-                        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: 📐 PURE DIAGONAL SPECIALIST!");
-                        g_navigator->startSpeedRun(SPEEDRUN_DIAGONALS_ONLY);
-                        setRGB(false, true, true);       // Solid Cyan
-                    } else {
-                        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: 🏎 PURE CONTINUOUS CURVES!");
-                        g_navigator->startSpeedRun(SPEEDRUN_CURVES_ONLY);
-                        setRGB(true, false, true);       // Solid Magenta
-                    }
+                    launchRunForMode(selected_mode, ir_snapshot);
                 }
             }
         }
@@ -294,6 +372,21 @@ void telemetryTask(void* pvParameters) {
                           snap.ir.wall_left ? 'L' : '.',
                           snap.ir.wall_front ? 'F' : '.',
                           snap.ir.wall_right ? 'R' : '.');
+
+#if ENABLE_BLE_DEBUG
+            if (BLEDebug::isConnected()) {
+                char ble_buf[128];
+                snprintf(ble_buf, sizeof(ble_buf), "V:%.2fV|Spd:%.0f|Hdg:%.1f|IR:%d,%d,%d,%d,%d,%d|W:[%c%c%c]",
+                         snap.vbat_volts,
+                         snap.encoders.linear_speed_mm_s,
+                         snap.imu.heading_deg,
+                         snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
+                         snap.ir.wall_left ? 'L' : '.',
+                         snap.ir.wall_front ? 'F' : '.',
+                         snap.ir.wall_right ? 'R' : '.');
+                BLEDebug::println(ble_buf);
+            }
+#endif
         }
     }
 }
@@ -382,13 +475,16 @@ void setup() {
 
     Serial.println("[READY] Antigravitieee is Ready!");
     Serial.printf("[BATT] Computer Battery Voltage: %4.2f V\n", readBatteryVoltage());
+#if ENABLE_BLE_DEBUG
+    Serial.println("[INIT] Starting Nordic UART Bluetooth Low Energy Service...");
+    BLEDebug::begin(BLE_DEVICE_NAME);
+#endif
     Serial.println("[UI] Controls Guide:");
-    Serial.println("  - When Moving: Press EITHER button -> Instant Emergency Stop");
-    Serial.println("  - Short Press STATE (GPIO42)      -> Cycle Mode (Search / Speed Run Profiles)");
-    Serial.println("  - Long Press STATE (>2 sec)       -> In-Cell IR Auto-Calibration (Saves to Flash)");
-    Serial.println("  - Short Press CONFIRM (GPIO41)    -> Launch Selected Run");
-    Serial.println("  - Long Press CONFIRM (>2.5 sec)   -> Clear Saved Maze from Flash NVS");
-    setRGB(false, false, true); // Blue = Ready
+    Serial.println("  - When Moving: Press EITHER button or send 'stop' over BLE -> Instant Emergency Stop");
+    Serial.println("  - Short Press STATE (GPIO42) or send 'search/hybrid/diag/curve' -> Cycle Mode");
+    Serial.println("  - Long Press STATE (>2 sec) or send 'calib' -> In-Cell IR Auto-Calibration");
+    Serial.println("  - Short Press CONFIRM (GPIO41) or send 'start' -> Launch Selected Run");
+    Serial.println("  - Long Press CONFIRM (>2.5 sec) or send 'clear' -> Clear Saved Maze from Flash");
 }
 
 void loop() {
