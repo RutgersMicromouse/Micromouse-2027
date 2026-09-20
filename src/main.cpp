@@ -16,6 +16,7 @@
 #include "control/motion_controller.h"
 #include "navigation/navigator.h"
 #include "hardware/ble_debug.h"
+#include "hardware/wifi_ota.h"
 
 // ==============================================================================
 // GLOBAL HARDWARE & CONTROL INSTANCES
@@ -81,6 +82,91 @@ void launchRunForMode(uint8_t mode, const IRReadings& ir_snapshot) {
         Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: 🏎 PURE CONTINUOUS CURVES!");
         g_navigator->startSpeedRun(SPEEDRUN_CURVES_ONLY);
         updateModeLED(3);
+    }
+}
+
+// Unified wireless command dispatcher (BLE + Wi-Fi Telnet)
+void handleRemoteCommand(String cmd, uint8_t& selected_mode, bool is_active_run, const IRReadings& ir_snapshot, bool is_ble) {
+    cmd.toLowerCase();
+    cmd.trim();
+    Serial.printf("[%s CMD] Received: '%s'\n", is_ble ? "BLE" : "TELNET", cmd.c_str());
+
+    auto reply = [&](const char* msg) {
+#if ENABLE_BLE_DEBUG
+        if (is_ble) BLEDebug::println(msg);
+#endif
+#if ENABLE_WIFI_OTA
+        if (!is_ble) WifiOTA::println(msg);
+#endif
+    };
+
+    if (cmd == "stop" || cmd == "estop" || cmd == "halt") {
+        Serial.println("[REMOTE] 🛑 Emergency stop triggered wirelessly!");
+        g_navigator->stop();
+        flashRGB(true, false, false, 3, 100);
+        updateModeLED(selected_mode);
+        reply("ACK: STOPPED");
+    } else if (cmd == "start" || cmd == "go") {
+        if (!is_active_run) {
+            launchRunForMode(selected_mode, ir_snapshot);
+            char buf[32];
+            snprintf(buf, sizeof(buf), "ACK: STARTED MODE %d", selected_mode);
+            reply(buf);
+        } else {
+            reply("ERR: ALREADY_RUNNING");
+        }
+    } else if (cmd == "mode 0" || cmd == "search") {
+        selected_mode = 0;
+        updateModeLED(selected_mode);
+        reply("ACK: MODE 0 (SEARCH - Green LED)");
+    } else if (cmd == "mode 1" || cmd == "hybrid") {
+        selected_mode = 1;
+        updateModeLED(selected_mode);
+        reply("ACK: MODE 1 (HYBRID - Yellow LED)");
+    } else if (cmd == "mode 2" || cmd == "diag") {
+        selected_mode = 2;
+        updateModeLED(selected_mode);
+        reply("ACK: MODE 2 (DIAGONALS - Cyan LED)");
+    } else if (cmd == "mode 3" || cmd == "curve") {
+        selected_mode = 3;
+        updateModeLED(selected_mode);
+        reply("ACK: MODE 3 (CURVES - Magenta LED)");
+    } else if (cmd == "calib") {
+        if (!is_active_run) {
+            reply("Starting in-cell IR auto-calibration...");
+            setRGB(true, true, false);
+            bool ok = g_ir_sensors.calibrateInCell(200);
+            if (ok) {
+                flashRGB(false, true, false, 3, 120);
+                reply("ACK: CALIB SUCCESS");
+            } else {
+                flashRGB(true, false, false, 3, 120);
+                reply("ERR: CALIB FAILED");
+            }
+            updateModeLED(selected_mode);
+        } else {
+            reply("ERR: CANNOT_CALIB_WHILE_RUNNING");
+        }
+    } else if (cmd == "clear") {
+        if (!is_active_run) {
+            g_navigator->clearSavedMaze();
+            flashRGB(false, false, true, 4, 100);
+            updateModeLED(selected_mode);
+            reply("ACK: MAZE CLEARED");
+        } else {
+            reply("ERR: CANNOT_CLEAR_WHILE_RUNNING");
+        }
+    } else if (cmd == "status") {
+        float vbat = (float)analogReadMilliVolts(PIN_VSENSE_COM) / 1000.0f * BATTERY_DIVIDER_RATIO;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "STATUS: VBat=%.2fV | Mode=%d | State=%d", vbat, selected_mode, (int)g_navigator->getState());
+        reply(buf);
+    } else if (cmd == "help") {
+        reply("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status");
+    } else {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "ERR: UNKNOWN COMMAND '%s' (type 'help')", cmd.c_str());
+        reply(buf);
     }
 }
 
@@ -205,72 +291,15 @@ void navigationTask(void* pvParameters) {
 #if ENABLE_BLE_DEBUG
         // --- BLUETOOTH LOW ENERGY REMOTE CONTROL COMMANDS ---
         if (BLEDebug::hasCommand()) {
-            String ble_cmd = BLEDebug::readCommand();
-            ble_cmd.toLowerCase();
-            Serial.printf("[BLE CMD] Received: '%s'\n", ble_cmd.c_str());
+            handleRemoteCommand(BLEDebug::readCommand(), selected_mode, is_active_run, ir_snapshot, true);
+        }
+#endif
 
-            if (ble_cmd == "stop" || ble_cmd == "estop" || ble_cmd == "halt") {
-                Serial.println("[BLE] 🛑 Emergency stop triggered via Bluetooth!");
-                g_navigator->stop();
-                flashRGB(true, false, false, 3, 100);
-                updateModeLED(selected_mode);
-                BLEDebug::println("ACK: STOPPED");
-            } else if (ble_cmd == "start" || ble_cmd == "go") {
-                if (!is_active_run) {
-                    launchRunForMode(selected_mode, ir_snapshot);
-                    BLEDebug::printf("ACK: STARTED MODE %d\n", selected_mode);
-                } else {
-                    BLEDebug::println("ERR: ALREADY_RUNNING");
-                }
-            } else if (ble_cmd == "mode 0" || ble_cmd == "search") {
-                selected_mode = 0;
-                updateModeLED(selected_mode);
-                BLEDebug::println("ACK: MODE 0 (SEARCH - Green LED)");
-            } else if (ble_cmd == "mode 1" || ble_cmd == "hybrid") {
-                selected_mode = 1;
-                updateModeLED(selected_mode);
-                BLEDebug::println("ACK: MODE 1 (HYBRID - Yellow LED)");
-            } else if (ble_cmd == "mode 2" || ble_cmd == "diag") {
-                selected_mode = 2;
-                updateModeLED(selected_mode);
-                BLEDebug::println("ACK: MODE 2 (DIAGONALS - Cyan LED)");
-            } else if (ble_cmd == "mode 3" || ble_cmd == "curve") {
-                selected_mode = 3;
-                updateModeLED(selected_mode);
-                BLEDebug::println("ACK: MODE 3 (CURVES - Magenta LED)");
-            } else if (ble_cmd == "calib") {
-                if (!is_active_run) {
-                    BLEDebug::println("Starting in-cell IR auto-calibration...");
-                    setRGB(true, true, false);
-                    bool ok = g_ir_sensors.calibrateInCell(200);
-                    if (ok) {
-                        flashRGB(false, true, false, 3, 120);
-                        BLEDebug::println("ACK: CALIB SUCCESS");
-                    } else {
-                        flashRGB(true, false, false, 3, 120);
-                        BLEDebug::println("ERR: CALIB FAILED");
-                    }
-                    updateModeLED(selected_mode);
-                } else {
-                    BLEDebug::println("ERR: CANNOT_CALIB_WHILE_RUNNING");
-                }
-            } else if (ble_cmd == "clear") {
-                if (!is_active_run) {
-                    g_navigator->clearSavedMaze();
-                    flashRGB(false, false, true, 4, 100);
-                    updateModeLED(selected_mode);
-                    BLEDebug::println("ACK: MAZE CLEARED");
-                } else {
-                    BLEDebug::println("ERR: CANNOT_CLEAR_WHILE_RUNNING");
-                }
-            } else if (ble_cmd == "status") {
-                float vbat = readBatteryVoltage();
-                BLEDebug::printf("STATUS: VBat=%.2fV | Mode=%d | State=%d\n", vbat, selected_mode, (int)cur_nav_state);
-            } else if (ble_cmd == "help") {
-                BLEDebug::println("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status");
-            } else {
-                BLEDebug::printf("ERR: UNKNOWN COMMAND '%s' (type 'help')\n", ble_cmd.c_str());
-            }
+#if ENABLE_WIFI_OTA
+        // --- WI-FI OTA UPDATE HANDLER & TELNET CONSOLE COMMANDS ---
+        WifiOTA::handle();
+        if (WifiOTA::hasCommand()) {
+            handleRemoteCommand(WifiOTA::readCommand(), selected_mode, is_active_run, ir_snapshot, false);
         }
 #endif
 
@@ -387,6 +416,23 @@ void telemetryTask(void* pvParameters) {
                 BLEDebug::println(ble_buf);
             }
 #endif
+
+#if ENABLE_WIFI_OTA
+            if (WifiOTA::isClientConnected()) {
+                char telnet_buf[160];
+                snprintf(telnet_buf, sizeof(telnet_buf), "[TEL] VBat: %4.2fV | Enc: L=%6.1f R=%6.1f mm | Spd: %5.1f mm/s | Hdg: %5.1f° | IR: L90=%3d L45=%3d FL=%3d FR=%3d R45=%3d R90=%3d | Walls: [%c%c%c]\r\n",
+                         snap.vbat_volts,
+                         snap.encoders.left_dist_mm,
+                         snap.encoders.right_dist_mm,
+                         snap.encoders.linear_speed_mm_s,
+                         snap.imu.heading_deg,
+                         snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
+                         snap.ir.wall_left ? 'L' : '.',
+                         snap.ir.wall_front ? 'F' : '.',
+                         snap.ir.wall_right ? 'R' : '.');
+                WifiOTA::print(telnet_buf);
+            }
+#endif
         }
     }
 }
@@ -479,12 +525,16 @@ void setup() {
     Serial.println("[INIT] Starting Nordic UART Bluetooth Low Energy Service...");
     BLEDebug::begin(BLE_DEVICE_NAME);
 #endif
+#if ENABLE_WIFI_OTA
+    Serial.println("[INIT] Starting Wi-Fi Wireless Hotspot, ArduinoOTA & Telnet Console...");
+    WifiOTA::begin();
+#endif
     Serial.println("[UI] Controls Guide:");
-    Serial.println("  - When Moving: Press EITHER button or send 'stop' over BLE -> Instant Emergency Stop");
-    Serial.println("  - Short Press STATE (GPIO42) or send 'search/hybrid/diag/curve' -> Cycle Mode");
-    Serial.println("  - Long Press STATE (>2 sec) or send 'calib' -> In-Cell IR Auto-Calibration");
-    Serial.println("  - Short Press CONFIRM (GPIO41) or send 'start' -> Launch Selected Run");
-    Serial.println("  - Long Press CONFIRM (>2.5 sec) or send 'clear' -> Clear Saved Maze from Flash");
+    Serial.println("  - When Moving: Press EITHER button or send 'stop' over BLE/Telnet -> Instant Emergency Stop");
+    Serial.println("  - Short Press STATE (GPIO42) or send 'search/hybrid/diag/curve'   -> Cycle Mode");
+    Serial.println("  - Long Press STATE (>2 sec) or send 'calib'                       -> In-Cell IR Auto-Calibration");
+    Serial.println("  - Short Press CONFIRM (GPIO41) or send 'start'                    -> Launch Selected Run");
+    Serial.println("  - Long Press CONFIRM (>2.5 sec) or send 'clear'                   -> Clear Saved Maze from Flash");
 }
 
 void loop() {

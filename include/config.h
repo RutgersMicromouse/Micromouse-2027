@@ -127,3 +127,16 @@
 #define ENABLE_BLE_DEBUG       1        // 1 = Nordic UART Service active, 0 = RF disabled for competition
 #define BLE_DEVICE_NAME        "Antigrav-Mouse"
 
+// ==============================================================================
+// 7. WIRELESS OTA (OVER-THE-AIR) FLASHING & TELNET DEBUGGING
+// ==============================================================================
+
+#define ENABLE_WIFI_OTA        1        // 1 = Wi-Fi OTA & Telnet Active, 0 = RF disabled for competition
+#define WIFI_AP_MODE           1        // 1 = Broadcast Hotspot (SoftAP), 0 = Connect to Local Wi-Fi (STA)
+#define WIFI_AP_SSID           "Antigrav-Mouse"
+#define WIFI_AP_PASS           "micromouse"   // WPA2 Passphrase (minimum 8 chars)
+#define WIFI_STA_SSID          "YourHomeWiFi" // Used if WIFI_AP_MODE = 0
+#define WIFI_STA_PASS          "YourPassword" // Used if WIFI_AP_MODE = 0
+#define OTA_PORT               3232
+#define TELNET_PORT            23
+
