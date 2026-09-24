@@ -11,7 +11,7 @@ public:
     void begin();
 
     // Call inside control loop
-    void update(float dt_seconds, float encoder_yaw_rate = 0.0f);
+    void update(float dt_seconds, float encoder_yaw_rate = 0.0f, float linear_speed_mm_s = 0.0f);
 
     IMUState getState() const;
     float getHeadingDeg() const;

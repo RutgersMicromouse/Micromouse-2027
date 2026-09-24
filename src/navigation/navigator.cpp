@@ -60,6 +60,10 @@ void Navigator::startReturnRun() {
     Serial.printf("[NAV] Center reached at (%d, %d)! Planning FASTEST DIAGONAL RETURN to (0,0)...\n",
                   pose_.cell_x, pose_.cell_y);
 
+    // Auto-save discovered maze grid to NVS Flash immediately upon reaching the Goal!
+    maze_.saveToNVS();
+    Serial.println("[NAV] Maze successfully auto-saved to Flash NVS at Goal!");
+
     static Coordinate path[256];
     uint8_t path_len = dijkstra_.findFastestPathToStart(pose_.cell_x, pose_.cell_y, pose_.current_dir, path, 255);
 
@@ -462,8 +466,20 @@ void Navigator::step(const IRReadings& ir) {
             pose_.cell_y = next_cell.y;
 
         } else if (diff == 2) {
-            // --- DEAD END: 180° TURNAROUND ---
-            sendMotionCommand(ACTION_TURN_AROUND_180, 180.0f, turn_speed, turn_accel, false, 0.0f, 0.0f);
+            // --- DEAD END: OPTICAL FRONT SQUARING + 180° TURNAROUND ---
+            Serial.printf("[NAV] Dead end reached at (%d, %d). Squaring optically against front wall...\n",
+                          pose_.cell_x, pose_.cell_y);
+
+            sub_cmd_count_ = 0;
+            sub_cmd_idx_ = 0;
+
+            // 1. Optically square against front wall using FL and FR sensor symmetry
+            sub_cmd_queue_[sub_cmd_count_++] = { ACTION_SQUARE_FRONT_OPTICAL, 0.0f, 0.0f, 0.0f, false };
+
+            // 2. High-precision 180° turnaround from a freshly zeroed heading baseline
+            sub_cmd_queue_[sub_cmd_count_++] = { ACTION_TURN_AROUND_180, 180.0f, turn_speed, turn_accel, false };
+
+            processSubcommandQueue();
             pose_.current_dir = d0;
             current_search_speed_ = 0.0f;
         }

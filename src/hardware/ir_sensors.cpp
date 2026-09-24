@@ -79,6 +79,10 @@ void IRSensors::update() {
     readings_.post_edge_left  = (prev_l90_ > thresh_l90_) && (readings_.left_90 < thresh_l90_) && ((int32_t)prev_l90_ - readings_.left_90 > 60);
     readings_.post_edge_right = (prev_r90_ > thresh_r90_) && (readings_.right_90 < thresh_r90_) && ((int32_t)prev_r90_ - readings_.right_90 > 60);
 
+    // Pillar / post rising edge (entering a wall from an opening)
+    readings_.post_rising_left  = (prev_l90_ < thresh_l90_) && (readings_.left_90 > thresh_l90_) && ((int32_t)readings_.left_90 - prev_l90_ > 60);
+    readings_.post_rising_right = (prev_r90_ < thresh_r90_) && (readings_.right_90 > thresh_r90_) && ((int32_t)readings_.right_90 - prev_r90_ > 60);
+
     prev_l90_ = readings_.left_90;
     prev_r90_ = readings_.right_90;
 
@@ -87,23 +91,55 @@ void IRSensors::update() {
     readings_.wall_right = (readings_.right_90 > thresh_r90_);
     readings_.wall_front = (readings_.front_center > thresh_front_);
 
-    // Centering error calculation with front-wall suppression
-    bool has_both_diagonals = (readings_.left_45 > thresh_l45_) && (readings_.right_45 > thresh_r45_);
+    // Opening anticipation: 90° sensor detects wall present beside the robot,
+    // but 45° lookahead sensor drops significantly below nominal, indicating the wall terminates ahead.
+    const uint16_t opening_cutoff_l = (uint16_t)(nominal_center_l45_ * 0.65f);
+    const uint16_t opening_cutoff_r = (uint16_t)(nominal_center_r45_ * 0.65f);
 
+    readings_.opening_left  = readings_.wall_left  && (readings_.left_45  < opening_cutoff_l);
+    readings_.opening_right = readings_.wall_right && (readings_.right_45 < opening_cutoff_r);
+
+    // Determine reliable wall guides for steering
+    bool valid_left_guide  = readings_.wall_left  && !readings_.opening_left  && (readings_.left_45  > thresh_l45_);
+    bool valid_right_guide = readings_.wall_right && !readings_.opening_right && (readings_.right_45 > thresh_r45_);
+    bool both_diagonals_funnel = (readings_.left_45 > thresh_l45_) && (readings_.right_45 > thresh_r45_);
+
+    // Centering error calculation with opening anticipation & dynamic front-wall approach squaring
     if (readings_.wall_front) {
-        // Suppress 45° steering trim when approaching a front wall
-        readings_.centering_error = 0.0f;
-    } else if (has_both_diagonals) {
+        // Approaching a front wall: dynamically null angular tilt using FL vs FR disparity
+        float fl = (float)readings_.front_left;
+        float fr = (float)readings_.front_right;
+        float avg_f = (fl + fr) * 0.5f;
+        if (avg_f > 100.0f) {
+            // FL > FR: left side closer to front wall -> tilted CCW -> steer CW (positive error)
+            readings_.centering_error = 1.5f * ((fl - fr) / avg_f);
+        } else {
+            readings_.centering_error = 0.0f;
+        }
+    } else if (valid_left_guide && valid_right_guide) {
+        // Both walls present and continuous -> standard two-wall centering
         float err_left  = (float)readings_.left_45  - (float)nominal_center_l45_;
         float err_right = (float)readings_.right_45 - (float)nominal_center_r45_;
         readings_.centering_error = (err_left - err_right) / (float)nominal_center_l45_;
-    } else if (readings_.left_45 > thresh_l45_ && readings_.wall_left) {
+    } else if (both_diagonals_funnel && !readings_.wall_left && !readings_.wall_right) {
+        // Re-entering a corridor from an open area: both diagonals see oncoming walls ahead
+        float err_left  = (float)readings_.left_45  - (float)nominal_center_l45_;
+        float err_right = (float)readings_.right_45 - (float)nominal_center_r45_;
+        readings_.centering_error = (err_left - err_right) / (float)nominal_center_l45_;
+    } else if (valid_left_guide) {
+        // Right wall is opening or absent -> reference ONLY the left wall
         readings_.centering_error = 2.0f * ((float)readings_.left_45 - (float)nominal_center_l45_) / (float)nominal_center_l45_;
-    } else if (readings_.right_45 > thresh_r45_ && readings_.wall_right) {
+    } else if (valid_right_guide) {
+        // Left wall is opening or absent -> reference ONLY the right wall
         readings_.centering_error = -2.0f * ((float)readings_.right_45 - (float)nominal_center_r45_) / (float)nominal_center_r45_;
     } else {
+        // Both walls open / open intersection -> maintain heading via IMU, zero steering bias
         readings_.centering_error = 0.0f;
     }
+
+    // Clamp centering error to prevent extreme spikes from saturating actuators
+    if (readings_.centering_error > 1.5f)  readings_.centering_error = 1.5f;
+    if (readings_.centering_error < -1.5f) readings_.centering_error = -1.5f;
 }
 
 bool IRSensors::calibrateInCell(uint16_t sample_count) {
@@ -219,6 +255,22 @@ bool IRSensors::hasLeftPostEdge() const {
 
 bool IRSensors::hasRightPostEdge() const {
     return readings_.post_edge_right;
+}
+
+bool IRSensors::hasLeftPostRising() const {
+    return readings_.post_rising_left;
+}
+
+bool IRSensors::hasRightPostRising() const {
+    return readings_.post_rising_right;
+}
+
+bool IRSensors::hasLeftOpening() const {
+    return readings_.opening_left;
+}
+
+bool IRSensors::hasRightOpening() const {
+    return readings_.opening_right;
 }
 
 float IRSensors::getCenteringError() const {

@@ -15,6 +15,7 @@ Features:
 """
 
 import sys, os, math, time
+import random
 import ctypes
 import pygame
 import heapq
@@ -71,7 +72,35 @@ def ray_segment_intersect(ray_origin, ray_dir, p1, p2, max_dist=250.0):
     t = ((x1 - ox) * sy - (y1 - oy) * sx) / denom
     u = ((x1 - ox) * dy - (y1 - oy) * dx) / denom
     if 0.0 <= t <= max_dist and 0.0 <= u <= 1.0:
-        return t, (ox + t * dx, oy + t * dy)
+        seg_len = math.hypot(sx, sy)
+        if seg_len > 1e-6:
+            nx, ny = -sy / seg_len, sx / seg_len
+            cos_alpha = abs(dx * nx + dy * ny)
+        else:
+            cos_alpha = 1.0
+        return t, (ox + t * dx, oy + t * dy), cos_alpha
+    return None
+
+def ray_post_intersect(ray_origin, ray_dir, px, py, r_post=6.0, max_dist=250.0):
+    """Ray-circle intersection against micromouse cell corner wooden posts."""
+    ox, oy = ray_origin
+    dx, dy = ray_dir
+    vx = px - ox
+    vy = py - oy
+    t_proj = vx * dx + vy * dy
+    if t_proj < 0.0 or t_proj > max_dist + r_post:
+        return None
+    d2 = (vx * vx + vy * vy) - t_proj * t_proj
+    if d2 < r_post * r_post:
+        dt = math.sqrt(max(0.0, r_post * r_post - d2))
+        t = t_proj - dt
+        if 0.0 <= t <= max_dist:
+            hit_x = ox + t * dx
+            hit_y = oy + t * dy
+            nx = (hit_x - px) / r_post
+            ny = (hit_y - py) / r_post
+            cos_alpha = abs(dx * (-nx) + dy * (-ny))
+            return t, (hit_x, hit_y), cos_alpha
     return None
 
 # ==============================================================================
@@ -315,11 +344,11 @@ def extract_safe_waypoints(path, maze, allow_diagonals=True):
                     c_lp = path[i + k - 1]
                     ped = ((c_lp[0] + 0.5 + 0.5 * dxLast) * 180.0, (c_lp[1] + 0.5 + 0.5 * dyLast) * 180.0)
 
-                    # Post clearance test (robot half width 34mm + post 6mm = 40mm)
+                    # Post clearance test (robot half width 34mm + post 6mm = 40mm, safety margin 46mm)
                     safe = True
                     for px in range(17):
                         for py in range(17):
-                            if dist_pt_to_seg((px * 180.0, py * 180.0), pst, ped) < 42.0:
+                            if dist_pt_to_seg((px * 180.0, py * 180.0), pst, ped) < 46.0:
                                 safe = False; break
                         if not safe: break
 
@@ -337,7 +366,10 @@ def extract_safe_waypoints(path, maze, allow_diagonals=True):
                                 for w1, w2 in wls:
                                     if segments_intersect(pst, ped, w1, w2):
                                         safe = False; break
-                                    if dist_pt_to_seg(pst, w1, w2) < 32.0 or dist_pt_to_seg(ped, w1, w2) < 32.0:
+                                    if (dist_pt_to_seg(w1, pst, ped) < 46.0 or
+                                        dist_pt_to_seg(w2, pst, ped) < 46.0 or
+                                        dist_pt_to_seg(pst, w1, w2) < 46.0 or
+                                        dist_pt_to_seg(ped, w1, w2) < 46.0):
                                         safe = False; break
                                 if not safe: break
 
@@ -355,9 +387,9 @@ def extract_safe_waypoints(path, maze, allow_diagonals=True):
                 wp_is_diag.append(False)
             
             waypoints.append(p_start)
-            wp_is_diag.append(False)
-            waypoints.append(p_end)
             wp_is_diag.append(True)
+            waypoints.append(p_end)
+            wp_is_diag.append(False)
             
             c_exit = path[i + diag_k]
             exit_pt = ((c_exit[0] + 0.5) * 180.0, (c_exit[1] + 0.5) * 180.0)
@@ -469,6 +501,17 @@ def generate_curve_trajectory(waypoints, wp_is_diag, nominal_R=55.0, ds=2.0,
         desc_line = "Diagonal Glide" if is_diag else "Straight Corridor"
 
         if c is None:
+            next_pt = waypoints[i + 1]
+            dist = math.hypot(next_pt[0] - cur_pos[0], next_pt[1] - cur_pos[1])
+            steps = max(1, int(dist / ds))
+            u_line = u_list[i]
+            theta_line = math.atan2(u_line[1], u_line[0])
+            for s in range(1, steps + 1):
+                f = s / steps
+                px = cur_pos[0] + f * (next_pt[0] - cur_pos[0])
+                py = cur_pos[1] + f * (next_pt[1] - cur_pos[1])
+                points.append(TrajectoryPoint(px, py, theta_line, cruise_speed, 0.0, 0.0, desc_line, False, 0.0))
+            cur_pos = next_pt
             continue
 
         Tin = c['Tin']
@@ -491,10 +534,14 @@ def generate_curve_trajectory(waypoints, wp_is_diag, nominal_R=55.0, ds=2.0,
         else:
             arc_len = abs(c['sweep'] * c['R'])
             arc_steps = max(3, int(arc_len / ds))
-            v_curve = min(v_curve_max, math.sqrt(1.2 * 9810.0 * c['R']))
+            v_grip = math.sqrt(0.95 * 9810.0 * c['R'])
+            # Actuator angular acceleration limit (75 rad/s^2 planned limit within Faulhaber 95 rad/s^2 limit)
+            v_alpha = c['R'] * math.sqrt(0.35 * 75.0 * abs(c['sweep']))
+            v_curve = min(v_curve_max, v_grip, v_alpha)
             g_force = (v_curve * v_curve) / (c['R'] * 9810.0)
-            omega = (v_curve / c['R']) * (1.0 if c['turn_left'] else -1.0)
             desc_curve = f"Smooth {c['ang_deg']}° {'Left' if c['turn_left'] else 'Right'} Arc"
+            direction_sign = 1.0 if c['turn_left'] else -1.0
+            omega_nominal = (v_curve / c['R']) * direction_sign
 
             for s in range(1, arc_steps + 1):
                 f = s / arc_steps
@@ -502,7 +549,18 @@ def generate_curve_trajectory(waypoints, wp_is_diag, nominal_R=55.0, ds=2.0,
                 px = c['center'][0] + c['R'] * math.cos(phi)
                 py = c['center'][1] + c['R'] * math.sin(phi)
                 theta_arc = normalize_angle(phi + (math.pi / 2.0 if c['turn_left'] else -math.pi / 2.0))
-                points.append(TrajectoryPoint(px, py, theta_arc, v_curve, omega, g_force, desc_curve, True, c['R']))
+
+                # Smooth trapezoidal yaw rate ramp (0 -> 1 over first 25%, 1 -> 0 over last 25%)
+                if f < 0.25:
+                    ramp = f / 0.25
+                elif f > 0.75:
+                    ramp = (1.0 - f) / 0.25
+                else:
+                    ramp = 1.0
+                pt_omega = omega_nominal * ramp
+
+                points.append(TrajectoryPoint(px, py, theta_arc, v_curve, pt_omega, g_force, desc_curve, True, c['R']))
+
 
         cur_pos = c['Tout']
 
@@ -518,14 +576,82 @@ def generate_curve_trajectory(waypoints, wp_is_diag, nominal_R=55.0, ds=2.0,
         f = s / steps
         px = cur_pos[0] + f * (last_pt[0] - cur_pos[0])
         py = cur_pos[1] + f * (last_pt[1] - cur_pos[1])
-        dec_v = cruise_speed * (1.0 - 0.7 * (f ** 2)) if s > steps - 20 else cruise_speed
-        points.append(TrajectoryPoint(px, py, theta_final, dec_v, 0.0, 0.0, desc_last, False, 0.0))
+        points.append(TrajectoryPoint(px, py, theta_final, cruise_speed, 0.0, 0.0, desc_last, False, 0.0))
+
+    M = len(points)
+    if M == 0:
+        return []
+
+    # ==========================================================================
+    # TWO-PASS TRAPEZOIDAL VELOCITY PLANNING (ACTUATOR BRAKING COMPLIANCE)
+    # ==========================================================================
+    a_accel_plan = 2800.0  # Planned linear acceleration mm/s^2 (within Faulhaber 3500 limit)
+    a_decel_plan = 3600.0  # Planned linear braking mm/s^2 (within Faulhaber 4500 limit)
+
+    # 1. Boundary conditions: start and end from rest
+    points[0].v = 0.0
+    points[-1].v = 0.0
+
+    # 2. Backward pass: Deceleration ramps before curves, pivots, and goal
+    for j in range(M - 2, -1, -1):
+        pj = points[j]
+        pj1 = points[j + 1]
+        step_dist = math.hypot(pj1.x - pj.x, pj1.y - pj.y)
+        if step_dist > 1e-4:
+            v_max_allowable = math.sqrt(pj1.v * pj1.v + 2.0 * a_decel_plan * step_dist)
+            if pj.v > v_max_allowable:
+                pj.v = v_max_allowable
+        else:
+            pj.v = min(pj.v, pj1.v)
+
+    # 3. Forward pass: Acceleration ramps out of curves, pivots, and start
+    for j in range(1, M):
+        pj_prev = points[j - 1]
+        pj = points[j]
+        step_dist = math.hypot(pj.x - pj_prev.x, pj.y - pj_prev.y)
+        if step_dist > 1e-4:
+            v_max_allowable = math.sqrt(pj_prev.v * pj_prev.v + 2.0 * a_accel_plan * step_dist)
+            if pj.v > v_max_allowable:
+                pj.v = v_max_allowable
+        else:
+            pj.v = min(pj.v, pj_prev.v)
+
+    # 4. Minimum crawl floor (80 mm/s) on non-zero corridors to avoid stall (except pivots and stops)
+    for j in range(M):
+        if not points[j].is_curve and "Pivot" not in points[j].desc and j != 0 and j != M - 1:
+            if points[j].v > 10.0:
+                points[j].v = max(80.0, points[j].v)
 
     return points
 
 # ==============================================================================
-# 3. PHYSICAL ROBOT SENSORS & DYNAMICS (3 DEGREES OF FREEDOM)
+# 3. PHYSICAL ROBOT SENSORS & DYNAMICS (1-TO-1 REAL-WORLD MICROMOUSE SIMULATION)
 # ==============================================================================
+class SensorHit:
+    """
+    Simulates real-world 12-bit ADC optical reflection signal with:
+    - Lambertian incident angle cosine attenuation
+    - Non-linear distance inverse-square response
+    - Ambient optical shot/thermal noise & ADC quantization
+    - Corner post edge hit detection (pillar glitch)
+    - Intermittent optical glitches/dropouts (dust/specular flare)
+    """
+    def __init__(self, dist, hit_pt, adc, raw_dist, cos_alpha=1.0, is_post=False, glitch=False):
+        self.dist = dist           # Sensed distance in mm (with non-linearity & noise)
+        self.hit_pt = hit_pt       # World coords (wx, wy)
+        self.adc = adc             # 12-bit ADC reading (0 - 4095)
+        self.raw_dist = raw_dist   # True geometric distance in mm
+        self.cos_alpha = cos_alpha # Lambertian incidence angle cosine
+        self.is_post = is_post     # True if ray hit a corner post
+        self.glitch = glitch       # True if optical drop/spike active
+
+    def __getitem__(self, idx):
+        if idx == 0: return self.dist
+        elif idx == 1: return self.hit_pt
+        elif idx == 2: return self.adc
+        elif idx == 3: return self.raw_dist
+        raise IndexError("SensorHit index out of range")
+
 class PhysicalMicromouse:
     def __init__(self, x=90.0, y=90.0, theta=math.pi/2):
         self.x = x
@@ -541,70 +667,296 @@ class PhysicalMicromouse:
         self.v_right = 0.0
         self.wall_centering_enabled = True
         self.drift_bias = 0.0
+        self.i_cross = 0.0   # Integral cross-track bias accumulator
 
-        self.sensor_left = (90.0, None)
-        self.sensor_right = (90.0, None)
-        self.sensor_fl = (150.0, None)
-        self.sensor_fr = (150.0, None)
+        # Actuator physical limits (Faulhaber 1524 + Pololu Motoron 12V drive)
+        self.a_accel = 3500.0  # Max linear acceleration mm/s^2
+        self.a_brake = 4500.0  # Max linear braking deceleration mm/s^2
+        self.alpha_max = 95.0  # Max angular acceleration rad/s^2 (Faulhaber differential torque)
+        self.tau_m = 0.015     # 15 ms motor time constant
+
+        # Realistic hardware & signal flags
+        self.optical_noise_enabled = True
+        self.motor_imbalance_enabled = True
+        self.glitches_enabled = True
+        self.motor_imbalance_pct = 0.012 # 1.2% realistic motor/gear friction variance
+
+        # Dynamic state & telemetry metrics
+        self.centering_mode = "DUAL-WALL"
+        self.slip_ratio = 0.0
+        self.gyro_drift = 0.0
+        self.gyro_drift_rate = math.radians(0.08) # 0.08 deg/s zero-rate bias
+        self.last_sync_cell = (0, 0)
+        self.sync_active = False
+        self.active_glitches = 0
+
+        # 6 Sensor channels: L90, L45, FL, FR, R45, R90 (matching schematic rev 1.0 & config.h)
+        dummy_hit = SensorHit(90.0, None, 450, 90.0, 1.0, False, False)
+        self.sensor_l90 = dummy_hit
+        self.sensor_l45 = dummy_hit
+        self.sensor_fl  = dummy_hit
+        self.sensor_fr  = dummy_hit
+        self.sensor_r45 = dummy_hit
+        self.sensor_r90 = dummy_hit
+
+        # Backward compatibility aliases
+        self.sensor_left  = self.sensor_l90
+        self.sensor_right = self.sensor_r90
+
+        # History for post falling-edge detection
+        self.prev_l90_adc = 450
+        self.prev_r90_adc = 450
 
     def read_sensors(self, wall_segs, posts):
         cos_t = math.cos(self.theta)
         sin_t = math.sin(self.theta)
 
-        pos_L = (self.x - self.half_w * sin_t, self.y + self.half_w * cos_t)
-        pos_R = (self.x + self.half_w * sin_t, self.y - self.half_w * cos_t)
-        pos_nose = (self.x + self.half_l * cos_t, self.y + self.half_l * sin_t)
+        # Exact physical locations of the 6 optical channels on robot chassis:
+        # L90: left flank (x=0, y=+34) -> ray pointing at theta + 90 deg
+        pos_L90 = (self.x - self.half_w * sin_t, self.y + self.half_w * cos_t)
+        dir_L90 = (-sin_t, cos_t)
 
-        dir_L  = (-sin_t, cos_t)
-        dir_R  = (sin_t, -cos_t)
-        dir_FL = (math.cos(self.theta + 0.38), math.sin(self.theta + 0.38))
-        dir_FR = (math.cos(self.theta - 0.38), math.sin(self.theta - 0.38))
+        # L45: front-left diagonal (x=+36, y=+25) -> ray pointing at theta + 45 deg
+        pos_L45 = (self.x + 36.0 * cos_t - 25.0 * sin_t, self.y + 36.0 * sin_t + 25.0 * cos_t)
+        th_l45 = self.theta + math.pi / 4.0
+        dir_L45 = (math.cos(th_l45), math.sin(th_l45))
+
+        # FL: front-left center 0° (x=+40, y=+12) -> ray pointing at theta (0 deg)
+        pos_FL = (self.x + self.half_l * cos_t - 12.0 * sin_t, self.y + self.half_l * sin_t + 12.0 * cos_t)
+        dir_FL = (cos_t, sin_t)
+
+        # FR: front-right center 0° (x=+40, y=-12) -> ray pointing at theta (0 deg)
+        pos_FR = (self.x + self.half_l * cos_t + 12.0 * sin_t, self.y + self.half_l * sin_t - 12.0 * cos_t)
+        dir_FR = (cos_t, sin_t)
+
+        # R45: front-right diagonal (x=+36, y=-25) -> ray pointing at theta - 45 deg
+        pos_R45 = (self.x + 36.0 * cos_t + 25.0 * sin_t, self.y + 36.0 * sin_t - 25.0 * cos_t)
+        th_r45 = self.theta - math.pi / 4.0
+        dir_R45 = (math.cos(th_r45), math.sin(th_r45))
+
+        # R90: right flank (x=0, y=-34) -> ray pointing at theta - 90 deg
+        pos_R90 = (self.x + self.half_w * sin_t, self.y - self.half_w * cos_t)
+        dir_R90 = (sin_t, -cos_t)
 
         def cast_ray(orig, rdir, max_range=240.0):
             closest_dist = max_range
             closest_pt = None
-            for w1, w2, _ in wall_segs:
-                hit = ray_segment_intersect(orig, rdir, w1, w2, max_range)
-                if hit and hit[0] < closest_dist:
-                    closest_dist = hit[0]
-                    closest_pt = hit[1]
-            return closest_dist, closest_pt
+            closest_cos = 1.0
+            is_post_hit = False
 
-        self.sensor_left  = cast_ray(pos_L, dir_L)
-        self.sensor_right = cast_ray(pos_R, dir_R)
-        self.sensor_fl    = cast_ray(pos_nose, dir_FL)
-        self.sensor_fr    = cast_ray(pos_nose, dir_FR)
+            # 1. Test against walls
+            for w1, w2, _ in wall_segs:
+                min_x = min(w1[0], w2[0]) - 5.0
+                max_x = max(w1[0], w2[0]) + 5.0
+                min_y = min(w1[1], w2[1]) - 5.0
+                max_y = max(w1[1], w2[1]) + 5.0
+                if (orig[0] < min_x - max_range or orig[0] > max_x + max_range or
+                    orig[1] < min_y - max_range or orig[1] > max_y + max_range):
+                    continue
+
+                res = ray_segment_intersect(orig, rdir, w1, w2, max_range)
+                if res and res[0] < closest_dist:
+                    closest_dist = res[0]
+                    closest_pt = res[1]
+                    closest_cos = res[2]
+                    is_post_hit = False
+
+            # 2. Test against posts (12mm diameter posts at cell corners)
+            for px, py in posts:
+                if abs(orig[0] - px) > max_range + 8.0 or abs(orig[1] - py) > max_range + 8.0:
+                    continue
+                pres = ray_post_intersect(orig, rdir, px, py, r_post=6.0, max_dist=max_range)
+                if pres and pres[0] < closest_dist:
+                    closest_dist = pres[0]
+                    closest_pt = pres[1]
+                    closest_cos = pres[2]
+                    is_post_hit = True
+
+            # 3. Realistic Phototransistor & ADC Modeling
+            I0 = 1060.0
+            if closest_dist < max_range:
+                # Lambertian reflection with distance inverse-square
+                attenuated_cos = max(0.12, closest_cos)
+                ideal_adc = 40.0 + min(4055.0, (I0 * attenuated_cos) / ((closest_dist / 55.0 + 0.1) ** 2))
+            else:
+                ideal_adc = 40.0 # Ambient dark noise floor
+
+            # Optical noise & jitter
+            sim_adc = ideal_adc
+            glitch_active = False
+            if self.optical_noise_enabled:
+                sigma = 12.0 + 0.015 * ideal_adc
+                sim_adc += random.gauss(0.0, sigma)
+
+            # Signal dropouts / glitches (dust, specular reflection flare off tape/screws)
+            if self.glitches_enabled and random.random() < 0.003: # 0.3% chance
+                glitch_active = True
+                sim_adc = max(30.0, sim_adc * random.uniform(0.5, 0.75))
+
+            sim_adc = max(0, min(4095, int(round(sim_adc))))
+
+            # Invert sensor reading to perceived distance (matching firmware calibrated curve)
+            if sim_adc >= 115:
+                perceived_dist = 55.0 * (math.sqrt(I0 / max(1.0, float(sim_adc - 35))) - 0.1)
+                perceived_dist = max(5.0, min(max_range, perceived_dist))
+            else:
+                perceived_dist = max_range
+
+            return SensorHit(perceived_dist, closest_pt, sim_adc, closest_dist, closest_cos, is_post_hit, glitch_active)
+
+        self.sensor_l90 = cast_ray(pos_L90, dir_L90)
+        self.sensor_l45 = cast_ray(pos_L45, dir_L45)
+        self.sensor_fl  = cast_ray(pos_FL,  dir_FL)
+        self.sensor_fr  = cast_ray(pos_FR,  dir_FR)
+        self.sensor_r45 = cast_ray(pos_R45, dir_R45)
+        self.sensor_r90 = cast_ray(pos_R90, dir_R90)
+
+        # Backward compatibility references
+        self.sensor_left  = self.sensor_l90
+        self.sensor_right = self.sensor_r90
+
+        # Count active optical glitches
+        self.active_glitches = sum(1 for s in [self.sensor_l90, self.sensor_l45, self.sensor_fl, self.sensor_fr, self.sensor_r45, self.sensor_r90] if s.glitch)
+
+        # Pillar post edge detection (falling edge when passing a wall opening)
+        post_edge_left = (self.prev_l90_adc > 350 and self.sensor_l90.adc < 280)
+        post_edge_right = (self.prev_r90_adc > 350 and self.sensor_r90.adc < 280)
+        self.sync_active = False
+        if post_edge_left or post_edge_right:
+            cx = int(self.x // CELL_SIZE_MM)
+            cy = int(self.y // CELL_SIZE_MM)
+            self.last_sync_cell = (cx, cy)
+            self.sync_active = True
+
+        self.prev_l90_adc = self.sensor_l90.adc
+        self.prev_r90_adc = self.sensor_r90.adc
 
     def step_physics(self, dt, target_pt):
-        """Stanley path tracking controller with differential wheel kinematics."""
-        dL = self.sensor_left[0]
-        dR = self.sensor_right[0]
+        """
+        1-to-1 Real-World Micromouse Kinematics & Physics:
+        - Stanley path tracking + adaptive multi-mode straightaway wall centering
+        - Single-wall vs Dual-wall vs Heading-lock vs Front-wall suppression
+        - Finite coreless motor acceleration & braking limits (Faulhaber 1524)
+        - Mechanical motor & wheel imbalance with natural straightaway drift
+        - Dynamic wheel micro-slip & traction model
+        - Gyro zero-rate bias drift
+        """
+        # 1. Front Wall Proximity Check
+        d_front = min(self.sensor_fl.dist, self.sensor_fr.dist)
+        is_front_close = (d_front < 110.0 or self.sensor_fl.adc > 300 or self.sensor_fr.adc > 300)
 
-        dx = target_pt.x - self.x
-        dy = target_pt.y - self.y
-        e_along = dx * math.cos(target_pt.theta) + dy * math.sin(target_pt.theta)
-        e_cross = -dx * math.sin(target_pt.theta) + dy * math.cos(target_pt.theta)
-
-        v_clamp = max(100.0, abs(self.v))
-        k_stanley = 4.5
-        theta_correction = math.atan2(k_stanley * e_cross, v_clamp)
-
+        # 2. Straightaway Wall Centering Controller (Multi-Mode matching C++ firmware)
         sensor_trim = 0.0
-        if self.wall_centering_enabled and dL < 125.0 and dR < 125.0 and abs(target_pt.omega) < 0.2:
-            sensor_trim = -(dL - dR) * 0.02
+        is_curving = abs(target_pt.omega) > 0.22
+        is_orthogonal = (abs(math.cos(target_pt.theta)) > 0.92 or abs(math.sin(target_pt.theta)) > 0.92)
 
-        theta_desired = normalize_angle(target_pt.theta + theta_correction)
-        e_theta = normalize_angle(theta_desired - self.theta)
+        if self.wall_centering_enabled and not is_curving and is_orthogonal:
+            if is_front_close:
+                # Suppress side trim when approaching front wall (avoids false turning jerks)
+                self.centering_mode = "FRONT-SUPPRESS"
+                sensor_trim = 0.0
+            else:
+                has_left = (self.sensor_l90.dist < 115.0 or self.sensor_l45.dist < 125.0)
+                has_right = (self.sensor_r90.dist < 115.0 or self.sensor_r45.dist < 125.0)
 
-        self.omega = target_pt.omega + 16.0 * e_theta + sensor_trim + self.drift_bias
-        self.v = target_pt.v + 3.0 * e_along
+                dL = self.sensor_l90.dist if self.sensor_l90.dist < 115.0 else (self.sensor_l45.dist * 0.707)
+                dR = self.sensor_r90.dist if self.sensor_r90.dist < 115.0 else (self.sensor_r45.dist * 0.707)
+                d_nominal = 50.0 # Nominal centered clearance mm (168mm corridor - 68mm robot)/2
 
-        self.v_left = self.v - (self.W / 2.0) * self.omega
-        self.v_right = self.v + (self.W / 2.0) * self.omega
+                if has_left and has_right:
+                    self.centering_mode = "DUAL-WALL"
+                    sensor_trim = (dL - dR) * 0.024
+                elif has_left:
+                    self.centering_mode = "SINGLE-WALL-L"
+                    sensor_trim = (dL - d_nominal) * 0.020
+                elif has_right:
+                    self.centering_mode = "SINGLE-WALL-R"
+                    sensor_trim = -(dR - d_nominal) * 0.020
+                else:
+                    self.centering_mode = "IMU-HEADING-LOCK"
+                    sensor_trim = 0.0
 
-        self.x += self.v * math.cos(self.theta) * dt
-        self.y += self.v * math.sin(self.theta) * dt
-        self.theta = normalize_angle(self.theta + self.omega * dt)
+                # Anti-windup clamp on steering trim
+                sensor_trim = max(-0.35, min(0.35, sensor_trim))
+        else:
+            if not is_orthogonal:
+                self.centering_mode = "DIAGONAL-IMU-LOCK"
+            elif is_curving:
+                self.centering_mode = "CURVING"
+            else:
+                self.centering_mode = "DISABLED"
+            sensor_trim = 0.0
+
+        # 3. Path Tracking Controller
+        is_pivot = (target_pt.v < 1.0 and abs(target_pt.omega) > 0.5)
+
+        if is_pivot:
+            # During in-place pivots at cell centers, purely track heading setpoint
+            self.centering_mode = "PIVOT"
+            sensor_trim = 0.0
+            self.i_cross = 0.0
+            e_theta = normalize_angle(target_pt.theta - self.theta)
+            v_target = 0.0
+            omega_target = target_pt.omega + 8.0 * e_theta
+        else:
+            # Stanley Path Tracking (Cross-Track & Heading Error)
+            dx = target_pt.x - self.x
+            dy = target_pt.y - self.y
+            e_along = dx * math.cos(target_pt.theta) + dy * math.sin(target_pt.theta)
+            e_cross = -dx * math.sin(target_pt.theta) + dy * math.cos(target_pt.theta)
+
+            # Cross-track integral term: only accumulate on straights, decay quickly in curves
+            if not is_curving:
+                self.i_cross = max(-0.30, min(0.30, self.i_cross + e_cross * 0.10 * dt))
+            else:
+                self.i_cross *= 0.95
+
+            v_clamp = max(80.0, abs(self.v))
+            k_stanley = 2.8
+            theta_correction = math.atan2(k_stanley * e_cross, v_clamp)
+
+            theta_desired = normalize_angle(target_pt.theta + theta_correction)
+            e_theta = normalize_angle(theta_desired - self.theta)
+
+            # 4. Target Velocity & Yaw Rate Setpoints
+            v_target = max(0.0, target_pt.v)
+            omega_target = target_pt.omega + 14.0 * e_theta + sensor_trim + self.drift_bias + self.i_cross
+
+
+        # 5. Real-World Actuator Dynamics & Acceleration Limits (Faulhaber 1524)
+        # Rate-limited linear velocity update
+        dv_desired = (v_target - self.v) / self.tau_m * dt
+        dv = max(-self.a_brake * dt, min(self.a_accel * dt, dv_desired))
+        self.v += dv
+
+        # Rate-limited angular velocity update
+        domega_desired = (omega_target - self.omega) / self.tau_m * dt
+        domega = max(-self.alpha_max * dt, min(self.alpha_max * dt, domega_desired))
+        self.omega += domega
+
+        # 6. Differential Wheel Speeds & Motor Imbalance
+        vL_ideal = self.v - (self.W / 2.0) * self.omega
+        vR_ideal = self.v + (self.W / 2.0) * self.omega
+
+        # 1.2% mechanical friction/torque asymmetry
+        imbal = self.motor_imbalance_pct if self.motor_imbalance_enabled else 0.0
+        self.v_left = vL_ideal * (1.0 - imbal)
+        self.v_right = vR_ideal * (1.0 + imbal)
+
+        # 7. Traction Micro-Slip Model
+        accel_mag = abs(dv / dt) if dt > 0 else 0.0
+        self.slip_ratio = min(0.06, 0.006 + 0.018 * (accel_mag / self.a_accel))
+
+        v_effective = ((self.v_left + self.v_right) / 2.0) * (1.0 - self.slip_ratio)
+        omega_effective = (self.v_right - self.v_left) / self.W
+
+        # 8. Physical Integration (Ground Truth State)
+        self.x += v_effective * math.cos(self.theta) * dt
+        self.y += v_effective * math.sin(self.theta) * dt
+        self.theta = normalize_angle(self.theta + omega_effective * dt)
+
+        # 9. IMU Gyro Drift Accumulation
+        self.gyro_drift += self.gyro_drift_rate * dt
 
 # ==============================================================================
 # 4. PHYSICAL POLYGON-TO-SEGMENT COLLISION ENGINE
@@ -729,10 +1081,10 @@ class MMSAdvancedSimulator:
 
         # MMS Live Console Logs
         self.logs = [
-            "[SIM] Antigravitieee High-DPI Resizable Simulator ready.",
-            "[SIM] Tournament Cycle: Exploration ➔ Return ➔ Speedrun fully automated!",
-            "[OPTIMIZER] Intelligent Path Selector: Evaluates Curves vs Diagonals!",
-            "[SENSORS] 4 Optical IR Raycast Lasers Active (Left, Right, FL, FR).",
+            "[SIM] Antigravitieee 1-to-1 Real-World Micromouse Simulator ready.",
+            "[HARDWARE] 6-Channel Optical IR Arrays (L90, L45, FL, FR, R45, R90) active.",
+            "[PHYSICS] Faulhaber DC limits, wheel micro-slip & IMU zero-rate drift online.",
+            "[STRAIGHTS] Adaptive Multi-Mode Centering (Dual/Single/IMU-Lock) & Post Sync active.",
             f"[MAZE] Active Maze: {self.maze_list[self.current_maze_idx]}."
         ]
 
@@ -776,33 +1128,32 @@ class MMSAdvancedSimulator:
         goals = {(7, 7), (7, 8), (8, 7), (8, 8)}
         self.maze.compute_floodfill_distances(goals)
 
-        # 1. Precompute Exploration Trajectory (with Optical Lookahead Diagonals)
-        # In real-world robotics, 45° optical IR lasers have direct line-of-sight down open staircases,
-        # verifying clearance before entry so the mouse can glide diagonally on the very first run!
+        # 1. Precompute Exploration Trajectory (Orthogonal mapping search)
         exp_path = generate_floodfill_exploration_path(self.maze, goals)
-        exp_wp, exp_diag = extract_safe_waypoints(exp_path, self.maze, allow_diagonals=True)
-        self.explore_traj = generate_curve_trajectory(exp_wp, exp_diag, nominal_R=50.0, v_straight=850.0, v_diag=1100.0, v_curve_max=650.0)
+        exp_wp, exp_diag = extract_safe_waypoints(exp_path, self.maze, allow_diagonals=False)
+        self.explore_traj = generate_curve_trajectory(exp_wp, exp_diag, nominal_R=55.0, v_straight=850.0, v_diag=1100.0, v_curve_max=440.0)
 
         # 2. Precompute Return Trajectory (Center -> (0,0) with high-speed diagonal glide)
         last_cell = exp_path[-1]
         ret_path = dijkstra_fastest_path(self.maze, last_cell[0], last_cell[1], DIR_NORTH, {(0, 0)})
         ret_wp, ret_diag = extract_safe_waypoints(ret_path, self.maze, allow_diagonals=True)
-        self.return_traj = generate_curve_trajectory(ret_wp, ret_diag, nominal_R=55.0, v_straight=950.0, v_diag=1200.0, v_curve_max=700.0)
+        self.return_traj = generate_curve_trajectory(ret_wp, ret_diag, nominal_R=60.0, v_straight=950.0, v_diag=1200.0, v_curve_max=440.0)
 
         # 3. Precompute Championship Speedrun Options (Curves vs Diagonals)
         fwd_path = dijkstra_fastest_path(self.maze, 0, 0, DIR_NORTH, goals)
         
         # Option A: Pure Continuous Curves
         fwd_wp_c, fwd_diag_c = extract_safe_waypoints(fwd_path, self.maze, allow_diagonals=False)
-        self.speedrun_traj_curves = generate_curve_trajectory(fwd_wp_c, fwd_diag_c, nominal_R=55.0, v_straight=1150.0, v_curve_max=820.0)
+        self.speedrun_traj_curves = generate_curve_trajectory(fwd_wp_c, fwd_diag_c, nominal_R=60.0, v_straight=1150.0, v_curve_max=440.0)
         self.metrics_curves = calculate_trajectory_metrics(self.speedrun_traj_curves)
 
         # Option B: With Diagonals
         fwd_wp_d, fwd_diag_d = extract_safe_waypoints(fwd_path, self.maze, allow_diagonals=True)
-        self.speedrun_traj_diags = generate_curve_trajectory(fwd_wp_d, fwd_diag_d, nominal_R=55.0, v_straight=1150.0, v_diag=1350.0, v_curve_max=820.0)
+        self.speedrun_traj_diags = generate_curve_trajectory(fwd_wp_d, fwd_diag_d, nominal_R=60.0, v_straight=1150.0, v_diag=1350.0, v_curve_max=440.0)
         self.metrics_diags = calculate_trajectory_metrics(self.speedrun_traj_diags)
 
-        # Dynamic Strategy Optimizer: Compare physical times and choose the fastest
+
+        # Dynamic Strategy Optimizer
         t_c = self.metrics_curves['time']
         t_d = self.metrics_diags['time']
         if t_d < t_c:
@@ -877,18 +1228,33 @@ class MMSAdvancedSimulator:
             self.hud_w = self.chase_w
             self.hud_h = self.screen_h - self.hud_y - 12
 
-        # Toolbar Buttons
-        self.btn_run_rect = pygame.Rect(16, 8, 65, 30)
-        self.btn_pause_rect = pygame.Rect(86, 8, 65, 30)
-        self.btn_reset_rect = pygame.Rect(156, 8, 65, 30)
-        self.btn_maze_rect = pygame.Rect(226, 8, 125, 30)
-        self.btn_mode_rect = pygame.Rect(356, 8, 145, 30)
-        self.btn_strat_rect = pygame.Rect(506, 8, 160, 30)
-        self.btn_split_rect = pygame.Rect(671, 8, 110, 30)
-        self.btn_center_rect = pygame.Rect(786, 8, 105, 30)
-        self.btn_drift_rect = pygame.Rect(896, 8, 90, 30)
-        self.btn_crash_rect = pygame.Rect(991, 8, 90, 30)
-        self.slider_track_rect = pygame.Rect(1096, 19, 95, 8)
+        # Toolbar Buttons (responsive layout)
+        x = 10
+        self.btn_run_rect = pygame.Rect(x, 8, 52, 30)
+        x += 56 # 66
+        self.btn_pause_rect = pygame.Rect(x, 8, 55, 30)
+        x += 59 # 125
+        self.btn_reset_rect = pygame.Rect(x, 8, 55, 30)
+        x += 59 # 184
+        self.btn_maze_rect = pygame.Rect(x, 8, 115, 30)
+        x += 119 # 303
+        self.btn_mode_rect = pygame.Rect(x, 8, 125, 30)
+        x += 129 # 432
+        self.btn_strat_rect = pygame.Rect(x, 8, 125, 30)
+        x += 129 # 561
+        self.btn_split_rect = pygame.Rect(x, 8, 80, 30)
+        x += 84 # 645
+        self.btn_center_rect = pygame.Rect(x, 8, 95, 30)
+        x += 99 # 744
+        self.btn_noise_rect = pygame.Rect(x, 8, 95, 30)
+        x += 99 # 843
+        self.btn_imbal_rect = pygame.Rect(x, 8, 100, 30)
+        x += 104 # 947
+        self.btn_drift_rect = pygame.Rect(x, 8, 65, 30)
+        x += 69 # 1016
+        self.btn_crash_rect = pygame.Rect(x, 8, 65, 30)
+        x += 69 # 1085
+        self.slider_track_rect = pygame.Rect(x, 19, 85, 8)
 
     def log(self, msg):
         self.logs.append(msg)
@@ -922,6 +1288,9 @@ class MMSAdvancedSimulator:
             self.bot.theta = start_pt.theta
         self.bot.v = 0.0
         self.bot.omega = 0.0
+        self.bot.i_cross = 0.0
+        self.bot.gyro_drift = 0.0
+        self.bot.drift_bias = 0.0
         self.phase_time = 0.0
         self.finished = False
         self.crashed = False
@@ -960,6 +1329,17 @@ class MMSAdvancedSimulator:
         self.bot.wall_centering_enabled = not self.bot.wall_centering_enabled
         status_str = "ENABLED" if self.bot.wall_centering_enabled else "DISABLED"
         self.log(f"[CONTROL] Optical IR Wall Centering {status_str}!")
+
+    def toggle_noise(self):
+        self.bot.optical_noise_enabled = not self.bot.optical_noise_enabled
+        self.bot.glitches_enabled = self.bot.optical_noise_enabled
+        st = "ENABLED (Noise ±15 ADC + Glitches)" if self.bot.optical_noise_enabled else "DISABLED (Ideal Beam)"
+        self.log(f"[SENSORS] Optical Sensor Noise & Glitches {st}!")
+
+    def toggle_imbalance(self):
+        self.bot.motor_imbalance_enabled = not self.bot.motor_imbalance_enabled
+        st = "ENABLED (1.2% Drift)" if self.bot.motor_imbalance_enabled else "DISABLED (0.0% Symmetric)"
+        self.log(f"[HARDWARE] Motor & Wheel Mechanical Asymmetry {st}!")
 
     def inject_drift(self):
         self.bot.drift_bias += math.radians(3.5)
@@ -1016,6 +1396,10 @@ class MMSAdvancedSimulator:
                         self.cycle_strategy()
                     elif event.key == pygame.K_w:
                         self.toggle_wall_centering()
+                    elif event.key == pygame.K_g:
+                        self.toggle_noise()
+                    elif event.key == pygame.K_i:
+                        self.toggle_imbalance()
                     elif event.key == pygame.K_d:
                         self.inject_drift()
                     elif event.key == pygame.K_c:
@@ -1042,6 +1426,10 @@ class MMSAdvancedSimulator:
                         self.split_screen = not self.split_screen
                     elif self.btn_center_rect.collidepoint(mx, my):
                         self.toggle_wall_centering()
+                    elif self.btn_noise_rect.collidepoint(mx, my):
+                        self.toggle_noise()
+                    elif self.btn_imbal_rect.collidepoint(mx, my):
+                        self.toggle_imbalance()
                     elif self.btn_drift_rect.collidepoint(mx, my):
                         self.inject_drift()
                     elif self.btn_crash_rect.collidepoint(mx, my):
@@ -1125,8 +1513,8 @@ class MMSAdvancedSimulator:
                             best_i = i
                     self.traj_idx = max(self.traj_idx, best_i)
 
-                    # Lookahead target point (~24mm ahead, 12 samples of 2mm)
-                    lookahead_idx = min(len(self.traj_points) - 1, self.traj_idx + 12)
+                    # Lookahead target point (~12mm ahead, 6 samples of 2mm)
+                    lookahead_idx = min(len(self.traj_points) - 1, self.traj_idx + 6)
                     target_pt = self.traj_points[lookahead_idx]
 
                     self.bot.read_sensors(self.collider.wall_segs, self.collider.posts)
@@ -1196,6 +1584,8 @@ class MMSAdvancedSimulator:
 
         draw_btn(self.btn_split_rect, f"📺 Split: {'ON' if self.split_screen else 'OFF'}", self.split_screen, (230, 240, 255), (0, 80, 180))
         draw_btn(self.btn_center_rect, f"🎯 Centering", self.bot.wall_centering_enabled, (230, 255, 240) if self.bot.wall_centering_enabled else (255, 230, 230), (0, 140, 60) if self.bot.wall_centering_enabled else (200, 30, 30))
+        draw_btn(self.btn_noise_rect, f"⚡ Noise: {'ON' if self.bot.optical_noise_enabled else 'OFF'}", self.bot.optical_noise_enabled, (230, 255, 240) if self.bot.optical_noise_enabled else (255, 235, 235), (0, 140, 60) if self.bot.optical_noise_enabled else (180, 50, 50))
+        draw_btn(self.btn_imbal_rect, f"⚙ Imbal: {'ON' if self.bot.motor_imbalance_enabled else 'OFF'}", self.bot.motor_imbalance_enabled, (255, 245, 230) if self.bot.motor_imbalance_enabled else (240, 245, 255), (180, 90, 0) if self.bot.motor_imbalance_enabled else (0, 90, 180))
         draw_btn(self.btn_drift_rect, "⚠️ Drift", False, (255, 245, 230), (180, 90, 0))
         draw_btn(self.btn_crash_rect, "💥 Crash", False, (255, 235, 235), (200, 30, 30))
 
@@ -1232,71 +1622,59 @@ class MMSAdvancedSimulator:
                 pygame.draw.rect(self.screen, (0, 120, 215), (sx + 4, self.toolbar_h + 3, seg_w - 8, self.banner_h - 6), border_radius=4)
                 lbl_st = self.font_stage.render(f"● {title}", True, (255, 255, 255))
             else:
-                lbl_st = self.font_stage.render(f"○ {title}", True, (100, 110, 125))
+                lbl_st = self.font_stage.render(title, True, (110, 120, 135))
             self.screen.blit(lbl_st, (sx + (seg_w - lbl_st.get_width()) // 2, self.toolbar_h + 6))
 
         # ----------------------------------------------------------------------
-        # 2. LEFT VIEWPORT: GLOBAL 16x16 OVERHEAD MAZE CANVAS
+        # 2. LEFT VIEWPORT: 16x16 MICROMOUSE MAZE FIELD
         # ----------------------------------------------------------------------
-        maze_sz = int(16 * self.global_cell_px)
-        global_maze_rect = pygame.Rect(self.global_offset_x, self.global_offset_y, maze_sz, maze_sz)
-        pygame.draw.rect(self.screen, self.CLR_MAZE_BG, global_maze_rect)
+        maze_rect = pygame.Rect(self.global_offset_x, self.global_offset_y, int(16 * self.global_cell_px), int(16 * self.global_cell_px))
+        pygame.draw.rect(self.screen, self.CLR_MAZE_BG, maze_rect)
+        pygame.draw.rect(self.screen, (60, 65, 75), maze_rect, width=2)
 
-        # Faint cell grid lines & floodfill distance numbers
+        # Draw Cells & Goal Area
         for x in range(16):
             for y in range(16):
-                px, py = self.world_to_global_screen(x * CELL_SIZE_MM, (y + 1) * CELL_SIZE_MM)
-                cell_rect = pygame.Rect(px, py, self.global_cell_px, self.global_cell_px)
-                pygame.draw.rect(self.screen, self.CLR_GRID, cell_rect, 1)
+                px = self.global_offset_x + x * self.global_cell_px
+                py = self.global_offset_y + (15 - y) * self.global_cell_px
+                if (x, y) in {(7, 7), (7, 8), (8, 7), (8, 8)}:
+                    pygame.draw.rect(self.screen, (45, 36, 12), (px + 1, py + 1, self.global_cell_px - 1, self.global_cell_px - 1))
+                elif (x, y) == (0, 0):
+                    pygame.draw.rect(self.screen, (10, 35, 55), (px + 1, py + 1, self.global_cell_px - 1, self.global_cell_px - 1))
+                pygame.draw.rect(self.screen, self.CLR_GRID, (px, py, self.global_cell_px, self.global_cell_px), width=1)
 
-                # Center Goal Highlight
-                if x in [7, 8] and y in [7, 8]:
-                    goal_surf = pygame.Surface((self.global_cell_px, self.global_cell_px), pygame.SRCALPHA)
-                    goal_surf.fill((255, 215, 0, 45))
-                    self.screen.blit(goal_surf, (px, py))
+        # Draw Walls
+        wall_thick = max(2, int(6.0 * self.global_scale))
+        for w1, w2, _ in self.collider.wall_segs:
+            p1 = self.world_to_global_screen(w1[0], w1[1])
+            p2 = self.world_to_global_screen(w2[0], w2[1])
+            pygame.draw.line(self.screen, self.CLR_WALL, p1, p2, wall_thick)
 
-                # Distance Text
-                dist_val = self.maze.distances[x][y]
-                if dist_val >= 0:
-                    dist_lbl = self.font_cell.render(str(dist_val), True, (80, 90, 105))
-                    self.screen.blit(dist_lbl, (px + (self.global_cell_px - dist_lbl.get_width()) // 2, py + (self.global_cell_px - dist_lbl.get_height()) // 2))
+        # Draw Corner Posts
+        post_rad = max(2, int(6.0 * self.global_scale))
+        for px, py in self.collider.posts:
+            pp = self.world_to_global_screen(px, py)
+            pygame.draw.circle(self.screen, self.CLR_POST, (int(pp[0]), int(pp[1])), post_rad)
 
-        # Walls
-        wall_thick = 4
-        for x in range(16):
-            for y in range(16):
-                x0, x1 = x * CELL_SIZE_MM, (x + 1) * CELL_SIZE_MM
-                y0, y1 = y * CELL_SIZE_MM, (y + 1) * CELL_SIZE_MM
-                if self.maze.has_wall(x, y, DIR_NORTH):
-                    pygame.draw.line(self.screen, self.CLR_WALL, self.world_to_global_screen(x0, y1), self.world_to_global_screen(x1, y1), wall_thick)
-                if self.maze.has_wall(x, y, DIR_EAST):
-                    pygame.draw.line(self.screen, self.CLR_WALL, self.world_to_global_screen(x1, y1), self.world_to_global_screen(x1, y0), wall_thick)
-                if self.maze.has_wall(x, y, DIR_SOUTH):
-                    pygame.draw.line(self.screen, self.CLR_WALL, self.world_to_global_screen(x0, y0), self.world_to_global_screen(x1, y0), wall_thick)
-                if self.maze.has_wall(x, y, DIR_WEST):
-                    pygame.draw.line(self.screen, self.CLR_WALL, self.world_to_global_screen(x0, y1), self.world_to_global_screen(x0, y0), wall_thick)
+        # Draw Global Trajectory Planned Route
+        if self.traj_points:
+            traj_screen_pts = [self.world_to_global_screen(p.x, p.y) for p in self.traj_points]
+            if len(traj_screen_pts) > 1:
+                pygame.draw.lines(self.screen, (50, 160, 255), False, traj_screen_pts, 2)
 
-        # Red Square Posts
-        post_sz = max(4, int(6 * (self.global_cell_px / 45.0)))
-        for x in range(17):
-            for y in range(17):
-                px, py = self.world_to_global_screen(x * CELL_SIZE_MM, y * CELL_SIZE_MM)
-                r = pygame.Rect(px - post_sz // 2, py - post_sz // 2, post_sz, post_sz)
-                pygame.draw.rect(self.screen, self.CLR_POST, r)
-                self.screen.set_at((int(px), int(py)), (0, 0, 0))
-
-        # Trajectory Trail
+        # Draw Trajectory Heatmap Trail
         if len(self.trail) > 1:
-            for i in range(len(self.trail) - 1):
-                p1, p2 = self.trail[i], self.trail[i+1]
-                gf = p2[2]
-                clr = (255, 60, 50) if gf > 0.7 else ((255, 195, 0) if gf > 0.35 else (0, 220, 255))
-                pygame.draw.line(self.screen, clr, (p1[0], p1[1]), (p2[0], p2[1]), 2)
+            for t_idx in range(len(self.trail) - 1):
+                p1 = (int(self.trail[t_idx][0]), int(self.trail[t_idx][1]))
+                p2 = (int(self.trail[t_idx+1][0]), int(self.trail[t_idx+1][1]))
+                gf = self.trail[t_idx][2]
+                t_clr = (255, 60, 60) if gf > 0.65 else ((255, 180, 0) if gf > 0.35 else (0, 230, 160))
+                pygame.draw.line(self.screen, t_clr, p1, p2, 3)
 
-        # Overview Robot on Global Canvas
+        # Draw Global Robot Polygon
         bx, by = self.world_to_global_screen(self.bot.x, self.bot.y)
-        theta = -self.bot.theta
-        bot_w = 70.0 * self.global_scale
+        theta = -self.bot.theta + math.pi / 2.0
+        bot_w = 68.0 * self.global_scale
         bot_l = 80.0 * self.global_scale
         half_w, half_l = bot_w / 2.0, bot_l / 2.0
         corners = [
@@ -1346,26 +1724,38 @@ class MMSAdvancedSimulator:
                     pygame.draw.rect(self.screen, self.CLR_POST, r)
                     pygame.draw.rect(self.screen, (0, 0, 0), r.inflate(-6, -6))
 
-            def draw_sensor_ray(sensor_data, sensor_orig, beam_color=(0, 240, 120)):
-                dist, hit_pt = sensor_data
+            def draw_sensor_ray(sensor_data, sensor_orig, beam_color=(0, 240, 120), label_name=""):
+                dist, hit_pt, adc_val, is_post, glitch = sensor_data.dist, sensor_data.hit_pt, sensor_data.adc, sensor_data.is_post, sensor_data.glitch
                 o_px, o_py = world_to_cam(sensor_orig[0], sensor_orig[1])
                 if hit_pt:
                     h_px, h_py = world_to_cam(hit_pt[0], hit_pt[1])
-                    pygame.draw.line(self.screen, beam_color, (o_px, o_py), (h_px, h_py), 2)
+                    beam_clr = (255, 60, 60) if glitch else beam_color
+                    pygame.draw.line(self.screen, beam_clr, (o_px, o_py), (h_px, h_py), 2)
                     pygame.draw.circle(self.screen, (255, 255, 255), (int(h_px), int(h_py)), 4)
-                    tag_lbl = self.font_sensor.render(f"{dist:.0f}mm", True, (255, 255, 100))
+                    if is_post:
+                        pygame.draw.circle(self.screen, (255, 160, 0), (int(h_px), int(h_py)), 7, 2)
+                    tag_str = f"{label_name} {dist:.0f}mm ({adc_val} ADC)"
+                    tag_clr = (255, 80, 80) if glitch else (255, 255, 120)
+                    tag_lbl = self.font_sensor.render(tag_str, True, tag_clr)
                     self.screen.blit(tag_lbl, (h_px + 6, h_py - 6))
 
             cos_b = math.cos(self.bot.theta)
             sin_b = math.sin(self.bot.theta)
-            pos_L = (self.bot.x - self.bot.half_w * sin_b, self.bot.y + self.bot.half_w * cos_b)
-            pos_R = (self.bot.x + self.bot.half_w * sin_b, self.bot.y - self.bot.half_w * cos_b)
-            pos_nose = (self.bot.x + self.bot.half_l * cos_b, self.bot.y + self.bot.half_l * sin_b)
 
-            draw_sensor_ray(self.bot.sensor_left, pos_L, (0, 230, 255))
-            draw_sensor_ray(self.bot.sensor_right, pos_R, (0, 230, 255))
-            draw_sensor_ray(self.bot.sensor_fl, pos_nose, (0, 255, 140))
-            draw_sensor_ray(self.bot.sensor_fr, pos_nose, (0, 255, 140))
+            pos_L90 = (self.bot.x - self.bot.half_w * sin_b, self.bot.y + self.bot.half_w * cos_b)
+            pos_L45 = (self.bot.x + 36.0 * cos_b - 25.0 * sin_b, self.bot.y + 36.0 * sin_b + 25.0 * cos_b)
+            pos_FL  = (self.bot.x + self.bot.half_l * cos_b - 12.0 * sin_b, self.bot.y + self.bot.half_l * sin_b + 12.0 * cos_b)
+            pos_FR  = (self.bot.x + self.bot.half_l * cos_b + 12.0 * sin_b, self.bot.y + self.bot.half_l * sin_b - 12.0 * cos_b)
+            pos_R45 = (self.bot.x + 36.0 * cos_b + 25.0 * sin_b, self.bot.y + 36.0 * sin_b - 25.0 * cos_b)
+            pos_R90 = (self.bot.x + self.bot.half_w * sin_b, self.bot.y - self.bot.half_w * cos_b)
+
+            # Draw all 6 optical sensor rays with authentic hardware geometry
+            draw_sensor_ray(self.bot.sensor_l90, pos_L90, (0, 230, 255), "L90")
+            draw_sensor_ray(self.bot.sensor_l45, pos_L45, (180, 255, 50), "L45")
+            draw_sensor_ray(self.bot.sensor_fl,  pos_FL,  (0, 255, 140), "FL")
+            draw_sensor_ray(self.bot.sensor_fr,  pos_FR,  (0, 255, 140), "FR")
+            draw_sensor_ray(self.bot.sensor_r45, pos_R45, (180, 255, 50), "R45")
+            draw_sensor_ray(self.bot.sensor_r90, pos_R90, (0, 230, 255), "R90")
 
             z_w = 70.0 * zoom
             z_l = 80.0 * zoom
@@ -1391,7 +1781,7 @@ class MMSAdvancedSimulator:
 
             self.screen.set_clip(None)
 
-            lbl_cam = self.font_hud_bold.render("DYNAMIC ONBOARD CHASE CAMERA (ZOOM 3.6x) + 4x IR RAYCASTS", True, (0, 140, 220))
+            lbl_cam = self.font_hud_bold.render("DYNAMIC ONBOARD CHASE CAMERA (3.6x) + 6-CH OPTICAL IR ARRAYS", True, (0, 140, 220))
             self.screen.blit(lbl_cam, (self.chase_x + 12, self.chase_y + 8))
 
         # ----------------------------------------------------------------------
@@ -1402,18 +1792,18 @@ class MMSAdvancedSimulator:
             pygame.draw.rect(self.screen, (255, 255, 255), hud_panel_rect, border_radius=6)
             pygame.draw.rect(self.screen, (205, 212, 222), hud_panel_rect, width=1, border_radius=6)
 
-            lbl_hud_title = self.font_hud_bold.render("PHYSICAL SENSORS & DIFFERENTIAL KINEMATICS", True, (25, 30, 40))
+            lbl_hud_title = self.font_hud_bold.render("1-TO-1 HARDWARE TELEMETRY & DIFFERENTIAL KINEMATICS", True, (25, 30, 40))
             self.screen.blit(lbl_hud_title, (self.hud_x + 16, self.hud_y + 10))
             pygame.draw.line(self.screen, (230, 234, 242), (self.hud_x + 16, self.hud_y + 30), (self.hud_x + self.hud_w - 16, self.hud_y + 30), 1)
 
-            y_c = self.hud_y + 36
+            y_c = self.hud_y + 34
             cur_pt = self.traj_points[self.traj_idx] if self.traj_points else None
 
             def draw_hud_col(col_x, label, val_str, val_clr=(20, 25, 35)):
                 lbl = self.font_hud.render(label, True, (105, 115, 130))
                 val = self.font_hud_bold.render(val_str, True, val_clr)
                 self.screen.blit(lbl, (col_x, y_c))
-                self.screen.blit(val, (col_x, y_c + 18))
+                self.screen.blit(val, (col_x, y_c + 16))
 
             col1_x = self.hud_x + 16
             col2_x = self.hud_x + self.hud_w // 2 + 10
@@ -1423,36 +1813,45 @@ class MMSAdvancedSimulator:
             draw_hud_col(col1_x, "Active State:", status_txt, status_clr)
             draw_hud_col(col2_x, "Phase Time / Total:", f"{self.phase_time:.2f}s / {self.lap_time:.2f}s", (0, 110, 200))
 
-            y_c += 42
+            y_c += 36
             cur_v = self.bot.v
             draw_hud_col(col1_x, "Linear Velocity (v):", f"{cur_v:6.1f} mm/s", (0, 140, 210))
             cur_g = cur_pt.g_force if cur_pt else 0.0
             g_clr = (220, 30, 30) if cur_g > 0.7 else ((220, 140, 0) if cur_g > 0.35 else (40, 160, 80))
             draw_hud_col(col2_x, "Lateral G-Load (v²/R):", f"{cur_g:4.2f} G", g_clr)
 
-            y_c += 42
+            y_c += 36
             draw_hud_col(col1_x, "Wheel Speeds (vL / vR):", f"{self.bot.v_left:5.0f} / {self.bot.v_right:5.0f} mm/s")
             omega_deg = math.degrees(self.bot.omega)
             draw_hud_col(col2_x, "Gyro Yaw Rate (ω):", f"{omega_deg:6.1f} °/s")
 
-            y_c += 42
-            dL = self.bot.sensor_left[0]
-            dR = self.bot.sensor_right[0]
-            center_status = f"L:{dL:4.0f} | R:{dR:4.0f} mm"
-            draw_hud_col(col1_x, "IR Wall Clearance:", center_status, (40, 160, 80) if abs(dL - dR) < 20 else (200, 100, 0))
+            y_c += 36
+            mode_str = f"[{self.bot.centering_mode}]"
+            mode_clr = (40, 160, 80) if "DUAL" in mode_str else ((0, 120, 220) if "SINGLE" in mode_str else ((200, 120, 0) if "HEADING" in mode_str else (180, 50, 50)))
+            dL = self.bot.sensor_l90.dist
+            dR = self.bot.sensor_r90.dist
+            draw_hud_col(col1_x, "Straight Wall Centering:", f"{mode_str} L:{dL:.0f}|R:{dR:.0f}mm", mode_clr)
             cur_cx = int(self.bot.x // CELL_SIZE_MM)
             cur_cy = int(self.bot.y // CELL_SIZE_MM)
             draw_hud_col(col2_x, "Coordinates & Heading:", f"({cur_cx},{cur_cy}) | {math.degrees(self.bot.theta):4.0f}°")
 
-            y_c += 42
-            t_c = self.metrics_curves.get('time', 0.0)
-            t_d = self.metrics_diags.get('time', 0.0)
-            strat_val = f"{self.strategy_mode} ({self.best_strategy})"
-            strat_clr = (0, 140, 70) if "AUTO" in self.strategy_mode else ((200, 100, 0) if "DIAG" in self.strategy_mode else (0, 100, 220))
-            draw_hud_col(col1_x, "Strategy Optimizer:", strat_val, strat_clr)
-            draw_hud_col(col2_x, "Curves vs Diagonals:", f"{t_c:.2f}s vs {t_d:.2f}s (Δ {self.time_savings:.2f}s)", (200, 100, 0) if self.best_strategy == "DIAGONALS" else (0, 110, 200))
+            y_c += 36
+            noise_str = "Jitter ±16 ADC | SNR: 32dB" if self.bot.optical_noise_enabled else "OFF (Ideal Raycast)"
+            if self.bot.active_glitches > 0:
+                noise_str += " ⚠️ GLITCH"
+            noise_clr = (220, 60, 60) if self.bot.active_glitches > 0 else ((40, 160, 80) if self.bot.optical_noise_enabled else (120, 125, 135))
+            draw_hud_col(col1_x, "Optical Signal & Jitter:", noise_str, noise_clr)
+            drift_deg = math.degrees(self.bot.gyro_drift)
+            imbal_str = "1.2% Drift" if self.bot.motor_imbalance_enabled else "0% (Ideal)"
+            draw_hud_col(col2_x, "IMU Drift & Imbalance:", f"Drift: {drift_deg:+.2f}° | {imbal_str}", (200, 100, 0) if abs(drift_deg) > 1.0 else (0, 120, 200))
 
-            log_box_y = y_c + 44
+            y_c += 36
+            sync_str = f"Synced at ({self.bot.last_sync_cell[0]},{self.bot.last_sync_cell[1]})" if self.bot.last_sync_cell != (0, 0) else "Active"
+            slip_pct = self.bot.slip_ratio * 100.0
+            draw_hud_col(col1_x, "Traction & Post Sync:", f"Slip: {slip_pct:.1f}% | {sync_str}", (40, 160, 80) if not self.bot.sync_active else (255, 160, 0))
+            draw_hud_col(col2_x, "Strategy Optimizer:", f"{self.strategy_mode} ({self.best_strategy})", (0, 140, 70) if "AUTO" in self.strategy_mode else (0, 100, 220))
+
+            log_box_y = y_c + 40
             log_box_h = max(35, self.hud_h - (log_box_y - self.hud_y) - 8)
             log_rect = pygame.Rect(self.hud_x + 14, log_box_y, self.hud_w - 28, log_box_h)
             pygame.draw.rect(self.screen, (12, 15, 20), log_rect, border_radius=4)
@@ -1460,7 +1859,7 @@ class MMSAdvancedSimulator:
 
             y_log = log_box_y + 8
             for msg in self.logs[-5:]:
-                clr = (255, 80, 80) if "[COLLISION]" in msg else ((0, 230, 140) if "[MOUSE]" in msg else ((255, 190, 40) if "[TOURNAMENT]" in msg or "[DISTURBANCE]" in msg else (180, 200, 220)))
+                clr = (255, 80, 80) if "[COLLISION]" in msg else ((0, 230, 140) if "[MOUSE]" in msg or "[HARDWARE]" in msg else ((255, 190, 40) if "[TOURNAMENT]" in msg or "[DISTURBANCE]" in msg or "[STRAIGHTS]" in msg else (180, 200, 220)))
                 lbl = self.font_log.render(msg, True, clr)
                 self.screen.blit(lbl, (self.hud_x + 22, y_log))
                 y_log += 20

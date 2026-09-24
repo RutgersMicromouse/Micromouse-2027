@@ -147,6 +147,66 @@ void handleRemoteCommand(String cmd, uint8_t& selected_mode, bool is_active_run,
         } else {
             reply("ERR: CANNOT_CALIB_WHILE_RUNNING");
         }
+    } else if (cmd == "motorcal") {
+        if (!is_active_run) {
+            reply("Starting automated motor speed calibration (wheels must be freewheeling)...");
+            setRGB(true, true, false); // Yellow during calibration
+            bool ok = g_motion_controller.calibrateMotors();
+            if (ok) {
+                flashRGB(false, true, false, 4, 100); // Green
+                float tl = 1.0f, tr = 1.0f;
+                g_motors.getTrim(tl, tr);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "ACK: MOTOR CALIB SUCCESS (L=%.4f, R=%.4f)", tl, tr);
+                reply(buf);
+            } else {
+                flashRGB(true, false, false, 4, 100); // Red
+                reply("ERR: MOTOR CALIB FAILED (check wheels or battery)");
+            }
+            updateModeLED(selected_mode);
+        } else {
+            reply("ERR: CANNOT_CALIB_WHILE_RUNNING");
+        }
+    } else if (cmd.startsWith("motorrpm")) {
+        if (!is_active_run) {
+            float duty = 0.5f;
+            int space_idx = cmd.indexOf(' ');
+            if (space_idx > 0) {
+                float parsed = cmd.substring(space_idx + 1).toFloat();
+                if (parsed > 0.05f && parsed <= 1.0f) {
+                    duty = parsed;
+                }
+            }
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Running tachometer benchmark at %.0f%% duty for 4000ms...", duty * 100.0f);
+            reply(buf);
+            setRGB(false, true, true); // Cyan
+            g_motion_controller.runTachometerBenchmark(duty, 4000);
+            reply("ACK: TACH BENCHMARK FINISHED");
+            updateModeLED(selected_mode);
+        } else {
+            reply("ERR: CANNOT_BENCHMARK_WHILE_RUNNING");
+        }
+    } else if (cmd.startsWith("motortrim")) {
+        int space_idx = cmd.indexOf(' ');
+        if (space_idx > 0) {
+            float tl = 1.0f, tr = 1.0f;
+            if (sscanf(cmd.c_str() + space_idx + 1, "%f %f", &tl, &tr) == 2) {
+                g_motors.setTrim(tl, tr);
+                g_motors.saveToNVS();
+                char buf[64];
+                snprintf(buf, sizeof(buf), "ACK: TRIM UPDATED & SAVED (L=%.4f, R=%.4f)", tl, tr);
+                reply(buf);
+            } else {
+                reply("ERR: USAGE 'motortrim <left> <right>'");
+            }
+        } else {
+            float tl = 1.0f, tr = 1.0f;
+            g_motors.getTrim(tl, tr);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "MOTORS TRIM: Left=%.4f | Right=%.4f", tl, tr);
+            reply(buf);
+        }
     } else if (cmd == "clear") {
         if (!is_active_run) {
             g_navigator->clearSavedMaze();
@@ -162,7 +222,7 @@ void handleRemoteCommand(String cmd, uint8_t& selected_mode, bool is_active_run,
         snprintf(buf, sizeof(buf), "STATUS: VBat=%.2fV | Mode=%d | State=%d", vbat, selected_mode, (int)g_navigator->getState());
         reply(buf);
     } else if (cmd == "help") {
-        reply("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status");
+        reply("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status, motorcal, motorrpm [duty], motortrim [l r]");
     } else {
         char buf[64];
         snprintf(buf, sizeof(buf), "ERR: UNKNOWN COMMAND '%s' (type 'help')", cmd.c_str());
@@ -202,7 +262,7 @@ void motionControlTask(void* pvParameters) {
 
         // 2. High-rate IMU sensor fusion (500 Hz continuous dead-reckoning + 100 Hz I2C poll)
         float yaw_rate = (enc.right_speed_mm_s - enc.left_speed_mm_s) / WHEEL_BASE_MM * (180.0f / PI);
-        g_imu.update(CONTROL_DT_S, yaw_rate);
+        g_imu.update(CONTROL_DT_S, yaw_rate, enc.linear_speed_mm_s);
 
         // 3. Check for motion commands from Navigation
         if (xQueueReceive(g_motion_cmd_queue, &current_cmd, 0) == pdTRUE) {
@@ -303,6 +363,15 @@ void navigationTask(void* pvParameters) {
         }
 #endif
 
+        // --- USB SERIAL CONSOLE COMMANDS ---
+        if (Serial.available()) {
+            String serial_cmd = Serial.readStringUntil('\n');
+            serial_cmd.trim();
+            if (serial_cmd.length() > 0) {
+                handleRemoteCommand(serial_cmd, selected_mode, is_active_run, ir_snapshot, false);
+            }
+        }
+
         // --- MANUAL E-STOP / PAUSE WHILE MOVING ---
         // Tapping either button while the robot is running immediately brakes and halts navigation
         if (is_active_run) {
@@ -370,12 +439,14 @@ void navigationTask(void* pvParameters) {
         last_confirm_btn = curr_confirm_btn;
 
         // Advance FSM strictly when physical motion completes
-        if (xSemaphoreTake(g_motion_done_sem, 0) == pdTRUE) {
+        TickType_t sem_wait = is_active_run ? pdMS_TO_TICKS(5) : 0;
+        if (xSemaphoreTake(g_motion_done_sem, sem_wait) == pdTRUE) {
             g_navigator->notifyMotionComplete();
             g_navigator->step(ir_snapshot);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(20));
+        // Fast 1ms yield during active runs for seamless motion chaining; 20ms during idle
+        vTaskDelay(is_active_run ? pdMS_TO_TICKS(1) : pdMS_TO_TICKS(20));
     }
 }
 
@@ -535,6 +606,7 @@ void setup() {
     Serial.println("  - Long Press STATE (>2 sec) or send 'calib'                       -> In-Cell IR Auto-Calibration");
     Serial.println("  - Short Press CONFIRM (GPIO41) or send 'start'                    -> Launch Selected Run");
     Serial.println("  - Long Press CONFIRM (>2.5 sec) or send 'clear'                   -> Clear Saved Maze from Flash");
+    Serial.println("  - Bench Motor Calib: send 'motorcal' or 'motorrpm [duty]'         -> Auto-balance wheel RPMs & Save");
 }
 
 void loop() {

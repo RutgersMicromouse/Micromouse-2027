@@ -1,9 +1,12 @@
 #include "motors.h"
+#include <Preferences.h>
 
 Motors::Motors()
     : invert_left_(false),
       invert_right_(false),
-      power_enabled_(false) {}
+      power_enabled_(false),
+      trim_left_(1.0f),
+      trim_right_(1.0f) {}
 
 void Motors::begin() {
     // 1. Configure Hardware Reset and Boost Converter Enable pins
@@ -35,6 +38,9 @@ void Motors::begin() {
     mc_.setMaxAcceleration(2, 0);
     mc_.setMaxDeceleration(2, 0);
 
+    // 5. Load calibration trims from Flash NVS
+    loadFromNVS();
+
     coast();
 }
 
@@ -46,6 +52,10 @@ void Motors::setMotorPowerEnabled(bool enabled) {
 
 void Motors::setEffort(float left_effort, float right_effort) {
     if (!power_enabled_) return;
+
+    // Apply motor balance calibration trims
+    left_effort *= trim_left_;
+    right_effort *= trim_right_;
 
     if (invert_left_)  left_effort  = -left_effort;
     if (invert_right_) right_effort = -right_effort;
@@ -73,6 +83,68 @@ void Motors::setEffort(float left_effort, float right_effort) {
     mc_.setAllSpeedsNow(right_cmd, left_cmd);
 }
 
+void Motors::setRawEffort(float left_effort, float right_effort) {
+    if (!power_enabled_) return;
+
+    // Direct effort bypassing trim multipliers (used for calibration benchmarking)
+    if (invert_left_)  left_effort  = -left_effort;
+    if (invert_right_) right_effort = -right_effort;
+
+    if (left_effort > 1.0f) left_effort = 1.0f;
+    if (left_effort < -1.0f) left_effort = -1.0f;
+    if (right_effort > 1.0f) right_effort = 1.0f;
+    if (right_effort < -1.0f) right_effort = -1.0f;
+
+    const float deadband = 0.02f;
+    int16_t left_cmd = 0;
+    int16_t right_cmd = 0;
+
+    if (fabsf(left_effort) >= deadband) {
+        left_cmd = (int16_t)(left_effort * (float)MOTORON_MAX_SPEED);
+    }
+    if (fabsf(right_effort) >= deadband) {
+        right_cmd = (int16_t)(right_effort * (float)MOTORON_MAX_SPEED);
+    }
+
+    mc_.setAllSpeedsNow(right_cmd, left_cmd);
+}
+
+void Motors::setTrim(float trim_left, float trim_right) {
+    trim_left_ = constrain(trim_left, 0.5f, 1.0f);
+    trim_right_ = constrain(trim_right, 0.5f, 1.0f);
+}
+
+void Motors::getTrim(float& trim_left, float& trim_right) const {
+    trim_left = trim_left_;
+    trim_right = trim_right_;
+}
+
+void Motors::saveToNVS() {
+    Preferences prefs;
+    prefs.begin("motor_cal", false);
+    prefs.putFloat("trim_l", trim_left_);
+    prefs.putFloat("trim_r", trim_right_);
+    prefs.putBool("valid", true);
+    prefs.end();
+    Serial.printf("[MOTORS] Trim saved to Flash NVS: L=%.4f, R=%.4f\n", trim_left_, trim_right_);
+}
+
+bool Motors::loadFromNVS() {
+    Preferences prefs;
+    prefs.begin("motor_cal", true);
+    if (!prefs.getBool("valid", false)) {
+        prefs.end();
+        trim_left_ = 1.0f;
+        trim_right_ = 1.0f;
+        return false;
+    }
+    trim_left_ = prefs.getFloat("trim_l", 1.0f);
+    trim_right_ = prefs.getFloat("trim_r", 1.0f);
+    prefs.end();
+    Serial.printf("[MOTORS] Trim loaded from Flash NVS: L=%.4f, R=%.4f\n", trim_left_, trim_right_);
+    return true;
+}
+
 void Motors::brake() {
     mc_.setBrakingNow(1, MOTORON_MAX_SPEED);
     mc_.setBrakingNow(2, MOTORON_MAX_SPEED);
@@ -86,3 +158,4 @@ void Motors::setInverted(bool invert_left, bool invert_right) {
     invert_left_ = invert_left;
     invert_right_ = invert_right;
 }
+

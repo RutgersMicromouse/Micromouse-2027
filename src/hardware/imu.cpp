@@ -123,7 +123,7 @@ bool IMU::readBNO055Data(float& heading_deg, float& gyro_z) {
     return true;
 }
 
-void IMU::update(float dt_seconds, float encoder_yaw_rate) {
+void IMU::update(float dt_seconds, float encoder_yaw_rate, float linear_speed_mm_s) {
     if (dt_seconds <= 0.0f) {
         dt_seconds = CONTROL_DT_S;
     }
@@ -135,8 +135,9 @@ void IMU::update(float dt_seconds, float encoder_yaw_rate) {
         float raw_h = 0.0f;
         float raw_gz = 0.0f;
         if (readBNO055Data(raw_h, raw_gz)) {
-            // 1. Zero-Velocity Update (ZUPT): Continuously update gyro bias when robot is stationary
-            if (fabsf(encoder_yaw_rate) < 1.0f) {
+            // 1. Zero-Velocity Update (ZUPT): ONLY update static gyro bias when robot is ACTUALLY stationary
+            bool is_stationary = (fabsf(linear_speed_mm_s) < 8.0f) && (fabsf(encoder_yaw_rate) < 1.0f);
+            if (is_stationary) {
                 gyro_bias_z_ = 0.98f * gyro_bias_z_ + 0.02f * raw_gz;
             }
             state_.gyro_z_deg_s = raw_gz - gyro_bias_z_;

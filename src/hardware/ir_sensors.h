@@ -21,9 +21,15 @@ public:
     bool hasRightWall() const;
     bool hasFrontWall() const;
 
-    // Pillar / post edge detection
+    // Pillar / post edge detection (falling and rising)
     bool hasLeftPostEdge() const;
     bool hasRightPostEdge() const;
+    bool hasLeftPostRising() const;
+    bool hasRightPostRising() const;
+
+    // Anticipated opening detection (wall terminating ahead)
+    bool hasLeftOpening() const;
+    bool hasRightOpening() const;
 
     // Predictive centering error for corridor following
     float getCenteringError() const;

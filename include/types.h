@@ -55,6 +55,7 @@ enum MotionAction : uint8_t {
     ACTION_CURVE_RIGHT_45,       // Smooth continuous 45 deg clockwise arc
     ACTION_TURN_AROUND_180,      // In-place 180 deg turnaround
     ACTION_ALIGN_FRONT_WALL,     // Gently tap front wall to zero distance/heading
+    ACTION_SQUARE_FRONT_OPTICAL, // Contactless optical squaring against front wall using FL/FR
     ACTION_EMERGENCY_STOP
 };
 
@@ -96,8 +97,13 @@ struct IRReadings {
     bool wall_front;             // Detected front wall
     bool wall_right;             // Detected right wall (via 90° side sensor)
 
-    bool post_edge_left;         // Detected left pillar/post edge transition
-    bool post_edge_right;        // Detected right pillar/post edge transition
+    bool post_edge_left;         // Detected left pillar/post falling edge (wall ending)
+    bool post_edge_right;        // Detected right pillar/post falling edge (wall ending)
+    bool post_rising_left;       // Detected left pillar/post rising edge (wall beginning)
+    bool post_rising_right;      // Detected right pillar/post rising edge (wall beginning)
+
+    bool opening_left;           // Anticipated opening on the left (wall ending ahead)
+    bool opening_right;          // Anticipated opening on the right (wall ending ahead)
 
     // Centering error: positive means mouse is biased left (steer right)
     float centering_error;

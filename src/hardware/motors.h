@@ -10,8 +10,19 @@ public:
     Motors();
     void begin();
 
-    // Effort range: -1.0 (full reverse) to +1.0 (full forward)
+    // Effort range: -1.0 (full reverse) to +1.0 (full forward) with trim applied
     void setEffort(float left_effort, float right_effort);
+
+    // Raw effort without trim multipliers applied (used for calibration)
+    void setRawEffort(float left_effort, float right_effort);
+
+    // Motor balance trim (Left and Right multipliers)
+    void setTrim(float trim_left, float trim_right);
+    void getTrim(float& trim_left, float& trim_right) const;
+
+    // Flash NVS storage for motor balance calibration
+    void saveToNVS();
+    bool loadFromNVS();
 
     // Actively brakes both motors
     void brake();
@@ -30,4 +41,6 @@ private:
     bool invert_left_;
     bool invert_right_;
     bool power_enabled_;
+    float trim_left_;
+    float trim_right_;
 };

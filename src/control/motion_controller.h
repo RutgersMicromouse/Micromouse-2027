@@ -29,6 +29,12 @@ public:
     // Wall following enable/disable
     void setWallCenteringEnabled(bool enabled);
 
+    // Motor speed calibration & tachometer benchmark
+    bool calibrateMotors();
+    void runTachometerBenchmark(float duty = 0.5f, uint16_t duration_ms = 4000);
+    bool isCalibrating() const { return calibrating_motors_; }
+    void setCalibrating(bool cal) { calibrating_motors_ = cal; }
+
 private:
     Encoders& encoders_;
     Motors& motors_;
@@ -62,8 +68,10 @@ private:
 
     // Alignment state
     uint16_t wall_align_timer_;
+    uint16_t chained_coast_timer_;
 
     void checkPillarDriftCorrection(float current_dist_mm);
 
     bool wall_centering_enabled_;
+    volatile bool calibrating_motors_;
 };
