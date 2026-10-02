@@ -38,13 +38,13 @@ void printHelp() {
 
 void streamDiagnostics() {
     DistanceSensors ir = ir_sensors.getReadings();
-    Serial.printf("[DIAG] BAT: %4.2fV | ENC: L=%6.1fmm R=%6.1fmm | IMU: %6.1f deg (%5.1f dps) | IR: [L90:%4d L45:%4d F:%4d R45:%4d R90:%4d] Centering:%+4.2f\n",
+    Serial.printf("[DIAG] BAT: %4.2fV | ENC: L=%6.1fmm R=%6.1fmm | IMU: %6.1f deg (%5.1f dps) | 0A51SK mm: [L90:%4.1f L45:%4.1f F:%4.1f R45:%4.1f R90:%4.1f] Center:%+4.2f\n",
                   battery.getVoltage(),
                   encoders.getLeftDistanceMM(),
                   encoders.getRightDistanceMM(),
                   imu.getHeadingDeg(),
                   imu.getYawRateDeg_S(),
-                  ir.left_90, ir.left_45, ir.front, ir.right_45, ir.right_90,
+                  ir.left_90_mm, ir.left_45_mm, ir.front_mm, ir.right_45_mm, ir.right_90_mm,
                   ir.centering_error);
 }
 

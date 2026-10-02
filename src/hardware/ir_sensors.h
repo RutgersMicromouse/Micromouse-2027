@@ -5,7 +5,8 @@
 #include "types.h"
 
 // =============================================================================
-// 5-Channel Analog IR Distance Sensors
+// 5-Channel Analog IR Distance Sensors (Sharp GP2Y0A51SK0F / 0A51SK)
+// Range: 2 cm to 15 cm (20 mm to 150 mm)
 // Pins:
 //   FIR  = 17 (Front)
 //   L1IR = 16 (Left 45°)
@@ -40,15 +41,26 @@ public:
     // Centering steering error (-1.0 to +1.0)
     float getCenteringError() const;
 
-    // Raw sensor readings
+    // Raw sensor readings and distances
     DistanceSensors getReadings() const;
 
-    // Direct access to filtered readings
+    // Direct access to filtered ADC readings
     uint16_t getFront() const    { return readings_.front; }
     uint16_t getLeft45() const   { return readings_.left_45; }
     uint16_t getLeft90() const   { return readings_.left_90; }
     uint16_t getRight45() const  { return readings_.right_45; }
     uint16_t getRight90() const  { return readings_.right_90; }
+
+    // Physical millimeter distance queries (Sharp GP2Y0A51SK0F model)
+    float getFrontMM() const     { return readings_.front_mm; }
+    float getLeft45MM() const    { return readings_.left_45_mm; }
+    float getLeft90MM() const    { return readings_.left_90_mm; }
+    float getRight45MM() const   { return readings_.right_45_mm; }
+    float getRight90MM() const   { return readings_.right_90_mm; }
+
+    // Sharp GP2Y0A51SK0F voltage and distance conversion
+    static float adcToVoltage(uint16_t raw_adc);
+    static float voltageToDistanceMM(float voltage);
 
 private:
     uint16_t readAnalogOversampled(uint8_t pin, uint8_t samples = 4);
@@ -66,6 +78,8 @@ private:
     uint16_t nominal_center_r90_;
     uint16_t nominal_center_l45_;
     uint16_t nominal_center_r45_;
+
+    float nominal_side_dist_mm_;
 
     // Previous readings for edge detection
     uint16_t prev_l90_;

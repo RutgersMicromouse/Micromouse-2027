@@ -100,16 +100,26 @@
 #define TURN_ACCEL_DEG_S2      2000.0f // Angular acceleration
 
 // -----------------------------------------------------------------------------
-// 6. IR SENSOR CALIBRATION & THRESHOLDS (ADC raw 0-1023)
+// 6. SHARP GP2Y0A51SK0F (0A51SK) SENSOR CALIBRATION & DISTANCES
+// Range: 2 cm to 15 cm (20 mm to 150 mm)
+// Output: ~2.2V at 20mm down to ~0.4V at 150mm
+// Model: Distance_mm = SHARP_A / (Voltage - SHARP_B)
 // -----------------------------------------------------------------------------
-#define IR_WALL_DETECT_FRONT   180     // Front wall detection threshold
-#define IR_WALL_DETECT_L45     150     // 45° Left wall detection threshold
-#define IR_WALL_DETECT_R45     150     // 45° Right wall detection threshold
-#define IR_WALL_DETECT_L90     130     // 90° Left wall detection threshold
-#define IR_WALL_DETECT_R90     130     // 90° Right wall detection threshold
+#define SHARP_0A51SK_A         48.375f // Empirical curve numerator (mm * V)
+#define SHARP_0A51SK_B         0.0675f // Voltage offset baseline (V)
+#define SHARP_MIN_DIST_MM      15.0f   // Physical close-range threshold
+#define SHARP_MAX_DIST_MM      160.0f  // Physical far-range threshold
 
-#define IR_NOMINAL_CENTER_L90  320     // Reading when perfectly centered
-#define IR_NOMINAL_CENTER_R90  320
-#define IR_NOMINAL_CENTER_L45  290
-#define IR_NOMINAL_CENTER_R45  290
-#define IR_FRONT_STOP_DIST     420     // Front reading when robot is in cell center with front wall
+// Raw ADC Thresholds (Teensy 4.0 10-bit ADC, 3.3V reference)
+#define IR_WALL_DETECT_FRONT   180     // Front wall detection threshold (ADC)
+#define IR_WALL_DETECT_L45     150     // 45° Left wall detection threshold (ADC)
+#define IR_WALL_DETECT_R45     150     // 45° Right wall detection threshold (ADC)
+#define IR_WALL_DETECT_L90     130     // 90° Left wall detection threshold (ADC)
+#define IR_WALL_DETECT_R90     130     // 90° Right wall detection threshold (ADC)
+
+// Millimeter Distance Thresholds
+#define WALL_DETECT_DIST_MM    115.0f  // Objects closer than 115mm classify as a wall
+#define NOMINAL_SIDE_WALL_MM   49.0f   // Distance from side sensor to wall when centered in cell
+#define FRONT_WALL_STOP_MM     45.0f   // Target distance to front wall when stopped/squaring
+#define IR_FRONT_STOP_DIST     420     // Front raw ADC reading when at front stop distance
+
