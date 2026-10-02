@@ -1,0 +1,36 @@
+#pragma once
+
+#include <Arduino.h>
+#include "maze_constants.h"
+#include "maze.h"
+#include "types.h"
+
+// =============================================================================
+// Wavefront Floodfill Maze Solver
+// Supports Center Goal (7,7)-(8,8), Start Goal (0,0), and Custom Waypoints
+// =============================================================================
+
+class Floodfill {
+public:
+    explicit Floodfill(const Maze& maze);
+
+    // Goal Configuration
+    void setGoalToCenter();
+    void setGoalToStart();
+    void setCustomGoal(int8_t x, int8_t y);
+
+    // Recalculate distance matrix across all 256 cells
+    void recalculate();
+
+    // Query distance metric
+    uint16_t getDistance(int8_t x, int8_t y) const;
+    bool isAtGoal(int8_t x, int8_t y) const;
+
+    // Determine optimal direction to move next
+    Direction getNextDirection(int8_t current_x, int8_t current_y, Direction current_heading);
+
+private:
+    const Maze& maze_;
+    uint16_t distance_[MAZE_WIDTH][MAZE_HEIGHT];
+    bool is_goal_[MAZE_WIDTH][MAZE_HEIGHT];
+};
