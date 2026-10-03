@@ -19,16 +19,16 @@ void Explorer::explore() {
     // Calculations
     std::vector<int> bestPath = fastestRunAStar(0, center_node_id); // std::vector<int> bestPath = fastestRunAStar(0, beacon_node_id);
     //smart_delay(10000);
-    Serial.print("---------------");
-    Serial.print("Shortest Path: ");
+    Serial1.print("---------------");
+    Serial1.print("Shortest Path: ");
     for(int i = 0; i < bestPath.size(); i++) {
-        Serial.print(bestPath[i]);
-        Serial.print(" -> ");
+        Serial1.print(bestPath[i]);
+        Serial1.print(" -> ");
     }
-    Serial.println("");
+    Serial1.println("");
     std::vector<Instruction> instructionsToFinal = buildFastestInstructions(bestPath);
     
-    Serial.print("---------------");
+    Serial1.print("---------------");
     std::vector<Instruction> reverseInstructionsToFinal;
     for(auto it = instructionsToFinal.rbegin(); it != instructionsToFinal.rend(); ++it) {
         Instruction instr = *it;
@@ -39,12 +39,12 @@ void Explorer::explore() {
                     InstructionType::ROTATE_RELATIVE,
                     (instr.value * -1)
                 });
-                Serial.print("Type: Relative | Value: "); Serial.println(instr.value);
+                Serial1.print("Type: Relative | Value: "); Serial1.println(instr.value);
                 break;
             
             case InstructionType::FORWARD:
                 reverseInstructionsToFinal.push_back(instr);
-                Serial.print("Type: Forward | Value: "); Serial.println(instr.value);
+                Serial1.print("Type: Forward | Value: "); Serial1.println(instr.value);
                 break;
         }
     }
@@ -59,7 +59,7 @@ void Explorer::explore() {
         while(true) {
             if(front() < 60 && front() > 0) {
                 hand = true;
-                Serial.println("Hand Found");
+                Serial1.println("Hand Found");
                 digitalWrite(LED_BUILTIN, LOW);
             }
             if ((front() > 100) && (hand == true)) {
@@ -133,31 +133,31 @@ void smart_delay(int ms) {
 
 void Explorer::exploreFromNode(int node_id, Direction heading_to_parent) {
     //smart_delay(25);
-    Serial.print("----- Node: ");
-    Serial.print(node_id);
+    Serial1.print("----- Node: ");
+    Serial1.print(node_id);
     std::vector<Direction> exits = readExits();
-    Serial.print(" [Size: ");
-    Serial.print(exits.size());
+    Serial1.print(" [Size: ");
+    Serial1.print(exits.size());
     if(exits.size() > 1) {
-        Serial.print("] [First Checked: ");
-        Serial.print(static_cast<int>(exits[0]));
-        Serial.print("] [Second Checked: ");
-        Serial.print(static_cast<int>(exits[1]));
-        Serial.print("]");
-        Serial.println(" -----");
+        Serial1.print("] [First Checked: ");
+        Serial1.print(static_cast<int>(exits[0]));
+        Serial1.print("] [Second Checked: ");
+        Serial1.print(static_cast<int>(exits[1]));
+        Serial1.print("]");
+        Serial1.println(" -----");
     }
     //smart_delay(25);
     for (Direction dir : exits) {
-        Serial.print("Test Facing: ");
-        Serial.println(static_cast<int>(dir));
+        Serial1.print("Test Facing: ");
+        Serial1.println(static_cast<int>(dir));
         // skip if we already have an edge in this direction
         bool alreadyExplored = false;
         for (auto& [id, node] : graph.nodes) {
-            Serial.print("Node "); Serial.println(id);
+            Serial1.print("Node "); Serial1.println(id);
             for (auto& edge : node.edges) {
-                Serial.print("  -> Node "); Serial.print(edge.to_node_id);
-                Serial.print(" ("); Serial.print(static_cast<int>(edge.departure_direction)); Serial.println(")");
-                Serial.print(" cost: "); Serial.println(edge.cost);
+                Serial1.print("  -> Node "); Serial1.print(edge.to_node_id);
+                Serial1.print(" ("); Serial1.print(static_cast<int>(edge.departure_direction)); Serial1.println(")");
+                Serial1.print(" cost: "); Serial1.println(edge.cost);
             }
         }
         for (auto& edge : graph.nodes[node_id].edges) {
@@ -169,10 +169,10 @@ void Explorer::exploreFromNode(int node_id, Direction heading_to_parent) {
         if (alreadyExplored) continue;
 
         // face the exit direction
-        Serial.print("Actual Facing: ");
-        Serial.println(static_cast<int>(exits[0]));
+        Serial1.print("Actual Facing: ");
+        Serial1.println(static_cast<int>(exits[0]));
         faceDirection(dir);
-        // Serial.println(static_cast<int>(dir));
+        // Serial1.println(static_cast<int>(dir));
 
         //Gets instructions to next node
         std::vector<Instruction> instructions;
@@ -202,66 +202,66 @@ void Explorer::exploreFromNode(int node_id, Direction heading_to_parent) {
 
 
         // add edges in both directions
-        Serial.print("Adding Edges Home Node: ");
-        Serial.print(node_id);
-        Serial.print("| HEADING: ");
-        Serial.println(static_cast<int>(oppositeDirection(state.heading)));
+        Serial1.print("Adding Edges Home Node: ");
+        Serial1.print(node_id);
+        Serial1.print("| HEADING: ");
+        Serial1.println(static_cast<int>(oppositeDirection(state.heading)));
         graph.addEdge(node_id, next_node_id, dir, instructions, cost);
         Direction parent_heading = oppositeDirection(state.heading);
         graph.addEdge(next_node_id, node_id, oppositeDirection(state.heading), reverseInstructions, cost);
-        Serial.print("Discovered New Node?: ");
-        Serial.println(discoveredNewNode);
+        Serial1.print("Discovered New Node?: ");
+        Serial1.println(discoveredNewNode);
         if (discoveredNewNode) {
             // recurse into new node
             if (center_node_id == 0) {
-                Serial.print("Home Node: ");
-                Serial.print(node_id);
-                Serial.print("| HEADING: ");
-                Serial.println(static_cast<int>(parent_heading));
+                Serial1.print("Home Node: ");
+                Serial1.print(node_id);
+                Serial1.print("| HEADING: ");
+                Serial1.println(static_cast<int>(parent_heading));
                 exploreFromNode(next_node_id, parent_heading);
             }
             
             
-            Serial.print("Leaving That Node: ");
-            Serial.print(node_id);
-            Serial.print("| HEADING: ");
-            Serial.println(static_cast<int>(parent_heading));
+            Serial1.print("Leaving That Node: ");
+            Serial1.print(node_id);
+            Serial1.print("| HEADING: ");
+            Serial1.println(static_cast<int>(parent_heading));
             faceDirection(parent_heading);
         } else {
             faceDirection(oppositeDirection(state.heading));
         }
-        Serial.println("");
-        Serial.print("----- Final Position: (");
-        Serial.print(state.x);
-        Serial.print(", ");
-        Serial.print(state.y);
-        Serial.print(") HEADING: ");
-        Serial.print(static_cast<int>(state.heading));
-        Serial.println(" -----");
+        Serial1.println("");
+        Serial1.print("----- Final Position: (");
+        Serial1.print(state.x);
+        Serial1.print(", ");
+        Serial1.print(state.y);
+        Serial1.print(") HEADING: ");
+        Serial1.print(static_cast<int>(state.heading));
+        Serial1.println(" -----");
 
 
         // backtrack to current node
         executeInstructions(reverseInstructions);
         state.current_node_id = node_id;
     }
-    Serial.print("Escaping Node: ");
-    Serial.println(node_id);
+    Serial1.print("Escaping Node: ");
+    Serial1.println(node_id);
 }
 
 
 std::vector<Direction> Explorer::readExits() {
     std::vector<Direction> exits;
 
-    // Serial.print("* Left: ");
-    // Serial.print(left());
-    // Serial.print("| Front: ");
-    // Serial.print(front());
-    // Serial.print("| Right: ");
-    // Serial.println(right());
+    // Serial1.print("* Left: ");
+    // Serial1.print(left());
+    // Serial1.print("| Front: ");
+    // Serial1.print(front());
+    // Serial1.print("| Right: ");
+    // Serial1.println(right());
 
     // front is current heading
     if (front() > WALL_THRESHOLD_MM) {
-        // Serial.println(static_cast<int>(state.heading));
+        // Serial1.println(static_cast<int>(state.heading));
         exits.push_back(state.heading);
     }
 
@@ -269,7 +269,7 @@ std::vector<Direction> Explorer::readExits() {
     // left is 90 degrees CCW
     Direction leftDir = static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4);
     if (left() > WALL_THRESHOLD_MM) {
-        // Serial.println(static_cast<int>(leftDir));
+        // Serial1.println(static_cast<int>(leftDir));
         exits.push_back(leftDir);
     }
 
@@ -277,7 +277,7 @@ std::vector<Direction> Explorer::readExits() {
     // right is 90 degrees CW
     Direction rightDir = static_cast<Direction>((static_cast<int>(state.heading) + 1) % 4);
     if (right() > WALL_THRESHOLD_MM) {
-        // Serial.println(static_cast<int>(rightDir));
+        // Serial1.println(static_cast<int>(rightDir));
         exits.push_back(rightDir);
     }
 
@@ -290,7 +290,7 @@ void Explorer::executeInstructions(const std::vector<Instruction>& instructions)
     for (const auto& instr : instructions) {
         switch (instr.type) {
             case InstructionType::FORWARD:
-                Serial.println("Reverse (Forward)");
+                Serial1.println("Reverse (Forward)");
                 pidForward(instr.value * CELL_SIZE_MM, isEncoder);
                 updatePosition(instr.value);
                 break;
@@ -306,14 +306,14 @@ void Explorer::executeInstructions(const std::vector<Instruction>& instructions)
                 } 
                 break;
         } 
-        Serial.println("");
-        Serial.print("----- Position: (");
-        Serial.print(state.x);
-        Serial.print(", ");
-        Serial.print(state.y);
-        Serial.print(") HEADING: ");
-        Serial.print(static_cast<int>(state.heading));
-        Serial.println(" -----");
+        Serial1.println("");
+        Serial1.print("----- Position: (");
+        Serial1.print(state.x);
+        Serial1.print(", ");
+        Serial1.print(state.y);
+        Serial1.print(") HEADING: ");
+        Serial1.print(static_cast<int>(state.heading));
+        Serial1.println(" -----");
         //smart_delay(250);
     }
 }
@@ -361,18 +361,18 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
 
     while (true) {
         // move one cell forward
-        Serial.println("");
-        Serial.print("----- Position: (");
-        Serial.print(state.x);
-        Serial.print(", ");
-        Serial.print(state.y);
-        Serial.print(") HEADING: ");
-        Serial.print(static_cast<int>(state.heading));
-        Serial.println(" -----");
-        // Serial.println("Before Moves (1): ");
+        Serial1.println("");
+        Serial1.print("----- Position: (");
+        Serial1.print(state.x);
+        Serial1.print(", ");
+        Serial1.print(state.y);
+        Serial1.print(") HEADING: ");
+        Serial1.print(static_cast<int>(state.heading));
+        Serial1.println(" -----");
+        // Serial1.println("Before Moves (1): ");
         // readExits();
         //smart_delay(500);
-        // Serial.println("Before Moves (2): ");
+        // Serial1.println("Before Moves (2): ");
         // readExits(1000);
         
         bool isCentered = false;
@@ -380,15 +380,15 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
         if ((state.x == 7 || state.y == 8) && (state.x == 7 || state.y == 8)) {
             isCentered == true;
         } else {
-            Serial.print("Left: "); Serial.print(left()); Serial.print(" | Front: "); Serial.print(front()); Serial.print(" | Right: "); Serial.println(right());
+            Serial1.print("Left: "); Serial1.print(left()); Serial1.print(" | Front: "); Serial1.print(front()); Serial1.print(" | Right: "); Serial1.println(right());
             if (front() > WALL_THRESHOLD_MM) {
-                Serial.println("Move forward");
+                Serial1.println("Move forward");
                 pidForward(CELL_SIZE_MM, isEncoder);
                 updatePosition(1);
                 steps++;
                 out_instructions.push_back({InstructionType::FORWARD, 1});
             } else if (right() > WALL_THRESHOLD_MM) {
-                Serial.println("Move right");
+                Serial1.println("Move right");
                 pidRotate(-90);
                 state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 1) % 4);
                 smart_delay(25);
@@ -398,7 +398,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
                 out_instructions.push_back({InstructionType::ROTATE_RELATIVE, -90});
                 out_instructions.push_back({InstructionType::FORWARD, 1});
             } else {
-                Serial.println("Move left");
+                Serial1.println("Move left");
                 pidRotate(90);
                 state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4);
                 smart_delay(25);
@@ -414,11 +414,11 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
 
         // check if this position is already known;
         //smart_delay(25);
-        // Serial.print("After Moves: ");
+        // Serial1.print("After Moves: ");
         std::vector<Direction> exits = readExits();
         if (isKnownPosition(state.x, state.y)) {
             state.current_node_id = positionMap[positionKey(state.x, state.y)];
-            Serial.println("Known Position");
+            Serial1.println("Known Position");
             break;
         }
 
@@ -435,10 +435,10 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
 
 
         // check if we've reached a junction (more than one exit)
-        Serial.print("Left: "); Serial.print(left()); Serial.print("Front: "); Serial.print(front()); Serial.print("Right: "); Serial.println(right()); 
+        Serial1.print("Left: "); Serial1.print(left()); Serial1.print("Front: "); Serial1.print(front()); Serial1.print("Right: "); Serial1.println(right()); 
         bool isDeadEnd = exits.empty();
-        Serial.print("Exit Sizes: ");
-        Serial.println(exits.size());
+        Serial1.print("Exit Sizes: ");
+        Serial1.println(exits.size());
         bool isJunction = exits.size() > 1;
         
         // bool beaconDetected = false;
@@ -456,7 +456,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
 
         if (isJunction || isDeadEnd || isTripped || isCentered) {
             int key = positionKey(state.x, state.y);
-            Serial.println(key);
+            Serial1.println(key);
             if (positionMap.count(key) > 0) {
                 state.current_node_id = positionMap[key];
                 out_discoveredNewNode = false;
