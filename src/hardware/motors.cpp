@@ -17,9 +17,10 @@ bool MotorController::begin() {
     motoron_.disableCrc();
     motoron_.clearResetFlag();
 
-    // Verify communication by reading firmware version or product ID
+    // Verify communication by reading firmware version and product ID
     uint16_t product_id = 0;
-    product_id = motoron_.getProductId();
+    uint16_t firmware_version = 0;
+    motoron_.getFirmwareVersion(&product_id, &firmware_version);
     if (product_id == 0 || product_id == 0xFFFF) {
         Serial.printf("[MOTORS] ERROR: Motoron M2T256 not detected at I2C address 0x%02X!\n", MOTORON_I2C_ADDR);
         is_initialized_ = false;
