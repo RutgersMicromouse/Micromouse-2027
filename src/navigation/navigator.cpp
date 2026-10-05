@@ -6,6 +6,7 @@ Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_que
       floodfill_(maze_),
       dijkstra_(maze_),
       state_(NAV_STATE_IDLE),
+      current_strategy_(SPEEDRUN_HYBRID_AUTO),
       waiting_for_motion_(false),
       current_search_speed_(0.0f),
       sub_cmd_count_(0),
@@ -96,7 +97,7 @@ void Navigator::startReturnRun() {
                   path_len, segment_count_);
 
     if (segment_count_ > 0) {
-        queueSegment(segment_queue_[segment_idx_++], 500.0f, 2500.0f);
+        queueSegment(segment_queue_[segment_idx_++], RETURN_CRUISE_SPEED_MM_S, RETURN_ACCEL_MM_S2);
     }
 }
 
@@ -128,7 +129,7 @@ void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
         float t_curves = 0.0f;
         for (uint8_t i = 0; i < count_curves; ++i) {
             float dist = segs_curves[i].count * 180.0f;
-            t_curves += (dist / 850.0f) + 0.18f; // straight cruise + 90 deg curve
+            t_curves += (dist / SPEEDRUN_CRUISE_SPEED_MM_S) + 0.18f; // straight cruise + 90 deg curve
         }
 
         // Estimate total traversal time for Diagonals
@@ -136,13 +137,13 @@ void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
         for (uint8_t i = 0; i < count_diags; ++i) {
             if (segs_diags[i].type == SEG_DIAGONAL) {
                 float dist = 180.0f + (segs_diags[i].count - 1) * 127.28f;
-                t_diags += (dist / 1100.0f) + 0.22f; // diagonal sprint at 1100 mm/s + 45 deg curves
+                t_diags += (dist / SPEEDRUN_DIAG_SPEED_MM_S) + 0.22f; // diagonal sprint + 45 deg curves
             } else if (segs_diags[i].type == SEG_SLALOM) {
                 float dist = 180.0f + segs_diags[i].count * 127.28f;
-                t_diags += (dist / 1000.0f) + 0.35f;
+                t_diags += (dist / (SPEEDRUN_DIAG_SPEED_MM_S * 0.9f)) + 0.35f;
             } else {
                 float dist = segs_diags[i].count * 180.0f;
-                t_diags += (dist / 850.0f) + 0.18f;
+                t_diags += (dist / SPEEDRUN_CRUISE_SPEED_MM_S) + 0.18f;
             }
         }
 
@@ -173,7 +174,7 @@ void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
                   path_len, segment_count_);
 
     if (segment_count_ > 0) {
-        queueSegment(segment_queue_[segment_idx_++], 850.0f, 4500.0f);
+        queueSegment(segment_queue_[segment_idx_++], SPEEDRUN_CRUISE_SPEED_MM_S, SPEEDRUN_ACCEL_MM_S2);
     }
 }
 
@@ -217,8 +218,8 @@ void Navigator::processSubcommandQueue() {
 
     // Current segment finished! Check if more segments are queued
     if (segment_idx_ < segment_count_) {
-        float speed = (state_ == NAV_STATE_SPEED_RUNNING) ? 850.0f : 550.0f;
-        float accel = (state_ == NAV_STATE_SPEED_RUNNING) ? 4500.0f : 2500.0f;
+        float speed = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_CRUISE_SPEED_MM_S : RETURN_CRUISE_SPEED_MM_S;
+        float accel = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_ACCEL_MM_S2 : RETURN_ACCEL_MM_S2;
         queueSegment(segment_queue_[segment_idx_++], speed, accel);
         return;
     }
@@ -239,9 +240,9 @@ void Navigator::queueSegment(const PathSegment& seg, float cruise_speed, float a
     sub_cmd_count_ = 0;
     sub_cmd_idx_ = 0;
 
-    const float turn_speed = 450.0f;
-    const float turn_accel = 2200.0f;
-    const float diag_speed = cruise_speed * 1.15f;
+    const float turn_speed = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_TURN_SPEED_DEG_S : SEARCH_TURN_SPEED_DEG_S;
+    const float turn_accel = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_TURN_ACCEL_DEG_S2 : SEARCH_TURN_ACCEL_DEG_S2;
+    const float diag_speed = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_DIAG_SPEED_MM_S : (cruise_speed * 1.10f);
 
     if (seg.type == SEG_STRAIGHT) {
         // 1. Turn to sprint heading if needed

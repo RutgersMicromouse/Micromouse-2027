@@ -1,4 +1,5 @@
 #include "motion_controller.h"
+#include "math_utils.h"
 
 MotionController::MotionController(Encoders& encoders, Motors& motors, IRSensors& ir, IMU& imu)
     : encoders_(encoders), motors_(motors), ir_(ir), imu_(imu),
@@ -12,7 +13,7 @@ MotionController::MotionController(Encoders& encoders, Motors& motors, IRSensors
     // PID Gains (Default baseline tuning for micromouse kinematics; adjust as needed)
     // Linear Distance PID: outputs target speed (mm/s)
     pid_linear_dist_.setGains(3.5f, 0.0f, 0.1f);
-    pid_linear_dist_.setOutputLimits(800.0f, 200.0f);
+    pid_linear_dist_.setOutputLimits(SPEEDRUN_DIAG_SPEED_MM_S, 200.0f);
 
     // Linear Velocity PID: outputs motor duty cycle (-1.0 to 1.0)
     pid_linear_vel_.setGains(0.0025f, 0.0005f, 0.00005f);
@@ -181,7 +182,7 @@ void MotionController::executeCommand(const MotionCommand& cmd) {
             float arc_dist = R * (3.14159265f / 4.0f);
             target_relative_dist_mm_ = arc_dist;
             target_relative_angle_deg_ = 45.0f;
-            float v = cmd.max_speed_mm_s > 0.0f ? cmd.max_speed_mm_s : 800.0f;
+            float v = cmd.max_speed_mm_s > 0.0f ? cmd.max_speed_mm_s : SPEEDRUN_CURVE_SPEED_MM_S;
             float omega = (45.0f / arc_dist) * v;
             profile_linear_.start(arc_dist, v, cmd.acceleration, cmd.entry_speed_mm_s, cmd.exit_speed_mm_s);
             profile_angular_.start(45.0f, omega, cmd.acceleration * (45.0f / arc_dist));
@@ -193,7 +194,7 @@ void MotionController::executeCommand(const MotionCommand& cmd) {
             float arc_dist = R * (3.14159265f / 4.0f);
             target_relative_dist_mm_ = arc_dist;
             target_relative_angle_deg_ = -45.0f;
-            float v = cmd.max_speed_mm_s > 0.0f ? cmd.max_speed_mm_s : 800.0f;
+            float v = cmd.max_speed_mm_s > 0.0f ? cmd.max_speed_mm_s : SPEEDRUN_CURVE_SPEED_MM_S;
             float omega = (45.0f / arc_dist) * v;
             profile_linear_.start(arc_dist, v, cmd.acceleration, cmd.entry_speed_mm_s, cmd.exit_speed_mm_s);
             profile_angular_.start(-45.0f, omega, cmd.acceleration * (45.0f / arc_dist));
@@ -279,9 +280,7 @@ void MotionController::update(float dt_seconds) {
 
     // 1. Continuous unwrapped heading update
     float raw_heading = imu_.getHeadingDeg();
-    float d_h = raw_heading - prev_raw_heading_deg_;
-    while (d_h > 180.0f)  d_h -= 360.0f;
-    while (d_h <= -180.0f) d_h += 360.0f;
+    float d_h = normalizeAngle180(raw_heading - prev_raw_heading_deg_);
     prev_raw_heading_deg_ = raw_heading;
     accumulated_heading_deg_ += d_h;
 
@@ -338,9 +337,8 @@ void MotionController::update(float dt_seconds) {
         }
     }
 
-    float heading_err = target_heading_setpoint - heading_traveled;
-    // Shortest-path angular error normalization
-    while (heading_err > 180.0f)  heading_err -= 360.0f;
+    // Shortest-path angular error normalization in (-180, +180]
+    float heading_err = shortestAngularDifference(target_heading_setpoint, heading_traveled);
     rotational_effort = pid_angular_heading_.update(heading_err, dt_seconds);
 
     // Differential Wheel Speed Lock: actively prevents wheel speed divergence during straight lines

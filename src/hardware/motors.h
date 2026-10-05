@@ -35,6 +35,7 @@ public:
 
     // Invert motor polarities if needed
     void setInverted(bool invert_left, bool invert_right);
+    void getInverted(bool& invert_left, bool& invert_right) const;
 
 private:
     MotoronI2C mc_;
@@ -43,4 +44,10 @@ private:
     bool power_enabled_;
     float trim_left_;
     float trim_right_;
+
+    // I2C bus bandwidth optimization & state tracking
+    bool is_braking_;
+    int16_t last_left_cmd_;
+    int16_t last_right_cmd_;
+    uint32_t last_cmd_time_ms_;
 };

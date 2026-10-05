@@ -2,11 +2,15 @@
 #include <Preferences.h>
 
 Motors::Motors()
-    : invert_left_(false),
-      invert_right_(false),
+    : invert_left_(INVERT_LEFT_MOTOR),
+      invert_right_(INVERT_RIGHT_MOTOR),
       power_enabled_(false),
       trim_left_(1.0f),
-      trim_right_(1.0f) {}
+      trim_right_(1.0f),
+      is_braking_(false),
+      last_left_cmd_(-9999),
+      last_right_cmd_(-9999),
+      last_cmd_time_ms_(0) {}
 
 void Motors::begin() {
     // 1. Configure Hardware Reset and Boost Converter Enable pins
@@ -40,6 +44,11 @@ void Motors::begin() {
 
     // 5. Load calibration trims from Flash NVS
     loadFromNVS();
+
+    is_braking_ = false;
+    last_left_cmd_ = -9999;
+    last_right_cmd_ = -9999;
+    last_cmd_time_ms_ = 0;
 
     coast();
 }
@@ -79,8 +88,16 @@ void Motors::setEffort(float left_effort, float right_effort) {
     }
 
     // Schematic: M1 = Right Motor (R_MOTOR), M2 = Left Motor (L_MOTOR)
-    // Send both motor speeds in a single I2C transaction to halve bus traffic at 500 Hz
-    mc_.setAllSpeedsNow(right_cmd, left_cmd);
+    // Send both motor speeds in a single I2C transaction
+    // Only transmit if speed changed, transitioning from braking, or periodic 100ms keep-alive
+    uint32_t now = millis();
+    if (is_braking_ || left_cmd != last_left_cmd_ || right_cmd != last_right_cmd_ || (now - last_cmd_time_ms_ >= 100)) {
+        mc_.setAllSpeedsNow(right_cmd, left_cmd);
+        last_left_cmd_ = left_cmd;
+        last_right_cmd_ = right_cmd;
+        is_braking_ = false;
+        last_cmd_time_ms_ = now;
+    }
 }
 
 void Motors::setRawEffort(float left_effort, float right_effort) {
@@ -106,7 +123,14 @@ void Motors::setRawEffort(float left_effort, float right_effort) {
         right_cmd = (int16_t)(right_effort * (float)MOTORON_MAX_SPEED);
     }
 
-    mc_.setAllSpeedsNow(right_cmd, left_cmd);
+    uint32_t now = millis();
+    if (is_braking_ || left_cmd != last_left_cmd_ || right_cmd != last_right_cmd_ || (now - last_cmd_time_ms_ >= 100)) {
+        mc_.setAllSpeedsNow(right_cmd, left_cmd);
+        last_left_cmd_ = left_cmd;
+        last_right_cmd_ = right_cmd;
+        is_braking_ = false;
+        last_cmd_time_ms_ = now;
+    }
 }
 
 void Motors::setTrim(float trim_left, float trim_right) {
@@ -146,16 +170,32 @@ bool Motors::loadFromNVS() {
 }
 
 void Motors::brake() {
+    if (!power_enabled_) return;
+    if (is_braking_) return; // Filter redundant brake calls at 500 Hz
     mc_.setBrakingNow(1, MOTORON_MAX_SPEED);
     mc_.setBrakingNow(2, MOTORON_MAX_SPEED);
+    is_braking_ = true;
+    last_left_cmd_ = -9999;
+    last_right_cmd_ = -9999;
+    last_cmd_time_ms_ = millis();
 }
 
 void Motors::coast() {
+    if (!power_enabled_) return;
     mc_.setAllSpeedsNow(0, 0);
+    is_braking_ = false;
+    last_left_cmd_ = 0;
+    last_right_cmd_ = 0;
+    last_cmd_time_ms_ = millis();
 }
 
 void Motors::setInverted(bool invert_left, bool invert_right) {
     invert_left_ = invert_left;
     invert_right_ = invert_right;
+}
+
+void Motors::getInverted(bool& invert_left, bool& invert_right) const {
+    invert_left = invert_left_;
+    invert_right = invert_right_;
 }
 

@@ -1,4 +1,5 @@
 #include "imu.h"
+#include "math_utils.h"
 
 // BNO055 Register Map
 #define BNO055_PAGE_ID_ADDR        0x07
@@ -143,15 +144,11 @@ void IMU::update(float dt_seconds, float encoder_yaw_rate, float linear_speed_mm
             state_.gyro_z_deg_s = raw_gz - gyro_bias_z_;
 
             // 2. Relative heading from BNO055
-            float bno_rel = raw_h - heading_offset_deg_;
-            while (bno_rel > 180.0f)  bno_rel -= 360.0f;
-            while (bno_rel <= -180.0f) bno_rel += 360.0f;
+            float bno_rel = normalizeAngle180(raw_h - heading_offset_deg_);
 
             // 3. Complementary Innovation Filter
             // Smoothly pulls high-rate encoder dead-reckoning into alignment with BNO055
-            float err = bno_rel - state_.heading_deg;
-            while (err > 180.0f)  err -= 360.0f;
-            while (err <= -180.0f) err += 360.0f;
+            float err = shortestAngularDifference(bno_rel, state_.heading_deg);
 
             state_.heading_deg += 0.25f * err; // K = 0.25 filter gain
             goto normalize_heading;
@@ -170,9 +167,7 @@ void IMU::update(float dt_seconds, float encoder_yaw_rate, float linear_speed_mm
     }
 
 normalize_heading:
-    while (state_.heading_deg > 180.0f)  state_.heading_deg -= 360.0f;
-    while (state_.heading_deg <= -180.0f) state_.heading_deg += 360.0f;
-
+    state_.heading_deg = normalizeAngle180(state_.heading_deg);
     state_.heading_rad = state_.heading_deg * (PI / 180.0f);
 }
 

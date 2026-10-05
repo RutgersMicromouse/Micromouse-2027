@@ -70,7 +70,7 @@ struct MotionCommand {
     float exit_speed_mm_s;       // Desired exit velocity for smooth chaining (default 0.0)
 };
 
-// Quadrature Encoder State (Faulhaber 1524)
+// Quadrature Encoder State (N20 30:1 with Magnetic Encoders)
 struct EncoderState {
     int32_t left_ticks_total;
     int32_t right_ticks_total;
@@ -139,6 +139,14 @@ enum NavState : uint8_t {
     NAV_STATE_ERROR
 };
 
+// Real-Time Control Loop & System Performance Instrumentation
+struct TimingStats {
+    uint16_t loop_time_us;       // Execution time of last 500 Hz control loop tick in µs
+    uint16_t max_loop_time_us;   // Peak execution time observed in µs
+    uint32_t loop_overruns;      // Count of loop ticks exceeding the 2000 µs deadline
+    uint32_t stack_high_water;   // Core 1 motion task minimum remaining stack (in words)
+};
+
 // Shared Global Telemetry for Debugging / Diagnostics
 struct RobotTelemetry {
     EncoderState encoders;
@@ -146,6 +154,7 @@ struct RobotTelemetry {
     IMUState imu;
     RobotPose pose;
     NavState nav_state;
+    TimingStats timing;
     float vbat_volts;
     bool motion_completed;
     uint32_t loop_count;

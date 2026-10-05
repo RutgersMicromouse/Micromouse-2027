@@ -37,12 +37,19 @@ static RobotTelemetry    g_shared_telemetry;
 static Navigator*        g_navigator        = nullptr;
 
 // ==============================================================================
-// RGB STATUS LED HELPER (Active HIGH via TJ-L5FCMXHTCSLCRGB-A5 to GND)
+// ==============================================================================
+// RGB STATUS LED HELPER (ESP32-S3-DevKitC-1 Onboard WS2812 NeoPixel on GPIO 48)
 // ==============================================================================
 void setRGB(bool red, bool green, bool blue) {
-    digitalWrite(PIN_LED_RED,   red   ? HIGH : LOW);
-    digitalWrite(PIN_LED_GREEN, green ? HIGH : LOW);
-    digitalWrite(PIN_LED_BLUE,  blue  ? HIGH : LOW);
+    const uint8_t level = RGB_BRIGHTNESS_LEVEL;
+    uint8_t r = red   ? level : 0;
+    uint8_t g = green ? level : 0;
+    uint8_t b = blue  ? level : 0;
+    neopixelWrite(PIN_ESP32_RGB_LED, r, g, b);
+}
+
+void setRGBColor(uint8_t r, uint8_t g, uint8_t b) {
+    neopixelWrite(PIN_ESP32_RGB_LED, r, g, b);
 }
 
 void flashRGB(bool red, bool green, bool blue, int count = 3, int delay_ms = 150) {
@@ -207,6 +214,53 @@ void handleRemoteCommand(String cmd, uint8_t& selected_mode, bool is_active_run,
             snprintf(buf, sizeof(buf), "MOTORS TRIM: Left=%.4f | Right=%.4f", tl, tr);
             reply(buf);
         }
+    } else if (cmd == "enc" || cmd == "encinfo") {
+        EncoderState enc = g_encoders.getState();
+        bool inv_l = false, inv_r = false;
+        g_encoders.getInverted(inv_l, inv_r);
+        char buf[128];
+        snprintf(buf, sizeof(buf), "ENC: L=%ld (%4.1fmm, %4.0fmm/s, inv=%d) | R=%ld (%4.1fmm, %4.0fmm/s, inv=%d)",
+                 (long)enc.left_ticks_total, enc.left_dist_mm, enc.left_speed_mm_s, (int)inv_l,
+                 (long)enc.right_ticks_total, enc.right_dist_mm, enc.right_speed_mm_s, (int)inv_r);
+        reply(buf);
+    } else if (cmd.startsWith("motorinv")) {
+        int space_idx = cmd.indexOf(' ');
+        if (space_idx > 0) {
+            int inv_l = 0, inv_r = 0;
+            if (sscanf(cmd.c_str() + space_idx + 1, "%d %d", &inv_l, &inv_r) == 2) {
+                g_motors.setInverted(inv_l != 0, inv_r != 0);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "ACK: MOTOR INVERT SET (L=%d, R=%d)", inv_l != 0, inv_r != 0);
+                reply(buf);
+            } else {
+                reply("ERR: USAGE 'motorinv <left:0/1> <right:0/1>'");
+            }
+        } else {
+            bool il = false, ir = false;
+            g_motors.getInverted(il, ir);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "MOTOR INVERT: L=%d | R=%d", (int)il, (int)ir);
+            reply(buf);
+        }
+    } else if (cmd.startsWith("encinv")) {
+        int space_idx = cmd.indexOf(' ');
+        if (space_idx > 0) {
+            int inv_l = 0, inv_r = 0;
+            if (sscanf(cmd.c_str() + space_idx + 1, "%d %d", &inv_l, &inv_r) == 2) {
+                g_encoders.setInverted(inv_l != 0, inv_r != 0);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "ACK: ENCODER INVERT SET (L=%d, R=%d)", inv_l != 0, inv_r != 0);
+                reply(buf);
+            } else {
+                reply("ERR: USAGE 'encinv <left:0/1> <right:0/1>'");
+            }
+        } else {
+            bool il = false, ir = false;
+            g_encoders.getInverted(il, ir);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "ENCODER INVERT: L=%d | R=%d", (int)il, (int)ir);
+            reply(buf);
+        }
     } else if (cmd == "clear") {
         if (!is_active_run) {
             g_navigator->clearSavedMaze();
@@ -221,8 +275,18 @@ void handleRemoteCommand(String cmd, uint8_t& selected_mode, bool is_active_run,
         char buf[64];
         snprintf(buf, sizeof(buf), "STATUS: VBat=%.2fV | Mode=%d | State=%d", vbat, selected_mode, (int)g_navigator->getState());
         reply(buf);
+    } else if (cmd == "perf") {
+        TimingStats t;
+        if (xSemaphoreTake(g_telemetry_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+            t = g_shared_telemetry.timing;
+            xSemaphoreGive(g_telemetry_mutex);
+        }
+        char buf[160];
+        snprintf(buf, sizeof(buf), "PERF: [Core 1] Loop=%u us (Peak=%u us, Budget=2000 us) | Overruns=%lu | [Core 0] Nav=Active | Stack Rem=%lu words",
+                 (unsigned int)t.loop_time_us, (unsigned int)t.max_loop_time_us, (unsigned long)t.loop_overruns, (unsigned long)t.stack_high_water);
+        reply(buf);
     } else if (cmd == "help") {
-        reply("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status, motorcal, motorrpm [duty], motortrim [l r]");
+        reply("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status, perf, motorcal, motorrpm [duty], motortrim [l r], enc, motorinv [l r], encinv [l r]");
     } else {
         char buf[64];
         snprintf(buf, sizeof(buf), "ERR: UNKNOWN COMMAND '%s' (type 'help')", cmd.c_str());
@@ -247,12 +311,17 @@ void motionControlTask(void* pvParameters) {
     MotionCommand current_cmd;
     uint32_t loop_counter = 0;
     bool was_busy = false;
+    uint32_t low_battery_since_ms = 0;
+    bool low_battery_timing = false;
+    bool battery_cutoff_latched = false;
+    TimingStats timing_stats = {0, 0, 0, 0};
 
     Serial.printf("[CORE 1] Real-Time Motion Task running on Core %d @ %d Hz\n",
                   xPortGetCoreID(), CONTROL_LOOP_FREQ_HZ);
 
     for (;;) {
         vTaskDelayUntil(&last_wake_time, period_ticks > 0 ? period_ticks : 1);
+        uint32_t t_start_us = micros();
 
         // 1. Read Encoders (PCNT hardware 4x decoding) & Pulsed 5-Channel IR
         g_encoders.update(CONTROL_DT_S);
@@ -281,16 +350,36 @@ void motionControlTask(void* pvParameters) {
             }
         }
 
-        // 6. Update Telemetry Snapshot at 50 Hz & Check Low Battery Cutoff
+        // 6. Measure real-time loop duration & jitter (2000 µs period)
+        uint32_t t_exec_us = micros() - t_start_us;
+        timing_stats.loop_time_us = (uint16_t)t_exec_us;
+        if (t_exec_us > timing_stats.max_loop_time_us) {
+            timing_stats.max_loop_time_us = (uint16_t)t_exec_us;
+        }
+        if (t_exec_us > 2000) {
+            timing_stats.loop_overruns++;
+        }
+
+        // 7. Update Telemetry Snapshot at 50 Hz & Check Low Battery Cutoff
         if (loop_counter++ % 10 == 0) {
             float vbat = readBatteryVoltage();
+            timing_stats.stack_high_water = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
 
-            // Low-voltage battery protection (cuts 12V boost converter)
+            // Require a sustained low-voltage reading to avoid nuisance cutoffs from brief sag.
             if (vbat > 1.0f && vbat < BATTERY_MIN_SAFE_VOLT) {
-                g_motion_controller.emergencyStop();
-                g_motors.setMotorPowerEnabled(false);
-                setRGB(true, false, false); // Solid Red Alarm
-                Serial.printf("[SAFETY ALERT] Low Battery Voltage: %4.2f V! Motors disabled.\n", vbat);
+                if (!low_battery_timing) {
+                    low_battery_since_ms = millis();
+                    low_battery_timing = true;
+                } else if (!battery_cutoff_latched &&
+                           millis() - low_battery_since_ms >= 200) {
+                    battery_cutoff_latched = true;
+                    g_motion_controller.emergencyStop();
+                    g_motors.setMotorPowerEnabled(false);
+                    setRGB(true, false, false); // Solid Red Alarm
+                    Serial.printf("[SAFETY ALERT] Low Battery Voltage: %4.2f V! Motors disabled.\n", vbat);
+                }
+            } else {
+                low_battery_timing = false;
             }
 
             if (xSemaphoreTake(g_telemetry_mutex, 0) == pdTRUE) {
@@ -298,6 +387,7 @@ void motionControlTask(void* pvParameters) {
                 g_shared_telemetry.ir = g_ir_sensors.getReadings();
                 g_shared_telemetry.imu = g_imu.getState();
                 g_shared_telemetry.motion_completed = g_motion_controller.isCommandFinished();
+                g_shared_telemetry.timing = timing_stats;
                 g_shared_telemetry.vbat_volts = vbat;
                 g_shared_telemetry.loop_count = loop_counter;
                 xSemaphoreGive(g_telemetry_mutex);
@@ -439,8 +529,7 @@ void navigationTask(void* pvParameters) {
         last_confirm_btn = curr_confirm_btn;
 
         // Advance FSM strictly when physical motion completes
-        TickType_t sem_wait = is_active_run ? pdMS_TO_TICKS(5) : 0;
-        if (xSemaphoreTake(g_motion_done_sem, sem_wait) == pdTRUE) {
+        if (xSemaphoreTake(g_motion_done_sem, 0) == pdTRUE) {
             g_navigator->notifyMotionComplete();
             g_navigator->step(ir_snapshot);
         }
@@ -462,8 +551,9 @@ void telemetryTask(void* pvParameters) {
             snap = g_shared_telemetry;
             xSemaphoreGive(g_telemetry_mutex);
 
-            Serial.printf("[TEL] VBat: %4.2fV | Enc: L=%6.1f R=%6.1f mm | Spd: %5.1f mm/s | Hdg: %5.1f° | IR: L90=%3d L45=%3d FL=%3d FR=%3d R45=%3d R90=%3d | Walls: [%c%c%c]\n",
+            Serial.printf("[TEL] VBat: %4.2fV | Loop: %3uus | Enc: L=%6.1f R=%6.1f mm | Spd: %5.1f mm/s | Hdg: %5.1f° | IR: L90=%3d L45=%3d FL=%3d FR=%3d R45=%3d R90=%3d | Walls: [%c%c%c]\n",
                           snap.vbat_volts,
+                          (unsigned int)snap.timing.loop_time_us,
                           snap.encoders.left_dist_mm,
                           snap.encoders.right_dist_mm,
                           snap.encoders.linear_speed_mm_s,
@@ -523,17 +613,17 @@ void setup() {
     pinMode(PIN_BTN_CONFIRM, INPUT_PULLUP);
     pinMode(PIN_BTN_STATE, INPUT_PULLUP);
 
-    pinMode(PIN_LED_RED, OUTPUT);
-    pinMode(PIN_LED_GREEN, OUTPUT);
-    pinMode(PIN_LED_BLUE, OUTPUT);
+    // Initialize ESP32-S3 Onboard WS2812 RGB LED (GPIO 48)
+    pinMode(PIN_ESP32_RGB_LED, OUTPUT);
     setRGB(false, false, true); // Blue = Initializing
 
     // 2. Initialize Shared I2C Bus (SDA = GPIO21, SCL = GPIO20)
     Serial.println("[INIT] Initializing I2C Bus (SDA: 21, SCL: 20 @ 400kHz)...");
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_CLOCK_SPEED);
+    Wire.setTimeOut(1); // Bound a stalled I2C transaction to the 500 Hz control-loop period
 
     // 3. Initialize Hardware Drivers
-    Serial.println("[INIT] Initializing SN74LVC125 PCNT Hardware Encoders...");
+    Serial.println("[INIT] Initializing N20 PCNT Hardware Encoders (30:1, 840 CPR)...");
     g_encoders.begin();
 
     Serial.println("[INIT] Initializing Pololu Motoron M2T256 Motor Driver...");

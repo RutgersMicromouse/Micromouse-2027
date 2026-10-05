@@ -86,9 +86,9 @@ You can view real-time diagnostics and control the bot from your phone without t
 ### Step 3: Live Telemetry Stream
 Once connected, the bot streams live sensor and motion data at 5 Hz:
 ```text
-V:7.42V | Spd: 420 | Hdg:  90.0 | IR: 28, 45, 842, 856, 42, 31 | W:[.F.]
+V:3.72V | Spd: 420 | Hdg:  90.0 | IR: 28, 45, 842, 856, 42, 31 | W:[.F.]
 ```
-* `V`: Computer battery voltage (safe range: 6.8V – 8.4V for 2S LiPo).
+* `V`: Computer battery voltage (separate 1S cell; nominal 3.7V, fully charged 4.2V).
 * `Spd`: Instantaneous linear velocity in mm/s.
 * `Hdg`: Bosch BNO055 fusion heading in degrees ($0.0^\circ - 360.0^\circ$).
 * `IR`: Readings for all 6 optical channels: `[L90, L45, FL, FR, R45, R90]`.
@@ -105,9 +105,16 @@ Type any of the following commands into the terminal:
 | `mode 1` or `hybrid` | Selects **Speed Run: Hybrid Auto-Optimizer** (Curves + Diagonals) | 🟡 Solid Yellow |
 | `mode 2` or `diag` | Selects **Speed Run: Pure Diagonal Specialist** | 🌐 Solid Cyan |
 | `mode 3` or `curve` | Selects **Speed Run: Pure Continuous Curves** | 🟣 Solid Magenta |
+| `motorcal` | Automated 3-point motor speed calibration and trim balancing | 🟡 Yellow $\rightarrow$ 🟢 Flash (Pass) / 🔴 Flash (Fail) |
+| `motorrpm [duty]` | Runs tachometer benchmark at specified duty (default 50%) for 4s | 🌐 Solid Cyan |
+| `motortrim [l r]` | Sets or queries motor trim multipliers saved in NVS | — |
+| `enc` | Prints live raw encoder ticks, mm traveled, speed, and inversion status | — |
+| `motorinv <l:0/1> <r:0/1>` | Sets motor direction inversion at runtime | — |
+| `encinv <l:0/1> <r:0/1>` | Sets encoder count direction inversion at runtime | — |
 | `calib` | Triggers in-cell IR optical calibration (200 samples) | 🟢 Flash Green (Pass) / 🔴 Flash Red (Fail) |
 | `clear` | Erases mapped maze from Flash memory | 🔵 4x Blue Flash |
 | `status` | Reports battery voltage, active mode, and navigation state | Current profile color |
+| `perf` | Reports real-time 500Hz loop execution latency, peak time, overruns, and stack headroom | — |
 | `help` | Lists available commands | — |
 
 ---
@@ -191,9 +198,9 @@ git push -u origin master
 ## 7. Pre-Flight Safety & Troubleshooting
 
 ### Battery Safety Checklist
-* **Battery Chemistry**: 2S LiPo (7.4V nominal, 8.4V max).
-* **Low Battery Alert**: If the computer battery drops below **6.6V**, the robot automatically cuts motor power, engages emergency stop, and turns the LED **Solid Red**. Recharge immediately.
-* Check voltage anytime via BLE command `status` or the telemetry stream.
+* **Computer Battery Chemistry**: Separate 1S Li-ion/LiPo cell (3.7V nominal); the schematic's 10k/10k divider feeds its voltage to GPIO12 (`VSenseCom`).
+* **Low Battery Alert**: If the computer battery remains below **3.3V for 200 ms**, the robot automatically cuts motor power, engages emergency stop, and turns the LED **Solid Red**. Recharge immediately.
+* The motor battery is a separate supply and is not monitored by this firmware cutoff. Check computer-battery voltage via BLE `status` or the telemetry stream.
 
 ### Sensor Calibration Check
 Before a run in a new arena:

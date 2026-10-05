@@ -1,8 +1,8 @@
 #include "encoders.h"
 
 Encoders::Encoders()
-    : invert_left_(false),
-      invert_right_(false),
+    : invert_left_(INVERT_LEFT_ENCODER),
+      invert_right_(INVERT_RIGHT_ENCODER),
       left_dist_acc_mm_(0.0f),
       right_dist_acc_mm_(0.0f) {
     memset(&state_, 0, sizeof(state_));
@@ -19,6 +19,10 @@ void Encoders::begin() {
 }
 
 void Encoders::initPcntUnit(pcnt_unit_t unit, int pin_a, int pin_b) {
+    // Enable internal pullups for N20 magnetic Hall effect encoder sensors
+    pinMode(pin_a, INPUT_PULLUP);
+    pinMode(pin_b, INPUT_PULLUP);
+
     // Channel 0: Pulse on Pin A, Level on Pin B
     pcnt_config_t config_ch0 = {
         .pulse_gpio_num = pin_a,
@@ -120,4 +124,9 @@ void Encoders::reset() {
 void Encoders::setInverted(bool invert_left, bool invert_right) {
     invert_left_ = invert_left;
     invert_right_ = invert_right;
+}
+
+void Encoders::getInverted(bool& invert_left, bool& invert_right) const {
+    invert_left = invert_left_;
+    invert_right = invert_right_;
 }

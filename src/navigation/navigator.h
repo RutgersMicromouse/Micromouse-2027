@@ -62,7 +62,7 @@ private:
     uint8_t sub_cmd_idx_;
 
     // Segment queue for multi-segment routes (return & speedrun)
-    static constexpr uint8_t MAX_SEGMENTS = 64;
+    static constexpr uint8_t MAX_SEGMENTS = 255;
     PathSegment segment_queue_[MAX_SEGMENTS];
     uint8_t segment_count_;
     uint8_t segment_idx_;

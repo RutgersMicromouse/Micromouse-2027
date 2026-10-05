@@ -21,6 +21,7 @@ public:
 
     // Invert channel direction if wiring is reversed
     void setInverted(bool invert_left, bool invert_right);
+    void getInverted(bool& invert_left, bool& invert_right) const;
 
 private:
     void initPcntUnit(pcnt_unit_t unit, int pin_a, int pin_b);
