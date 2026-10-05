@@ -20,6 +20,10 @@ public:
     void setTrim(float trim_left, float trim_right);
     void getTrim(float& trim_left, float& trim_right) const;
 
+    // Minimum breakaway duty cycle deadbands
+    void setDeadband(float deadband_left, float deadband_right);
+    void getDeadband(float& deadband_left, float& deadband_right) const;
+
     // Flash NVS storage for motor balance calibration
     void saveToNVS();
     bool loadFromNVS();
@@ -44,6 +48,8 @@ private:
     bool power_enabled_;
     float trim_left_;
     float trim_right_;
+    float deadband_left_;
+    float deadband_right_;
 
     // I2C bus bandwidth optimization & state tracking
     bool is_braking_;

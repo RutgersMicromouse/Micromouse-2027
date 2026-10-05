@@ -285,8 +285,82 @@ void handleRemoteCommand(String cmd, uint8_t& selected_mode, bool is_active_run,
         snprintf(buf, sizeof(buf), "PERF: [Core 1] Loop=%u us (Peak=%u us, Budget=2000 us) | Overruns=%lu | [Core 0] Nav=Active | Stack Rem=%lu words",
                  (unsigned int)t.loop_time_us, (unsigned int)t.max_loop_time_us, (unsigned long)t.loop_overruns, (unsigned long)t.stack_high_water);
         reply(buf);
+    } else if (cmd.startsWith("dyno")) {
+        // High-Speed Calibration Protocol for Autonomous Dyno Station
+        if (cmd == "dyno ping") {
+            reply("DYNO_ACK READY");
+        } else if (cmd.startsWith("dyno step ")) {
+            float dl = 0.0f, dr = 0.0f;
+            int dur_ms = 1000;
+            if (sscanf(cmd.c_str() + 10, "%f %f %d", &dl, &dr, &dur_ms) >= 2) {
+                g_motion_controller.setCalibrating(true);
+                g_motors.setRawEffort(dl, dr);
+                delay(dur_ms);
+                g_motors.brake();
+                g_motion_controller.setCalibrating(false);
+                reply("DYNO_ACK STEP_DONE");
+            } else {
+                reply("ERR: USAGE 'dyno step <dl> <dr> <ms>'");
+            }
+        } else if (cmd.startsWith("dyno trap ")) {
+            float spd = 300.0f, acc = 2000.0f, dist = 500.0f;
+            if (sscanf(cmd.c_str() + 10, "%f %f %f", &spd, &acc, &dist) >= 3) {
+                MotionCommand mc;
+                mc.action = ACTION_MOVE_DISTANCE;
+                mc.param_value = dist;
+                mc.max_speed_mm_s = spd;
+                mc.acceleration = acc;
+                mc.enable_wall_centering = false;
+                mc.entry_speed_mm_s = 0.0f;
+                mc.exit_speed_mm_s = 0.0f;
+                xQueueSend(g_motion_cmd_queue, &mc, 0);
+                reply("DYNO_ACK TRAP_STARTED");
+            } else {
+                reply("ERR: USAGE 'dyno trap <spd> <acc> <dist>'");
+            }
+        } else if (cmd.startsWith("dyno trim ")) {
+            float tl = 1.0f, tr = 1.0f;
+            if (sscanf(cmd.c_str() + 10, "%f %f", &tl, &tr) == 2) {
+                g_motors.setTrim(tl, tr);
+                reply("DYNO_ACK TRIM_SET");
+            }
+        } else if (cmd.startsWith("dyno deadband ")) {
+            float dl = 0.02f, dr = 0.02f;
+            if (sscanf(cmd.c_str() + 14, "%f %f", &dl, &dr) == 2) {
+                g_motors.setDeadband(dl, dr);
+                reply("DYNO_ACK DEADBAND_SET");
+            }
+        } else if (cmd.startsWith("dyno sync ")) {
+            float ks = 0.0004f;
+            if (sscanf(cmd.c_str() + 10, "%f", &ks) == 1) {
+                g_motion_controller.setSyncGain(ks);
+                reply("DYNO_ACK SYNC_SET");
+            }
+        } else if (cmd.startsWith("dyno pid ")) {
+            float kp = 0.0025f, ki = 0.0005f, kd = 0.00005f;
+            if (sscanf(cmd.c_str() + 9, "%f %f %f", &kp, &ki, &kd) == 3) {
+                g_motion_controller.setLinearVelGains(kp, ki, kd);
+                reply("DYNO_ACK PID_SET");
+            }
+        } else if (cmd == "dyno save") {
+            g_motors.saveToNVS();
+            g_motion_controller.saveToNVS();
+            flashRGB(false, true, false, 2, 80);
+            reply("DYNO_ACK SAVED_TO_NVS");
+        } else if (cmd == "dyno get") {
+            float tl = 1.0f, tr = 1.0f, dl = 0.02f, dr = 0.02f;
+            g_motors.getTrim(tl, tr);
+            g_motors.getDeadband(dl, dr);
+            float ks = g_motion_controller.getSyncGain();
+            float kp = 0, ki = 0, kd = 0;
+            g_motion_controller.getLinearVelGains(kp, ki, kd);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "DYNO_PARAMS: Trim=[%.3f,%.3f] Dead=[%.3f,%.3f] Sync=%.6f PID=[%.5f,%.5f,%.6f]",
+                     tl, tr, dl, dr, ks, kp, ki, kd);
+            reply(buf);
+        }
     } else if (cmd == "help") {
-        reply("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status, perf, motorcal, motorrpm [duty], motortrim [l r], enc, motorinv [l r], encinv [l r]");
+        reply("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status, perf, motorcal, motorrpm [duty], motortrim [l r], enc, motorinv [l r], encinv [l r], dyno ping/step/trap/trim/deadband/sync/pid/save/get");
     } else {
         char buf[64];
         snprintf(buf, sizeof(buf), "ERR: UNKNOWN COMMAND '%s' (type 'help')", cmd.c_str());

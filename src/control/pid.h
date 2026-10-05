@@ -8,6 +8,7 @@ public:
     PIDController(float kp, float ki, float kd, float max_out, float max_integral = 0.0f);
 
     void setGains(float kp, float ki, float kd);
+    void getGains(float& kp, float& ki, float& kd) const { kp = kp_; ki = ki_; kd = kd_; }
     void setOutputLimits(float max_out, float max_integral = 0.0f);
     void reset();
 

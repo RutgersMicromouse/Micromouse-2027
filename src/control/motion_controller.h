@@ -35,6 +35,18 @@ public:
     bool isCalibrating() const { return calibrating_motors_; }
     void setCalibrating(bool cal) { calibrating_motors_ = cal; }
 
+    // Differential Wheel Speed Synchronization Lock Gain
+    void setSyncGain(float k_sync) { k_wheel_sync_ = k_sync; }
+    float getSyncGain() const { return k_wheel_sync_; }
+
+    // Velocity PID Gain Tuning
+    void setLinearVelGains(float kp, float ki, float kd) { pid_linear_vel_.setGains(kp, ki, kd); }
+    void getLinearVelGains(float& kp, float& ki, float& kd) const { pid_linear_vel_.getGains(kp, ki, kd); }
+
+    // Flash NVS persistence for controller tuning
+    void saveToNVS();
+    bool loadFromNVS();
+
 private:
     Encoders& encoders_;
     Motors& motors_;
@@ -74,4 +86,5 @@ private:
 
     bool wall_centering_enabled_;
     volatile bool calibrating_motors_;
+    float k_wheel_sync_;
 };

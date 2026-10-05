@@ -8,7 +8,8 @@ MotionController::MotionController(Encoders& encoders, Motors& motors, IRSensors
       target_relative_dist_mm_(0.0f), target_relative_angle_deg_(0.0f),
       accumulated_heading_deg_(0.0f), prev_raw_heading_deg_(0.0f),
       stall_count_(0), wall_align_timer_(0), chained_coast_timer_(0),
-      wall_centering_enabled_(true), calibrating_motors_(false) {
+      wall_centering_enabled_(true), calibrating_motors_(false),
+      k_wheel_sync_(0.0004f) {
 
     // PID Gains (Default baseline tuning for micromouse kinematics; adjust as needed)
     // Linear Distance PID: outputs target speed (mm/s)
@@ -30,6 +31,7 @@ MotionController::MotionController(Encoders& encoders, Motors& motors, IRSensors
 }
 
 void MotionController::begin() {
+    loadFromNVS();
     resetTracking();
 }
 
@@ -345,7 +347,7 @@ void MotionController::update(float dt_seconds) {
     if (active_cmd_.action == ACTION_MOVE_FORWARD_CELLS || active_cmd_.action == ACTION_MOVE_DISTANCE ||
         active_cmd_.action == ACTION_MOVE_HALF_CELL || active_cmd_.action == ACTION_MOVE_DIAGONAL_HALF) {
         float speed_diff = enc.right_speed_mm_s - enc.left_speed_mm_s;
-        rotational_effort -= (speed_diff * 0.0004f);
+        rotational_effort -= (speed_diff * k_wheel_sync_);
     }
 
     // 4. Handle ACTION_ALIGN_FRONT_WALL touch detection
@@ -663,5 +665,39 @@ void MotionController::runTachometerBenchmark(float duty, uint16_t duration_ms) 
 
     calibrating_motors_ = false;
     resetTracking();
+}
+
+void MotionController::saveToNVS() {
+    Preferences prefs;
+    prefs.begin("motion_cal", false);
+    prefs.putFloat("k_sync", k_wheel_sync_);
+    float kp = 0.0f, ki = 0.0f, kd = 0.0f;
+    pid_linear_vel_.getGains(kp, ki, kd);
+    prefs.putFloat("v_kp", kp);
+    prefs.putFloat("v_ki", ki);
+    prefs.putFloat("v_kd", kd);
+    prefs.putBool("valid", true);
+    prefs.end();
+    Serial.printf("[MOTION] Calibration saved to NVS: Sync=%.6f, VelPID=[%.5f, %.5f, %.6f]\n",
+                  k_wheel_sync_, kp, ki, kd);
+}
+
+bool MotionController::loadFromNVS() {
+    Preferences prefs;
+    prefs.begin("motion_cal", true);
+    if (!prefs.getBool("valid", false)) {
+        prefs.end();
+        k_wheel_sync_ = 0.0004f;
+        return false;
+    }
+    k_wheel_sync_ = prefs.getFloat("k_sync", 0.0004f);
+    float kp = prefs.getFloat("v_kp", 0.0025f);
+    float ki = prefs.getFloat("v_ki", 0.0005f);
+    float kd = prefs.getFloat("v_kd", 0.00005f);
+    pid_linear_vel_.setGains(kp, ki, kd);
+    prefs.end();
+    Serial.printf("[MOTION] Calibration loaded from NVS: Sync=%.6f, VelPID=[%.5f, %.5f, %.6f]\n",
+                  k_wheel_sync_, kp, ki, kd);
+    return true;
 }
 
