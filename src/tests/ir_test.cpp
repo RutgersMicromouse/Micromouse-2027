@@ -29,7 +29,7 @@ const int RECEIVER_PINS[6] = {
 
 // List one or more emitters, e.g. {2} or {0, 2, 4}.
 // All listed emitters are switched on together.
-const int EMITTER_TO_TEST[] = {0, 1,};
+const int EMITTER_TO_TEST[] = {0, 2, 4, 5};
 
 const int NUM_EMITTERS_TO_TEST =
     sizeof(EMITTER_TO_TEST) / sizeof(EMITTER_TO_TEST[0]);
