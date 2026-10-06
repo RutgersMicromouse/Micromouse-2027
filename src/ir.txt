@@ -1,0 +1,93 @@
+#include <Arduino.h>
+
+const int POWER_ENABLE = 13; // MotorBatControl (GPIO 13)
+
+// Emitter GPIO Mappings [CH1 - CH6]
+const int EMITTER_PINS[6] = {15, 16, 17, 18, 19, 14};
+
+// Receiver ADC Mappings [CH1 - CH6]
+const int RECEIVER_PINS[6] = {3, 8, 1, 2, 9, 10};
+
+// Interleaved Groups: 0-indexed indices for [CH1, CH3, CH5] and [CH2, CH4, CH6]
+const int GROUPS[2][3] = {
+  {0, 2, 4}, // Group 1: CH1, CH3, CH5
+  {1, 3, 5}  // Group 2: CH2, CH4, CH6
+};
+
+// Number of ADC readings to average per sample
+const int NUM_SAMPLES = 8;
+
+int readAdcAvg(int pin) {
+  long sum = 0;
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    sum += analogRead(pin);
+    delayMicroseconds(50);
+  }
+  return sum / NUM_SAMPLES;
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // 1. Enable Power Rails
+  pinMode(POWER_ENABLE, OUTPUT);
+  digitalWrite(POWER_ENABLE, HIGH);
+  delay(200);
+
+  // 2. Configure Emitters
+  for (int i = 0; i < 6; i++) {
+    pinMode(EMITTER_PINS[i], OUTPUT);
+    digitalWrite(EMITTER_PINS[i], LOW);
+  }
+
+  // 3. Configure Receivers
+  for (int i = 0; i < 6; i++) {
+    pinMode(RECEIVER_PINS[i], INPUT);
+  }
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
+
+  Serial.println("\n=================================================");
+  Serial.println(" Interleaved 2-Group (Odd/Even) IR Scanner Active");
+  Serial.println("=================================================");
+}
+
+void loop() {
+  int deltas[6];
+
+  // Process Group 1 (CH1, CH3, CH5) then Group 2 (CH2, CH4, CH6)
+  for (int g = 0; g < 2; g++) {
+    int ambient[3];
+
+    // 1. Ensure emitters for current group are OFF and measure Ambient
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(EMITTER_PINS[GROUPS[g][i]], LOW);
+    }
+    delayMicroseconds(300); // Allow phototransistor settling time
+
+    for (int i = 0; i < 3; i++) {
+      ambient[i] = readAdcAvg(RECEIVER_PINS[GROUPS[g][i]]);
+    }
+
+    // 2. Pulse ALL emitters for current group ON and measure Active
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(EMITTER_PINS[GROUPS[g][i]], HIGH);
+    }
+    delayMicroseconds(300); // Allow LED turn-on & phototransistor response
+
+    for (int i = 0; i < 3; i++) {
+      int ch = GROUPS[g][i];
+      int active = readAdcAvg(RECEIVER_PINS[ch]);
+      deltas[ch] = active - ambient[i];
+
+      // Turn off emitter immediately after reading
+      digitalWrite(EMITTER_PINS[ch], LOW);
+    }
+  }
+
+  // Print all 6 Channels
+  Serial.printf("Deltas -> CH1:%4d | CH2:%4d | CH3:%4d | CH4:%4d | CH5:%4d | CH6:%4d\n",
+                deltas[0], deltas[1], deltas[2], deltas[3], deltas[4], deltas[5]);
+
+  delay(100);
+}
