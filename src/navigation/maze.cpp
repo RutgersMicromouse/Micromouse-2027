@@ -17,9 +17,6 @@ void Maze::reset() {
         cells_[MAZE_WIDTH - 1][y] |= WALL_EAST;
     }
 
-    // Standard micromouse start cell (0, 0) has East wall
-    cells_[0][0] |= WALL_EAST;
-    cells_[1][0] |= WALL_WEST;
 }
 
 bool Maze::isValidCoordinate(int8_t x, int8_t y) {

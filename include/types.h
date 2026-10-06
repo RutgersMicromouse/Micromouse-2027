@@ -29,17 +29,17 @@ struct Pose {
 struct DistanceSensors {
     // Raw ADC readings (0-1023)
     uint16_t front;     // FIR (Pin 17)
-    uint16_t left_45;   // L1IR (Pin 16)
-    uint16_t left_90;   // L2IR (Pin 15)
-    uint16_t right_45;  // R1IR (Pin 14)
-    uint16_t right_90;  // R2IR (Pin 20)
+    uint16_t front_left;
+    uint16_t rear_left;
+    uint16_t front_right;
+    uint16_t rear_right;
 
     // Calibrated physical distance in millimeters (Sharp GP2Y0A51SK0F)
     float front_mm;
-    float left_45_mm;
-    float left_90_mm;
-    float right_45_mm;
-    float right_90_mm;
+    float front_left_mm;
+    float rear_left_mm;
+    float front_right_mm;
+    float rear_right_mm;
 
     // Binary wall presence classification
     bool wall_front;
@@ -50,6 +50,7 @@ struct DistanceSensors {
     // Positive means robot is too close to left wall -> steer right
     // Negative means robot is too close to right wall -> steer left
     float centering_error;
+    float wall_alignment_error_deg;
 };
 
 struct IMUReading {

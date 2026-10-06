@@ -14,6 +14,11 @@ RobotState current_robot_state = STATE_IDLE;
 bool continuous_telemetry = false;
 uint32_t last_telemetry_time = 0;
 
+// #define SENSOR_DISTANCE_DIAGNOSTIC_MODE
+// #define RUN_MOTOR_STARTUP_TEST
+// Uncomment to continuously print IR raw values, distances, and wall decisions.
+// #define DEBUG_IR_SENSOR_STREAM
+
 void printBanner() {
     Serial.println("\n========================================================");
     Serial.println("       RATATOUIEEE - RUTGERS MICROMOUSE 2026-2027       ");
@@ -25,6 +30,7 @@ void printBanner() {
 void printHelp() {
     Serial.println("\nCommands available via Serial Console:");
     Serial.println("  [e] - Explore to Center (Floodfill)");
+    Serial.println("  [n] - Explore one cell, then wait for the next command");
     Serial.println("  [r] - Return to Start (0, 0)");
     Serial.println("  [f] - Execute High-Speed Speed Run");
     Serial.println("  [a] - Full Autonomy (Explore -> Return -> Speed Run)");
@@ -33,19 +39,62 @@ void printHelp() {
     Serial.println("  [m] - Print 16x16 Maze ASCII Map");
     Serial.println("  [t] - Test 90-deg in-place turn");
     Serial.println("  [w] - Test 1-cell forward move");
+    Serial.println("  [1] - Test left wheel only (lift robot first)");
+    Serial.println("  [2] - Test right wheel only (lift robot first)");
     Serial.println("  [s] - Emergency Stop\n");
+}
+
+void testSingleWheel(bool right) {
+    if (!motors.isConnected()) {
+        Serial.println("[MOTOR TEST] Motoron is not connected; wheel test cancelled.");
+        return;
+    }
+
+    Serial.printf("[MOTOR TEST] Testing %s wheel for 1 second. Keep the robot lifted.\n",
+                  right ? "right" : "left");
+    motors.stop(true);
+    delay(100);
+    if (right) {
+        motors.setRightSpeed(250);
+    } else {
+        motors.setLeftSpeed(250);
+    }
+    delay(1000);
+    motors.stop(true);
+    Serial.printf("[MOTOR TEST] %s wheel test complete; motors stopped.\n",
+                  right ? "Right" : "Left");
 }
 
 void streamDiagnostics() {
     DistanceSensors ir = ir_sensors.getReadings();
-    Serial.printf("[DIAG] BAT: %4.2fV | ENC: L=%6.1fmm R=%6.1fmm | IMU: %6.1f deg (%5.1f dps) | 0A51SK mm: [L90:%4.1f L45:%4.1f F:%4.1f R45:%4.1f R90:%4.1f] Center:%+4.2f\n",
+    Serial.printf("[DIAG] BAT: %4.2fV | ENC: L=%6.1fmm R=%6.1fmm | IMU: %6.1f deg (%5.1f dps) | IR mm: [FL:%4.1f RL:%4.1f F:%4.1f FR:%4.1f RR:%4.1f] Center:%+4.2f Align:%+4.1fdeg\n",
                   battery.getVoltage(),
                   encoders.getLeftDistanceMM(),
                   encoders.getRightDistanceMM(),
                   imu.getHeadingDeg(),
                   imu.getYawRateDeg_S(),
-                  ir.left_90_mm, ir.left_45_mm, ir.front_mm, ir.right_45_mm, ir.right_90_mm,
-                  ir.centering_error);
+                  ir.front_left_mm, ir.rear_left_mm, ir.front_mm,
+                  ir.front_right_mm, ir.rear_right_mm,
+                  ir.centering_error, ir.wall_alignment_error_deg);
+}
+
+void streamIRSensorDebug() {
+    DistanceSensors ir = ir_sensors.getReadings();
+    Serial.printf("[IR DEBUG] F=%s %.1fmm(raw=%u) | FL=%s %.1fmm(raw=%u) RL=%s %.1fmm(raw=%u) | FR=%s %.1fmm(raw=%u) RR=%s %.1fmm(raw=%u) | wall decisions F=%s L=%s R=%s | align=%+.1fdeg\n",
+                  ir.front >= IR_WALL_DETECT_FRONT ? "BLOCKED" : "OPEN",
+                  ir.front_mm, ir.front,
+                  ir.front_left >= IR_WALL_DETECT_SIDE ? "BLOCKED" : "OPEN",
+                  ir.front_left_mm, ir.front_left,
+                  ir.rear_left >= IR_WALL_DETECT_SIDE ? "BLOCKED" : "OPEN",
+                  ir.rear_left_mm, ir.rear_left,
+                  ir.front_right >= IR_WALL_DETECT_SIDE ? "BLOCKED" : "OPEN",
+                  ir.front_right_mm, ir.front_right,
+                  ir.rear_right >= IR_WALL_DETECT_SIDE ? "BLOCKED" : "OPEN",
+                  ir.rear_right_mm, ir.rear_right,
+                  ir.wall_front ? "BLOCKED" : "OPEN",
+                  ir.wall_left ? "BLOCKED" : "OPEN",
+                  ir.wall_right ? "BLOCKED" : "OPEN",
+                  ir.wall_alignment_error_deg);
 }
 
 void handleSerialCommands() {
@@ -57,6 +106,12 @@ void handleSerialCommands() {
         case 'E':
             Serial.println("[CMD] Starting Explore to Center...");
             navigator.exploreToCenter();
+            break;
+
+        case 'n':
+        case 'N':
+            Serial.println("[CMD] Taking one exploration step...");
+            navigator.exploreOneCell();
             break;
 
         case 'r':
@@ -112,6 +167,14 @@ void handleSerialCommands() {
             motion.moveForward(CELL_DIMENSION_MM);
             break;
 
+        case '1':
+            testSingleWheel(false);
+            break;
+
+        case '2':
+            testSingleWheel(true);
+            break;
+
         case 's':
         case 'S':
             Serial.println("[CMD] Emergency Stop!");
@@ -131,22 +194,23 @@ void handleSerialCommands() {
 
 // Hand gesture mode selector using Front IR Sensor
 void gestureModeSelector() {
-    Serial.println("\n[READY] Wave hand in front of front sensor to select mode:");
-    Serial.println("  1 blink / hold 1s: Explore to Center");
-    Serial.println("  2 blinks / hold 2s: Full Autonomous Run (Explore + Return + Speed Run)");
-    Serial.println("  3 blinks / hold 3s: In-Cell Calibration");
+    Serial.println("\n[READY] Hold a hand in front of the front sensor, then remove it to select a mode:");
+    Serial.println("  Hold 0.6-1.8s: Explore to Center");
+    Serial.println("  Hold 1.8-3.0s: Full Autonomous Run (Explore + Return + Speed Run)");
+    Serial.println("  Hold >3.0s: In-Cell Calibration");
+    Serial.println("  Or send [n] over Serial for one manual navigation step.");
 
     int hand_count = 0;
     uint32_t gesture_start = 0;
+    uint32_t last_selector_debug_time = 0;
 
     while (hand_count == 0) {
         handleSerialCommands();
 
         ir_sensors.update();
-        uint16_t front_val = ir_sensors.getFront();
+        bool front_detected = ir_sensors.hasFrontWall();
 
-        // Front sensor covered by hand (> 350)
-        if (front_val > 350) {
+        if (front_detected) {
             if (gesture_start == 0) {
                 gesture_start = millis();
             } else {
@@ -174,6 +238,13 @@ void gestureModeSelector() {
                 }
             }
         }
+
+#ifdef DEBUG_IR_SENSOR_STREAM
+        if (millis() - last_selector_debug_time >= 250) {
+            last_selector_debug_time = millis();
+            streamIRSensorDebug();
+        }
+#endif
         delay(10);
     }
 
@@ -199,6 +270,23 @@ void gestureModeSelector() {
     }
 }
 
+void runMotorStartupTest() {
+    if (!motors.isConnected()) {
+        Serial.println("[MOTOR TEST] Skipped: Motoron is not connected.");
+        return;
+    }
+
+    Serial.println("[MOTOR TEST] Both wheels will run forward for 5 seconds.");
+    Serial.println("[MOTOR TEST] Keep the wheels lifted and clear.");
+    delay(1000);
+
+    motors.setSpeeds(200, 200);
+    delay(5000);
+    motors.stop(true);
+
+    Serial.println("[MOTOR TEST] Complete. Motors stopped.");
+}
+
 void setup() {
     pinMode(PIN_STATUS_LED, OUTPUT);
     digitalWrite(PIN_STATUS_LED, HIGH);
@@ -206,10 +294,20 @@ void setup() {
     Serial.begin(115200);
     delay(1500); // Allow USB Serial terminal to attach
 
+#ifdef SENSOR_DISTANCE_DIAGNOSTIC_MODE
+    Serial.println("[DIAG] Sensor distance diagnostic mode. Motors and navigation are disabled.");
+    ir_sensors.begin();
+    return;
+#endif
+
     printBanner();
 
     // Initialize all motion and sensor hardware
     motion.begin();
+
+#ifdef RUN_MOTOR_STARTUP_TEST
+    runMotorStartupTest();
+#endif
 
     // Initial self-test LED sequence
     for (int i = 0; i < 4; ++i) {
@@ -229,6 +327,9 @@ void setup() {
 }
 
 void loop() {
+#ifdef SENSOR_DISTANCE_DIAGNOSTIC_MODE
+    ir_sensors.update();
+#else
     // Process incoming serial commands
     handleSerialCommands();
 
@@ -240,6 +341,16 @@ void loop() {
         battery.update();
         streamDiagnostics();
     }
+#endif
+
+#if defined(DEBUG_IR_SENSOR_STREAM) || defined(SENSOR_DISTANCE_DIAGNOSTIC_MODE)
+    static uint32_t last_ir_debug_time = 0;
+    if (millis() - last_ir_debug_time >= 250) {
+        last_ir_debug_time = millis();
+        ir_sensors.update();
+        streamIRSensorDebug();
+    }
+#endif
 
     delay(5);
 }

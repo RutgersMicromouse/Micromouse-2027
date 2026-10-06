@@ -2,6 +2,12 @@
 
 MotorController motors;
 
+static int16_t scaledMotorCommand(int16_t command, float motor_compensation) {
+    command = constrain(command, -MOTOR_MAX_SPEED, MOTOR_MAX_SPEED);
+    float scaled = command * MOTOR_COMMAND_SCALE * motor_compensation;
+    return (int16_t)constrain(scaled, (float)-MOTOR_MAX_SPEED, (float)MOTOR_MAX_SPEED);
+}
+
 MotorController::MotorController()
     : motoron_(MOTORON_I2C_ADDR),
       is_initialized_(false),
@@ -48,9 +54,8 @@ bool MotorController::begin() {
 void MotorController::setSpeeds(int16_t left_speed, int16_t right_speed) {
     if (!is_initialized_) return;
 
-    // Clamp speed limits
-    left_speed  = constrain(left_speed,  -MOTOR_MAX_SPEED, MOTOR_MAX_SPEED);
-    right_speed = constrain(right_speed, -MOTOR_MAX_SPEED, MOTOR_MAX_SPEED);
+    left_speed = scaledMotorCommand(left_speed, 1.0f);
+    right_speed = scaledMotorCommand(right_speed, MOTOR_RIGHT_COMPENSATION);
 
     // Right motor is mounted symmetrically opposing left motor, so invert right direction
     motoron_.setSpeed(MOTOR_LEFT_CHANNEL, left_speed);
@@ -61,13 +66,13 @@ void MotorController::setSpeeds(int16_t left_speed, int16_t right_speed) {
 
 void MotorController::setLeftSpeed(int16_t speed) {
     if (!is_initialized_) return;
-    speed = constrain(speed, -MOTOR_MAX_SPEED, MOTOR_MAX_SPEED);
+    speed = scaledMotorCommand(speed, 1.0f);
     motoron_.setSpeed(MOTOR_LEFT_CHANNEL, speed);
 }
 
 void MotorController::setRightSpeed(int16_t speed) {
     if (!is_initialized_) return;
-    speed = constrain(speed, -MOTOR_MAX_SPEED, MOTOR_MAX_SPEED);
+    speed = scaledMotorCommand(speed, MOTOR_RIGHT_COMPENSATION);
     motoron_.setSpeed(MOTOR_RIGHT_CHANNEL, -speed);
 }
 
