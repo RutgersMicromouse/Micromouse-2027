@@ -49,10 +49,14 @@ using std::max;
 #define INPUT_PULLUP 2
 #define LOW 0
 #define HIGH 1
+#define ADC_0db 0
+#define ADC_2_5db 1
+#define ADC_6db 2
 #define ADC_11db 3
 inline void pinMode(int, int) {}
 inline void analogReadResolution(int) {}
 inline void analogSetAttenuation(int) {}
+inline void analogSetPinAttenuation(int, int) {}
 inline void delayMicroseconds(unsigned) {}
 void digitalWrite(int pin, int level);
 int analogRead(int pin);
@@ -84,6 +88,7 @@ DRIVE_STUBS['Motoron.h'] = r'''
 #pragma once
 #include <stdint.h>
 #define MOTORON_STATUS_FLAG_RESET 9
+enum class MotoronVinSenseType { Motoron256 = 0, MotoronHp = 2, Motoron550 = 3, Motoron453 = 6 };
 // The Pololu Motoron motor driver, as far as the firmware uses it
 class MotoronI2C {
 public:
@@ -94,7 +99,7 @@ public:
     void setMaxDeceleration(uint8_t, uint16_t) {}
     uint16_t getStatusFlags() { return 0; }
     uint8_t getLastError() { return 0; }
-    uint32_t getVinVoltageMv(uint16_t) { return 12000; }
+    uint32_t getVinVoltageMv(uint16_t, MotoronVinSenseType = MotoronVinSenseType::Motoron256) { return 12000; }
     void setAllSpeedsNow(int16_t motor1_right, int16_t motor2_left);
     void setBrakingNow(uint8_t motor, uint16_t amount);
 };
@@ -436,8 +441,11 @@ static double wheelTarget(int16_t command) {
 
 static void physicsStep(double dt) {
     double lag = g_sim.braking ? BRAKE_LAG_S : MOTOR_LAG_S;
-    g_sim.wheel_left  += (wheelTarget(g_sim.motor_left)  - g_sim.wheel_left)  * dt / lag;
-    g_sim.wheel_right += (wheelTarget(g_sim.motor_right) - g_sim.wheel_right) * dt / lag;
+    // The simulated motors are wired the way config.h says the real ones are
+    const double left_motor_sign  = INVERT_LEFT_MOTOR  ? -1.0 : 1.0;
+    const double right_motor_sign = INVERT_RIGHT_MOTOR ? -1.0 : 1.0;
+    g_sim.wheel_left  += (left_motor_sign  * wheelTarget(g_sim.motor_left)  - g_sim.wheel_left)  * dt / lag;
+    g_sim.wheel_right += (right_motor_sign * wheelTarget(g_sim.motor_right) - g_sim.wheel_right) * dt / lag;
 
     double speed = (g_sim.wheel_left + g_sim.wheel_right) * 0.5;
     g_sim.yaw_rate = (g_sim.wheel_right - g_sim.wheel_left) / WHEEL_BASE_MM; // Left turn positive
@@ -446,8 +454,11 @@ static void physicsStep(double dt) {
     g_sim.y +=  cos(g_sim.heading) * speed * dt;
     g_sim.distance += fabs(speed) * dt;
 
-    g_sim.ticks_left  += g_sim.wheel_left  * dt * TICKS_PER_MM;
-    g_sim.ticks_right += g_sim.wheel_right * dt * TICKS_PER_MM;
+    // The simulated encoders are wired the way config.h says the real ones are
+    const double left_sign  = INVERT_LEFT_ENCODER  ? -1.0 : 1.0;
+    const double right_sign = INVERT_RIGHT_ENCODER ? -1.0 : 1.0;
+    g_sim.ticks_left  += left_sign  * g_sim.wheel_left  * dt / MM_PER_TICK_LEFT;
+    g_sim.ticks_right += right_sign * g_sim.wheel_right * dt / MM_PER_TICK_RIGHT;
     g_sim.time_s += dt;
     checkClearance();
 }

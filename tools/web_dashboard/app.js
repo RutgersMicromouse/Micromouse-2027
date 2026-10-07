@@ -565,6 +565,9 @@ async function connect() {
           UART_RX
         );
 
+      // Robot output (everything it prints) arrives here
+      await attachBluetoothLog(uart);
+
 
     } catch (error) {
 
@@ -776,3 +779,222 @@ setConnected(
 msg(
   "Connect to Antigrav-Mouse to begin live telemetry."
 );
+
+
+// =============================================================
+// ROBOT OUTPUT PANEL
+//
+// Shows everything the robot prints, exactly as the serial
+// monitor would, and sends typed commands to it.
+//
+// The text can arrive two ways:
+//   Bluetooth - the robot copies its output to the UART TX
+//               characteristic (needs no cable)
+//   USB       - read straight from the serial port (close the
+//               serial monitor first: only one program can
+//               have the port)
+// =============================================================
+
+const UART_TX =
+  "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+// Keep the panel from growing without limit
+const MAX_LOG_CHARS = 60000;
+
+let usbPort = null;
+let usbWriter = null;
+
+function appendLog(text) {
+  const log = $("log");
+  if (log.dataset.started !== "yes") {
+    log.textContent = "";
+    log.dataset.started = "yes";
+  }
+  // Stay scrolled to the bottom unless the user has scrolled up to read
+  const atBottom =
+    log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.textContent += text.replace(/\r/g, "");
+  if (log.textContent.length > MAX_LOG_CHARS) {
+    log.textContent = log.textContent.slice(-MAX_LOG_CHARS);
+  }
+  if (atBottom) {
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+// ---------------------------------------------------------
+// Bluetooth: listen to the robot's output
+// ---------------------------------------------------------
+async function attachBluetoothLog(uart) {
+  try {
+    const tx = await uart.getCharacteristic(UART_TX);
+    const textDecoder = new TextDecoder();
+    tx.addEventListener("characteristicvaluechanged", (event) => {
+      handleRobotText(textDecoder.decode(event.target.value, { stream: true }));
+    });
+    await tx.startNotifications();
+    appendLog("[dashboard] Listening to the robot over Bluetooth.\n");
+    startSensorStream();
+  } catch (error) {
+    console.warn("Robot output over Bluetooth unavailable:", error);
+    appendLog("[dashboard] Could not listen over Bluetooth: " + error.message + "\n");
+  }
+}
+
+// ---------------------------------------------------------
+// USB: read the serial port directly
+// ---------------------------------------------------------
+async function connectUsb() {
+  if (!navigator.serial) {
+    msg("This browser cannot open serial ports. Use Google Chrome or Edge.");
+    return;
+  }
+  if (usbPort) {
+    msg("USB is already connected.");
+    return;
+  }
+  try {
+    usbPort = await navigator.serial.requestPort();
+    await usbPort.open({ baudRate: 115200 });
+    // Leave the reset lines alone so opening the port does not restart the robot
+    try {
+      await usbPort.setSignals({ dataTerminalReady: false, requestToSend: false });
+    } catch (error) {
+      console.warn("Could not set serial signals:", error);
+    }
+    usbWriter = usbPort.writable.getWriter();
+    $("usbBtn").textContent = "USB connected";
+    $("usbBtn").disabled = true;
+    appendLog("[dashboard] Listening to the robot over USB.\n");
+    msg("USB connected. The robot's output appears below.");
+    startSensorStream();
+
+    const reader = usbPort.readable.getReader();
+    const textDecoder = new TextDecoder();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        handleRobotText(textDecoder.decode(value, { stream: true }));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  } catch (error) {
+    console.error("USB connection failed:", error);
+    msg("USB connection failed: " + error.message +
+        " (is the serial monitor still open? Only one program can use the port.)");
+    usbPort = null;
+    usbWriter = null;
+    $("usbBtn").textContent = "Connect by USB";
+    $("usbBtn").disabled = false;
+  }
+}
+
+// ---------------------------------------------------------
+// Send a typed command by whichever link is connected
+// ---------------------------------------------------------
+async function sendTypedCommand(command) {
+  if (usbWriter) {
+    await usbWriter.write(encoder.encode(command + "\n"));
+    return;
+  }
+  if (rx) {
+    await rx.writeValue(encoder.encode(command + "\n"));
+    return;
+  }
+  msg("Not connected. Use Connect to Mouse (Bluetooth) or Connect by USB first.");
+}
+
+$("usbBtn").addEventListener("click", connectUsb);
+
+$("clearLog").addEventListener("click", () => {
+  $("log").textContent = "";
+  $("log").dataset.started = "yes";
+});
+
+$("commandForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("commandInput");
+  const command = input.value.trim();
+  if (!command) return;
+  input.value = "";
+  appendLog("> " + command + "\n");
+  try {
+    await sendTypedCommand(command);
+  } catch (error) {
+    msg("Command failed: " + error.message);
+  }
+});
+
+
+// =============================================================
+// LIVE SENSOR READINGS
+//
+// The robot prints a line starting "[TEL]" five times a second
+// once it has been sent the command "stream on". Those lines are
+// taken out of the output panel and shown as the bars instead.
+// =============================================================
+
+// Reading that fills a bar completely: the top of the sensors' range
+const SENSOR_FULL_SCALE = 4095;
+
+let robotTextBuffer = "";
+let lastSensorTime = 0;
+
+function startSensorStream() {
+  // Give the link a moment, then ask the robot to start sending readings
+  setTimeout(() => {
+    sendTypedCommand("stream on").catch((error) => console.warn(error));
+  }, 600);
+}
+
+function showSensors(line) {
+  const ir = line.match(
+    /L90=\s*(\d+)\s+L45=\s*(\d+)\s+FL=\s*(\d+)\s+FR=\s*(\d+)\s+R45=\s*(\d+)\s+R90=\s*(\d+)/
+  );
+  if (ir) {
+    for (let i = 0; i < 6; i++) {
+      const value = Number(ir[i + 1]);
+      $("ir" + i).textContent = value;
+      $("bar" + i).style.height =
+        Math.min(100, (value / SENSOR_FULL_SCALE) * 100) + "%";
+    }
+    lastSensorTime = Date.now();
+  }
+  const walls = line.match(/Walls: \[(.)(.)(.)\]/);
+  if (walls) {
+    $("walls").textContent =
+      (walls[1] === "L" ? "LEFT " : "- ") +
+      (walls[2] === "F" ? "FRONT " : "- ") +
+      (walls[3] === "R" ? "RIGHT" : "-");
+  }
+  const loop = line.match(/Loop:\s*(\d+)us/);
+  if (loop) {
+    $("loopTime").textContent = loop[1];
+  }
+}
+
+// Splits incoming text into whole lines; sensor lines feed the bars, the rest goes to the panel
+function handleRobotText(text) {
+  robotTextBuffer += text.replace(/\r/g, "");
+  let newline;
+  while ((newline = robotTextBuffer.indexOf("\n")) >= 0) {
+    const line = robotTextBuffer.slice(0, newline);
+    robotTextBuffer = robotTextBuffer.slice(newline + 1);
+    if (line.startsWith("[TEL]")) {
+      showSensors(line);
+    } else {
+      appendLog(line + "\n");
+    }
+  }
+}
+
+// Say how fresh the readings are, so stale numbers are not mistaken for live ones
+setInterval(() => {
+  if (!lastSensorTime) return;
+  const seconds = (Date.now() - lastSensorTime) / 1000;
+  $("sensorAge").textContent =
+    seconds < 1.5 ? "(live)" : "(last update " + seconds.toFixed(0) + " s ago)";
+}, 500);
+

@@ -183,6 +183,20 @@ public:
                        uint16_t thresh_r45, uint16_t thresh_r90);
     void setNominalCenters(uint16_t center_l45, uint16_t center_r45);
 
+    // Wiring check. Lights each emitter on its own for `on_time_us` and records how much every
+    // receiver's reading rises: rise[emitter][receiver]. With the pin map right, each emitter's
+    // own receiver (same index) shows by far the biggest rise when there is a wall in front.
+    // Normal sampling is paused while it runs. Call only while the robot is standing still.
+    void measureCrossTable(int16_t rise[6][6], uint32_t on_time_us);
+
+    // For checking a sensor by hand: its latest raw ADC readings with the emitter off and on.
+    // Channel 0..5 = L90, L45, FL, FR, R45, R90.
+    uint16_t getRawAmbient(uint8_t channel) const { return last_ambient_[channel]; }
+    uint16_t getRawLit(uint8_t channel) const { return last_lit_[channel]; }
+    uint16_t getThresholdFront() const { return thresh_front_; }
+    uint16_t getThresholdL90() const { return thresh_l90_; }
+    uint16_t getThresholdR90() const { return thresh_r90_; }
+
     // Calibrated levels of the two 45° sensors: "a wall is there" threshold and centred reading
     uint16_t getThresholdL45() const { return thresh_l45_; }
     uint16_t getThresholdR45() const { return thresh_r45_; }
@@ -191,11 +205,14 @@ public:
 
 private:
     // Fires one interleaved emitter group and updates its three filtered channels
-    void sampleGroup(const uint8_t group[3]);
+    void sampleGroup(const uint8_t* channels, uint8_t count);
 
     IRReadings readings_;
     uint16_t filtered_[6];            // CH1..CH6 = L90, L45, FL, FR, R45, R90
     uint16_t history_[6][2];          // Previous two raw samples per channel (median-of-3 spike filter)
+    volatile bool paused_;            // True while measureCrossTable() has the emitters to itself
+    uint16_t last_ambient_[6];        // Most recent raw ADC reading with the emitter off...
+    uint16_t last_lit_[6];            // ...and with it on (for checking the sensors: `ir` command)
     volatile uint32_t update_count_;  // Even ticks sample group A, odd ticks group B
 
     uint16_t prev_l90_;

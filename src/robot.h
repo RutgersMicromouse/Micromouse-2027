@@ -33,6 +33,10 @@ extern QueueHandle_t    g_motion_cmd_queue;
 // Returns false if it could not be read in time; `out` is then left unchanged.
 bool getTelemetry(RobotTelemetry& out);
 
+// The 5 Hz status line on USB / Bluetooth / Telnet (off at power-on)
+void setTelemetryStreaming(bool on);
+bool isTelemetryStreaming();
+
 // Ask the motion task to zero the encoders / heading. Carried out between motions.
 void requestEncoderReset();
 void requestHeadingReset();

@@ -215,8 +215,8 @@ bool calibrateMotors() {
         }
 
         // RPM = (Delta_Ticks / ENCODER_TOTAL_CPR) / dt_s * 60
-        float rpm_l = ((float)delta_l / ENCODER_TOTAL_CPR) / dt_s * 60.0f;
-        float rpm_r = ((float)delta_r / ENCODER_TOTAL_CPR) / dt_s * 60.0f;
+        float rpm_l = ((float)delta_l / ENCODER_TICKS_PER_REV_LEFT) / dt_s * 60.0f;
+        float rpm_r = ((float)delta_r / ENCODER_TICKS_PER_REV_RIGHT) / dt_s * 60.0f;
 
         ratios[i] = rpm_l / rpm_r;
         Serial.printf("[CALIB] -> Left: %6.1f RPM | Right: %6.1f RPM | Ratio (L/R): %.4f\n", rpm_l, rpm_r, ratios[i]);
@@ -270,8 +270,8 @@ bool calibrateMotors() {
 
     g_motors.coast();
 
-    float v_rpm_l = ((float)v_delta_l / ENCODER_TOTAL_CPR) / v_dt * 60.0f;
-    float v_rpm_r = ((float)v_delta_r / ENCODER_TOTAL_CPR) / v_dt * 60.0f;
+    float v_rpm_l = ((float)v_delta_l / ENCODER_TICKS_PER_REV_LEFT) / v_dt * 60.0f;
+    float v_rpm_r = ((float)v_delta_r / ENCODER_TICKS_PER_REV_RIGHT) / v_dt * 60.0f;
     float diff_rpm = v_rpm_l - v_rpm_r;
     float diff_pct = (fabsf(diff_rpm) / ((v_rpm_l + v_rpm_r) * 0.5f)) * 100.0f;
 
@@ -323,8 +323,8 @@ void runTachometerBenchmark(float duty, uint16_t duration_ms) {
         last_ticks_l = enc.left_ticks_total;
         last_ticks_r = enc.right_ticks_total;
 
-        float rpm_l = ((float)delta_l / ENCODER_TOTAL_CPR) / dt_s * 60.0f;
-        float rpm_r = ((float)delta_r / ENCODER_TOTAL_CPR) / dt_s * 60.0f;
+        float rpm_l = ((float)delta_l / ENCODER_TICKS_PER_REV_LEFT) / dt_s * 60.0f;
+        float rpm_r = ((float)delta_r / ENCODER_TICKS_PER_REV_RIGHT) / dt_s * 60.0f;
         float diff = rpm_l - rpm_r;
 
         Serial.printf("[TACH +%4d ms] Left: %6.1f RPM | Right: %6.1f RPM | Diff: %+5.1f RPM\n",

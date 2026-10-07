@@ -85,7 +85,7 @@ You can view real-time diagnostics from your phone without touching the bot.
 3. Select **`Antigrav-Mouse`** and tap **Connect**.
 
 ### Step 3: Live Telemetry Stream
-Once connected, the bot streams live sensor and motion data at 5 Hz:
+Send `stream` to switch the live readings on (and again to switch them off). The bot then sends sensor and motion data at 5 Hz:
 ```text
 V:3.72V | Spd: 420 | Hdg:  90.0 | IR: 28, 45, 842, 856, 42, 31 | W:[.F.]
 ```
@@ -112,6 +112,7 @@ Type any of the following commands into the terminal:
 | `motorinv <l:0/1> <r:0/1>` | Sets motor direction inversion at runtime | — |
 | `encinv <l:0/1> <r:0/1>` | Sets encoder count direction inversion at runtime | — |
 | `status` | Reports battery voltage, active mode, and navigation state | Current profile color |
+| `stream` | Switches the live 5 Hz readings on or off (they are off at power-on) | — |
 | `health` | Reports motor driver, IMU, and encoder fault status plus recovery counters (see section 7) | — |
 | `resetenc` | Zeroes the encoder distance counters (idle only; used by the web dashboard) | — |
 | `resetheading` | Makes the current facing direction 0° (idle only; used by the web dashboard) | — |
@@ -182,7 +183,6 @@ A hand in front of the sensors looks like a wall to a moving robot, so waves are
 | 🟡 2x slow yellow after a search | A shorter route may exist: search again |
 | 🟢 3x green after a speed run | Centre reached; next speed run goes up a tier |
 | 🔵 1–3 blue before a speed run | Speed tier about to be used |
-| 🔴 Solid red | Low battery, motors disabled |
 
 ---
 
@@ -228,8 +228,7 @@ git push -u origin master
 
 ### Battery Safety Checklist
 * **Computer Battery Chemistry**: Separate 1S Li-ion/LiPo cell (3.7V nominal); the schematic's 10k/10k divider feeds its voltage to GPIO12 (`VSenseCom`).
-* **Low Battery Alert**: If the computer battery remains below **3.3V for 200 ms**, the robot automatically cuts motor power, engages emergency stop, and turns the LED **Solid Red**. Recharge immediately.
-* The motor battery is a separate supply and is not monitored by this firmware cutoff. Check computer-battery voltage via BLE `status` or the telemetry stream.
+* **No low-battery cutoff**: the firmware only reports the computer battery voltage (`status`); it never stops the robot because of it. Keep an eye on the voltage yourself and recharge below about 3.5 V.
 
 ### Sensor Calibration Check
 Before a run in a new arena:
@@ -290,12 +289,9 @@ The timing, safety, and geometry rules the firmware is built around. Any change 
 
 ### 8.3 Electrical & Failsafe Constraints
 
-* **Computer Battery Voltage Cutoff**:
+* **Computer Battery**:
   * **Chemistry**: Separate 1S Li-ion/LiPo cell ($3.7\text{ V}$ nominal).
-  * **Cutoff Voltage**: $3.30\text{ V}$.
-  * GPIO12 (`VSenseCom`) measures this battery through the 10k/10k divider.
-  * If voltage drops below $3.30\text{ V}$ for $>200\text{ ms}$, the robot cuts motor power, engages emergency stop, and turns the LED **Solid Red**.
-  * The separate motor battery is not monitored by this firmware cutoff.
+  * GPIO12 (`VSenseCom`) measures this battery through the 10k/10k divider. The voltage is reported only; there is no automatic cutoff.
 * **Motor Coil Stall Protection**:
   * If commanded velocity exceeds $80\text{ mm/s}$ while measured linear speed $< 15\text{ mm/s}$ at $>35\%$ effort for $>200\text{ ms}$ ($100\text{ ticks}$), the robot triggers immediate emergency stop to prevent motor burn-out.
 * **Encoder Fault Protection**:

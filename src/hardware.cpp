@@ -92,8 +92,8 @@ void Encoders::update(float dt_seconds) {
     state_.right_ticks_total += raw_right;
 
     // Convert ticks to millimeters
-    float d_left_mm = (float)raw_left * MM_PER_TICK;
-    float d_right_mm = (float)raw_right * MM_PER_TICK;
+    float d_left_mm = (float)raw_left * MM_PER_TICK_LEFT;
+    float d_right_mm = (float)raw_right * MM_PER_TICK_RIGHT;
 
     left_dist_acc_mm_ += d_left_mm;
     right_dist_acc_mm_ += d_right_mm;
@@ -236,8 +236,9 @@ void Motors::maintain(uint32_t now) {
             connected_ = true;
 
             // Motor supply voltage, lightly smoothed, for effort compensation in sendEfforts()
-            float volts = (float)mc_.getVinVoltageMv(3300) / 1000.0f;
-            if (mc_.getLastError() == 0 && volts > 1.0f) {
+            // Readings far from the 12 V rail are a scaling mistake, not a supply to compensate for
+            float volts = (float)mc_.getVinVoltageMv(3300, MOTORON_VIN_TYPE) / 1000.0f;
+            if (mc_.getLastError() == 0 && volts > 6.0f && volts < 16.0f) {
                 supply_volts_ = (supply_volts_ < 1.0f) ? volts : (0.8f * supply_volts_ + 0.2f * volts);
             }
         }
@@ -408,6 +409,9 @@ void Motors::getInverted(bool& invert_left, bool& invert_right) const {
 IRSensors::IRSensors()
     : filtered_{0, 0, 0, 0, 0, 0},
       history_{},
+      paused_(false),
+      last_ambient_{},
+      last_lit_{},
       update_count_(0),
       prev_l90_(0),
       prev_r90_(0),
@@ -425,11 +429,11 @@ IRSensors::IRSensors()
 static const uint8_t kEmitterPins[6]  = { PIN_IR_E1, PIN_IR_E2, PIN_IR_E3, PIN_IR_E4, PIN_IR_E5, PIN_IR_E6 };
 static const uint8_t kReceiverPins[6] = { PIN_IR_R1, PIN_IR_R2, PIN_IR_R3, PIN_IR_R4, PIN_IR_R5, PIN_IR_R6 };
 
-// Interleaved firing groups (channel indices). The two front sensors and each side's 90°/45° pair
-// are split across groups so sensors aimed at the same wall never fire together.
-static const uint8_t kGroups[2][3] = {
-    { 0, 2, 5 }, // Group A: L90, FL, R90
-    { 1, 3, 4 }  // Group B: L45, FR, R45
+// Firing pairs (channel indices), one pair per control tick
+static const uint8_t kFiringPairs[3][2] = {
+    { 2, 3 }, // The two front sensors: FL, FR
+    { 0, 5 }, // The two side sensors:  L90, R90
+    { 1, 4 }  // The two diagonals:     L45, R45
 };
 
 void IRSensors::begin() {
@@ -440,7 +444,9 @@ void IRSensors::begin() {
     }
 
     analogReadResolution(12);
-    analogSetAttenuation(ADC_11db);
+    for (int i = 0; i < 6; ++i) {
+        analogSetPinAttenuation(kReceiverPins[i], IR_ADC_ATTENUATION); // Sensitivity, see config.h
+    }
 
     // Try loading previously saved calibration from NVS Flash
     if (!loadFromNVS()) {
@@ -448,25 +454,27 @@ void IRSensors::begin() {
     }
 }
 
-void IRSensors::sampleGroup(const uint8_t group[3]) {
-    uint16_t ambient[3];
+void IRSensors::sampleGroup(const uint8_t* channels, uint8_t count) {
+    uint16_t ambient[6];
 
     // 1. Measure ambient light with the group's emitters OFF
-    for (int i = 0; i < 3; ++i) {
-        ambient[i] = analogRead(kReceiverPins[group[i]]);
+    for (int i = 0; i < count; ++i) {
+        ambient[i] = analogRead(kReceiverPins[channels[i]]);
     }
 
     // 2. Pulse the group's emitters ON together and let the phototransistors settle
-    for (int i = 0; i < 3; ++i) {
-        digitalWrite(kEmitterPins[group[i]], HIGH);
+    for (int i = 0; i < count; ++i) {
+        digitalWrite(kEmitterPins[channels[i]], HIGH);
     }
     delayMicroseconds(IR_PULSE_SETTLE_US);
 
     // 3. Sample reflected signal, ambient-subtracted and low-pass filtered
-    for (int i = 0; i < 3; ++i) {
-        const uint8_t ch = group[i];
+    for (int i = 0; i < count; ++i) {
+        const uint8_t ch = channels[i];
         uint16_t lit = analogRead(kReceiverPins[ch]);
         uint16_t raw = (lit > ambient[i]) ? (lit - ambient[i]) : 0;
+        last_ambient_[ch] = ambient[i];
+        last_lit_[ch] = lit;
 
         // Median of the last three samples throws away a single-sample spike (sunlight flicker,
         // a camera flash, electrical noise) without smearing real edges the way averaging would
@@ -479,8 +487,8 @@ void IRSensors::sampleGroup(const uint8_t group[3]) {
     }
 
     // 4. Emitters OFF
-    for (int i = 0; i < 3; ++i) {
-        digitalWrite(kEmitterPins[group[i]], LOW);
+    for (int i = 0; i < count; ++i) {
+        digitalWrite(kEmitterPins[channels[i]], LOW);
     }
 }
 
@@ -493,8 +501,31 @@ static float relativeDistance(uint16_t reading, uint16_t centred_reading) {
     return sqrtf((float)centred_reading / r);
 }
 
+void IRSensors::measureCrossTable(int16_t rise[6][6], uint32_t on_time_us) {
+    paused_ = true;
+    delay(6); // Let the control loop finish any pulse it had started
+
+    for (int emitter = 0; emitter < 6; ++emitter) {
+        int32_t sum[6] = {};
+        const int repeats = 8;
+        for (int r = 0; r < repeats; ++r) {
+            uint16_t off[6];
+            for (int rx = 0; rx < 6; ++rx) off[rx] = analogRead(kReceiverPins[rx]);
+            digitalWrite(kEmitterPins[emitter], HIGH);
+            delayMicroseconds(on_time_us);
+            for (int rx = 0; rx < 6; ++rx) sum[rx] += (int32_t)analogRead(kReceiverPins[rx]) - (int32_t)off[rx];
+            digitalWrite(kEmitterPins[emitter], LOW);
+            delay(2);
+        }
+        for (int rx = 0; rx < 6; ++rx) rise[emitter][rx] = (int16_t)(sum[rx] / repeats);
+    }
+
+    paused_ = false;
+}
+
 void IRSensors::update() {
-    sampleGroup(kGroups[update_count_ & 1]);
+    if (paused_) return;
+    sampleGroup(kFiringPairs[update_count_ % 3], 2);
     update_count_ = update_count_ + 1;
 
     readings_.left_90      = filtered_[0];
@@ -581,6 +612,7 @@ bool IRSensors::calibrateInCell(uint16_t sample_count) {
         uint32_t seen = update_count_;
         delay(5);
         if (update_count_ == seen) {
+            update();
             update();
             update();
         }

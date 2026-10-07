@@ -16,10 +16,11 @@ void begin() {
 
 void set(Color color) {
     const uint8_t level = RGB_BRIGHTNESS_LEVEL;
-    neopixelWrite(PIN_ESP32_RGB_LED,
-                  color.red   ? level : 0,
-                  color.green ? level : 0,
-                  color.blue  ? level : 0);
+    const uint8_t r = color.red   ? level : 0;
+    const uint8_t g = color.green ? level : 0;
+    const uint8_t b = color.blue  ? level : 0;
+    neopixelWrite(PIN_ESP32_RGB_LED, r, g, b);
+    neopixelWrite(PIN_ESP32_RGB_LED_ALT, r, g, b); // The same LED on the other board revision
 }
 
 void flash(Color color, int count, int delay_ms) {
@@ -84,6 +85,20 @@ bool isRunActive() {
     return state == NAV_STATE_EXPLORING_TO_CENTER ||
            state == NAV_STATE_RETURNING_TO_START ||
            state == NAV_STATE_SPEED_RUNNING;
+}
+
+const char* stateDescription() {
+    switch (g_navigator->getState()) {
+        case NAV_STATE_IDLE:                 return "IDLE - ready to start";
+        case NAV_STATE_CALIBRATING:          return "CALIBRATING the IR sensors";
+        case NAV_STATE_EXPLORING_TO_CENTER:  return "SEARCHING - driving to the goal";
+        case NAV_STATE_RETURNING_TO_START:   return "SEARCHING - exploring back to the start cell";
+        case NAV_STATE_PREPARING_SPEED_RUN:  return "SEARCH DONE - back at the start, ready for the next run";
+        case NAV_STATE_SPEED_RUNNING:        return "SPEED RUN in progress";
+        case NAV_STATE_FINISHED:             return "SPEED RUN DONE - at the goal";
+        case NAV_STATE_ERROR:                return "ERROR - no route found (forget the maze and try again)";
+        default:                             return "UNKNOWN";
+    }
 }
 
 void launchSelectedRun() {
@@ -258,6 +273,12 @@ uint8_t GestureInput::update(uint16_t front_reading, uint32_t now_ms) {
     return 0;
 }
 
+float GestureInput::getHandLevel() const {
+    float rise = resting_level_ * GESTURE_RISE_RATIO;
+    if (rise < (float)GESTURE_MIN_RISE) rise = (float)GESTURE_MIN_RISE;
+    return resting_level_ + rise;
+}
+
 bool GestureInput::consumeWaveCounted() {
     bool counted = wave_counted_flag_;
     wave_counted_flag_ = false;
@@ -330,10 +351,25 @@ static void perform(uint8_t waves) {
     restart();
 }
 
+void describe(char* buf, size_t size, const IRReadings& ir) {
+    snprintf(buf, size, "WAVES: front sensors read %d now (FL=%d FR=%d), %.0f at rest, a hand must exceed %.0f. Hand %s, %d wave(s) counted so far",
+             (int)ir.front_center, (int)ir.front_left, (int)ir.front_right,
+             s_input.getRestingLevel(), s_input.getHandLevel(),
+             s_input.isHandPresent() ? "SEEN" : "not seen", (int)s_input.getPendingCount());
+}
+
 void update(const IRReadings& ir) {
+    static bool hand_was_present = false;
     uint8_t waves = s_input.update(ir.front_center, millis());
 
+    // Say on the serial monitor what is being seen, so waves can be checked without the LED
+    if (s_input.isHandPresent() != hand_was_present) {
+        hand_was_present = s_input.isHandPresent();
+        if (hand_was_present) Serial.printf("[UI] Hand seen (front sensors read %d)\n", (int)ir.front_center);
+    }
+
     if (s_input.consumeWaveCounted()) {
+        Serial.printf("[UI] Wave %d counted\n", (int)s_input.getPendingCount());
         // Blink white so the operator can see each wave being counted
         StatusLED::set(StatusLED::WHITE);
         delay(60);
@@ -369,13 +405,7 @@ enum Source { SOURCE_USB, SOURCE_BLE, SOURCE_TELNET };
 static Source s_source = SOURCE_USB;
 
 static void reply(const char* msg) {
-    Serial.println(msg);
-#if ENABLE_BLE_DEBUG
-    if (s_source == SOURCE_BLE) BLEDebug::println(msg);
-#endif
-#if ENABLE_WIFI_OTA
-    if (s_source == SOURCE_TELNET) WifiOTA::println(msg);
-#endif
+    Serial.println(msg); // Reaches USB directly, and Bluetooth / Telnet through the debug log copy
 }
 
 // Parses the two numbers after a command name, e.g. "motortrim 0.98 1.0"
@@ -412,7 +442,80 @@ static void handle(String cmd, Source source) {
         return;
     }
 
+#if ENABLE_BLE_DEBUG || ENABLE_WIFI_OTA
+    // ---------------------------------------------------------------- Phone app buttons
+    // Added at the owner's request (2026-10-07). Only in builds with a radio: the competition
+    // build has none of these, so there a run can still only be started by hand waves.
+    if (cmd == "start" || cmd == "speedrun") {
+        if (running) { reply("ERR: ALREADY_RUNNING"); return; }
+        if (cmd == "start") {
+            reply("Calibrating the IR sensors, then starting the search...");
+            if (!Actions::calibrateIR()) reply("IR calibration failed here; using the stored / default levels.");
+            Actions::selectMode(Actions::MODE_SEARCH);
+        } else {
+            Actions::selectMode(Actions::MODE_HYBRID);
+        }
+        Actions::launchSelectedRun();
+        reply("ACK: STARTED");
+        return;
+    }
+    if (cmd == "calib") {
+        if (running) { reply("ERR: CANNOT_CALIB_WHILE_RUNNING"); return; }
+        reply(Actions::calibrateIR() ? "ACK: CALIB SUCCESS" : "ERR: CALIB FAILED");
+        return;
+    }
+    if (cmd == "clear") {
+        if (running) { reply("ERR: CANNOT_CLEAR_WHILE_RUNNING"); return; }
+        Actions::clearSavedMaze();
+        reply("ACK: MAZE CLEARED");
+        return;
+    }
+#endif
+
     // ---------------------------------------------------------------- Debug helpers
+    if (cmd == "resetall") {
+        // The phone app's "Reset sensors" button: wheel counters and heading back to zero
+        if (running) { reply("ERR: CANNOT_RESET_WHILE_RUNNING"); return; }
+        requestEncoderReset();
+        requestHeadingReset();
+        reply("ACK: WHEEL COUNTERS AND HEADING RESET TO ZERO");
+        return;
+    }
+    if (cmd.startsWith("irtest")) {
+        // Wiring and strength check: put the robot in a cell with walls close on the left, right
+        // and in front. Each row lights ONE emitter; the columns are how much each receiver rose.
+        // The biggest number in each row should be on the diagonal. Optional number = emitter
+        // on-time in microseconds (default 300).
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING"); return; }
+        long on_time = cmd.substring(6).toInt();
+        if (on_time < 50 || on_time > 20000) on_time = IR_PULSE_SETTLE_US;
+        static int16_t rise[6][6];
+        g_ir_sensors.measureCrossTable(rise, (uint32_t)on_time);
+        static const char* const kNames[6] = { "L90", "L45", "FL ", "FR ", "R45", "R90" };
+        snprintf(buf, sizeof(buf), "IRTEST (emitter on for %ld us)   receiver:  L90   L45    FL    FR   R45   R90", on_time);
+        reply(buf);
+        for (int e = 0; e < 6; ++e) {
+            snprintf(buf, sizeof(buf), "  emitter %s alone ->            %5d %5d %5d %5d %5d %5d", kNames[e],
+                     rise[e][0], rise[e][1], rise[e][2], rise[e][3], rise[e][4], rise[e][5]);
+            reply(buf);
+        }
+        return;
+    }
+    if (cmd == "ir") {
+        // Raw ADC readings per sensor, emitter off then on. A working sensor facing a wall shows
+        // "on" well above "off". "off" stuck near 4095 means room light is swamping the sensor.
+        static const char* const kNames[6] = { "L90", "L45", "FL ", "FR ", "R45", "R90" };
+        for (uint8_t ch = 0; ch < 6; ++ch) {
+            snprintf(buf, sizeof(buf), "IR %s: emitter off %4d, on %4d, difference %4d",
+                     kNames[ch], (int)g_ir_sensors.getRawAmbient(ch), (int)g_ir_sensors.getRawLit(ch),
+                     (int)g_ir_sensors.getRawLit(ch) - (int)g_ir_sensors.getRawAmbient(ch));
+            reply(buf);
+        }
+        snprintf(buf, sizeof(buf), "IR wall levels: front %d, left %d, right %d (a reading above its level counts as a wall)",
+                 (int)g_ir_sensors.getThresholdFront(), (int)g_ir_sensors.getThresholdL90(), (int)g_ir_sensors.getThresholdR90());
+        reply(buf);
+        return;
+    }
     if (cmd == "resetenc" || cmd == "resetheading") {
         // Sent by the web dashboard (tools/web_dashboard) "Reset" buttons
         if (running) { reply("ERR: CANNOT_RESET_WHILE_RUNNING"); return; }
@@ -430,8 +533,11 @@ static void handle(String cmd, Source source) {
     if (cmd == "status") {
         RobotTelemetry telemetry = {};
         getTelemetry(telemetry);
-        snprintf(buf, sizeof(buf), "STATUS: VBat=%.2fV | Mode=%d | State=%d",
-                 telemetry.vbat_volts, (int)Actions::getSelectedMode(), (int)g_navigator->getState());
+        snprintf(buf, sizeof(buf), "STATUS: %s | Selected mode: %s | Speed tier %d | Battery %.2f V",
+                 Actions::stateDescription(), Actions::modeName(Actions::getSelectedMode()),
+                 (int)Actions::getSpeedTier(), telemetry.vbat_volts);
+        reply(buf);
+        GestureUI::describe(buf, sizeof(buf), telemetry.ir);
         reply(buf);
         return;
     }
@@ -463,8 +569,16 @@ static void handle(String cmd, Source source) {
         }
         if (s_source == SOURCE_BLE) { reply("ERR: LOG IS TOO LONG FOR BLUETOOTH, USE USB OR TELNET"); return; }
 
+        // 1500 rows would overflow the wireless log copy, so these go straight to USB (and to
+        // Telnet if that is where they were asked for) instead of through reply()
+        auto sendRow = [](const char* row) {
+            usbSerial().println(row);
+#if ENABLE_WIFI_OTA
+            if (s_source == SOURCE_TELNET) WifiOTA::println(row);
+#endif
+        };
         const RunLog& log = g_motion_controller.getRunLog();
-        reply("t_ms,action,target_mm_s,speed_mm_s,heading_deg,heading_err_deg,forward_pct,turn_pct,L90,L45,FL,FR,R45,R90");
+        sendRow("t_ms,action,target_mm_s,speed_mm_s,heading_deg,heading_err_deg,forward_pct,turn_pct,L90,L45,FL,FR,R45,R90");
         for (uint16_t i = 0; i < log.size(); ++i) {
             const RunLogSample& row = log.at(i);
             snprintf(buf, sizeof(buf), "%lu,%u,%d,%d,%.1f,%.1f,%d,%d,%u,%u,%u,%u,%u,%u",
@@ -474,10 +588,17 @@ static void handle(String cmd, Source source) {
                      (int)row.forward_pct, (int)row.turn_pct,
                      (unsigned int)row.ir[0], (unsigned int)row.ir[1], (unsigned int)row.ir[2],
                      (unsigned int)row.ir[3], (unsigned int)row.ir[4], (unsigned int)row.ir[5]);
-            reply(buf);
+            sendRow(buf);
         }
         snprintf(buf, sizeof(buf), "ACK: %u LOG ROWS", (unsigned int)log.size());
-        reply(buf);
+        sendRow(buf);
+        return;
+    }
+    if (cmd == "stream" || cmd == "stream on" || cmd == "stream off") {
+        // The 5 Hz line of sensor readings. Quiet by default so the console stays readable.
+        bool on = (cmd == "stream") ? !isTelemetryStreaming() : (cmd == "stream on");
+        setTelemetryStreaming(on);
+        reply(on ? "ACK: STREAM ON (send 'stream' again to stop)" : "ACK: STREAM OFF");
         return;
     }
     if (cmd == "perf") {
@@ -553,7 +674,7 @@ static void handle(String cmd, Source source) {
 #endif
 
     if (cmd == "help") {
-        reply("Debug commands: stop, status, health, perf, enc, log, log clear, motortrim [l r], motorinv [l r], "
+        reply("Commands: start, speedrun, calib, clear (builds with a radio only); stop, status, health, ir, irtest [us], resetall, stream, perf, enc, log, log clear, motortrim [l r], motorinv [l r], "
               "encinv [l r], resetenc, resetheading. Runs are started by hand waves only.");
         return;
     }

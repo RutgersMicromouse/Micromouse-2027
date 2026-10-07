@@ -5,7 +5,7 @@
 //
 //   Core 1  motionControlTask   500 Hz: read sensors, run the PID loops, drive the motors
 //   Core 0  navigationTask      decide where to go, listen for hand waves and text commands
-//   Core 0  telemetryTask       5 Hz status line over USB / Bluetooth / Telnet
+//   Core 0  telemetryTask       copies everything printed to Bluetooth / Telnet; 5 Hz readings line when asked
 //
 // There are no buttons: power the robot on and control it with hand waves (GestureUI in ui.h).
 // The LED on the ESP32 board shows what it is doing. The text console (Console in ui.h) is for
@@ -42,6 +42,11 @@ static SemaphoreHandle_t g_telemetry_mutex = nullptr;
 // Given by the motion task each time a motion command finishes
 static SemaphoreHandle_t g_motion_done_sem = nullptr;
 
+// The 5 Hz status line. Off at power-on; the debug console command "stream" switches it.
+static std::atomic<bool> g_telemetry_streaming{false};
+void setTelemetryStreaming(bool on) { g_telemetry_streaming.store(on); }
+bool isTelemetryStreaming() { return g_telemetry_streaming.load(); }
+
 // Reference-frame resets requested by Core 0 and carried out by the motion task
 static const uint8_t RESET_REQ_ENCODERS = 0x01;
 static const uint8_t RESET_REQ_HEADING  = 0x02;
@@ -66,6 +71,42 @@ void prepareForNewRun() {
     }
 }
 
+#if ENABLE_WIFI_OTA
+// The robot's live numbers for the phone app, as one JSON object
+static String buildAppStatus() {
+    RobotTelemetry t = {};
+    getTelemetry(t);
+
+    // Where the navigator believes the robot is, and how many cells it has explored
+    static const char* const kCompass[4] = { "north", "east", "south", "west" };
+    const RobotPose pose = g_navigator->getPose();
+    int cells_seen = 0;
+    for (int8_t x = 0; x < MAZE_ACTIVE_SIZE; ++x) {
+        for (int8_t y = 0; y < MAZE_ACTIVE_SIZE; ++y) {
+            if (g_navigator->getMaze().isVisited(x, y)) cells_seen++;
+        }
+    }
+
+    char buf[620];
+    snprintf(buf, sizeof(buf),
+             "{\"state\":\"%s\",\"mode\":\"%s\",\"tier\":%d,\"cell\":\"(%d, %d) facing %s\",\"visited\":%d,"
+             "\"ir\":[%d,%d,%d,%d,%d,%d],\"walls\":\"%c%c%c\","
+             "\"heading\":%.1f,\"vbat\":%.2f,\"encL\":\"%ld (%.0f mm)\",\"encR\":\"%ld (%.0f mm)\","
+             "\"motor\":\"%s\",\"imu\":\"%s\",\"supply\":%.1f,\"loop\":%u}",
+             Actions::stateDescription(), Actions::modeName(Actions::getSelectedMode()), (int)Actions::getSpeedTier(),
+             (int)pose.cell_x, (int)pose.cell_y, kCompass[pose.current_dir % 4], cells_seen,
+             t.ir.left_90, t.ir.left_45, t.ir.front_left, t.ir.front_right, t.ir.right_45, t.ir.right_90,
+             t.ir.wall_left ? 'L' : '.', t.ir.wall_front ? 'F' : '.', t.ir.wall_right ? 'R' : '.',
+             t.imu.heading_deg, t.vbat_volts,
+             (long)t.encoders.left_ticks_total, t.encoders.left_dist_mm,
+             (long)t.encoders.right_ticks_total, t.encoders.right_dist_mm,
+             g_motors.isConnected() ? "OK" : "NOT RESPONDING",
+             !g_imu.isHardwareConnected() ? "MISSING" : (g_imu.isUsingFallback() ? "FAULT" : "OK"),
+             g_motors.getSupplyVolts(), (unsigned int)t.timing.loop_time_us);
+    return String(buf);
+}
+#endif
+
 // Battery Voltage Sense (10k / 10k divider on Computer Battery)
 static float readBatteryVoltage() {
     // analogReadMilliVolts utilizes ESP32-S3 factory eFuse calibration for exact mV
@@ -83,9 +124,6 @@ void motionControlTask(void* pvParameters) {
     MotionCommand current_cmd;
     uint32_t loop_counter = 0;
     bool was_busy = false;
-    uint32_t low_battery_since_ms = 0;
-    bool low_battery_timing = false;
-    bool battery_cutoff_latched = false;
     TimingStats timing_stats = {0, 0, 0, 0};
 
     Serial.printf("[CORE 1] Real-Time Motion Task running on Core %d @ %d Hz\n",
@@ -138,27 +176,11 @@ void motionControlTask(void* pvParameters) {
             timing_stats.loop_overruns++;
         }
 
-        // 7. Update Telemetry Snapshot at 50 Hz & Check Low Battery Cutoff
+        // 7. Update Telemetry Snapshot at 50 Hz
+        // (The battery voltage is only reported. Nothing stops the robot because of it.)
         if (loop_counter++ % 10 == 0) {
             float vbat = readBatteryVoltage();
             timing_stats.stack_high_water = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
-
-            // Require a sustained low-voltage reading to avoid nuisance cutoffs from brief sag.
-            if (vbat > 1.0f && vbat < BATTERY_MIN_SAFE_VOLT) {
-                if (!low_battery_timing) {
-                    low_battery_since_ms = millis();
-                    low_battery_timing = true;
-                } else if (!battery_cutoff_latched &&
-                           millis() - low_battery_since_ms >= 200) {
-                    battery_cutoff_latched = true;
-                    g_motion_controller.emergencyStop();
-                    g_motors.setMotorPowerEnabled(false);
-                    StatusLED::set(StatusLED::RED); // Solid Red Alarm
-                    Serial.printf("[SAFETY ALERT] Low Battery Voltage: %4.2f V! Motors disabled.\n", vbat);
-                }
-            } else {
-                low_battery_timing = false;
-            }
 
             if (xSemaphoreTake(g_telemetry_mutex, 0) == pdTRUE) {
                 g_shared_telemetry.encoders = enc;
@@ -183,6 +205,7 @@ void navigationTask(void* pvParameters) {
     static RobotTelemetry telemetry = {}; // Kept between loops so a missed snapshot reuses the last one
     bool was_running = false;
     bool run_aborted = false;
+    NavState last_state = NAV_STATE_ERROR; // Anything but the real one, so the first state is announced
 
     Actions::showSelectedMode();
     GestureUI::restart();
@@ -207,12 +230,34 @@ void navigationTask(void* pvParameters) {
             g_navigator->step(telemetry.ir, g_motion_controller.getWallPreview());
         }
 
+        // Say what the robot is doing whenever that changes
+        if (g_navigator->getState() != last_state) {
+            last_state = g_navigator->getState();
+            Serial.printf("[STATE] %s\n", Actions::stateDescription());
+        }
+
         // 4. Hand-wave controls, only while the robot is standing still between runs
         bool running = Actions::isRunActive();
         if (was_running && !running) {
             Actions::onRunEnded(run_aborted); // LED result + speed tier up / down
             run_aborted = false;
         }
+#if !ENABLE_GESTURE_UI && AUTO_START_DELAY_S > 0
+        // Hand waves are switched off: start one search by itself shortly after power-on.
+        // Put the robot in the start cell, facing into the maze, before switching it on.
+        static bool auto_started = false;
+        if (!auto_started && !running && millis() > AUTO_START_DELAY_S * 1000UL) {
+            auto_started = true;
+            Serial.println("[UI] Hand waves are off: calibrating IR and starting the search by itself.");
+            StatusLED::flash(StatusLED::WHITE, 3, 200);
+            if (!Actions::calibrateIR()) {
+                Serial.println("[UI] IR calibration failed here; carrying on with the stored / default levels.");
+            }
+            Actions::selectMode(Actions::MODE_SEARCH);
+            Actions::launchSelectedRun();
+            running = Actions::isRunActive();
+        }
+#endif
 #if ENABLE_GESTURE_UI
         if (was_running && !running) {
             GestureUI::restart(); // Re-learn what the front sensors see where the robot stopped
@@ -232,53 +277,50 @@ void navigationTask(void* pvParameters) {
 // CORE 0 TASK: SERIAL TELEMETRY & DIAGNOSTICS STREAM
 // ==============================================================================
 void telemetryTask(void* pvParameters) {
+    uint32_t pass = 0;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(200)); // 5 Hz telemetry
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        // Forward everything printed since last time to whoever is listening wirelessly
+        static char chunk[257];
+        size_t n = g_debug_log.drain(chunk, sizeof(chunk) - 1);
+        if (n > 0) {
+            chunk[n] = '\0';
+#if ENABLE_BLE_DEBUG
+            if (BLEDebug::isConnected()) BLEDebug::print(chunk);
+#endif
+#if ENABLE_WIFI_OTA
+            if (WifiOTA::isClientConnected()) WifiOTA::print(chunk);
+            WifiOTA::appendWebLog(chunk, n);
+#endif
+        }
+
+        if (++pass % 4 != 0) continue; // The rest runs at 5 Hz
 
         RobotTelemetry snap;
         if (!getTelemetry(snap)) continue;
-
-        char line[200];
-        snprintf(line, sizeof(line),
-                 "[TEL] VBat: %4.2fV | Loop: %3uus | Enc: L=%6.1f R=%6.1f mm | Spd: %5.1f mm/s | Hdg: %5.1f° | IR: L90=%3d L45=%3d FL=%3d FR=%3d R45=%3d R90=%3d | Walls: [%c%c%c]",
-                 snap.vbat_volts,
-                 (unsigned int)snap.timing.loop_time_us,
-                 snap.encoders.left_dist_mm,
-                 snap.encoders.right_dist_mm,
-                 snap.encoders.linear_speed_mm_s,
-                 snap.imu.heading_deg,
-                 snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
-                 snap.ir.wall_left ? 'L' : '.',
-                 snap.ir.wall_front ? 'F' : '.',
-                 snap.ir.wall_right ? 'R' : '.');
-        Serial.println(line);
-
-#if ENABLE_WIFI_OTA
-        if (WifiOTA::isClientConnected()) {
-            WifiOTA::println(line);
-        }
-#endif
 
 #if ENABLE_BLE_DEBUG
         // Readable characteristics polled by the web dashboard (tools/web_dashboard)
         BLEDebug::updateTelemetry(snap.vbat_volts, snap.imu.heading_deg,
                                   (long)snap.encoders.left_ticks_total,
                                   (long)snap.encoders.right_ticks_total);
-
-        if (BLEDebug::isConnected()) {
-            // Shorter line: Bluetooth sends 20 bytes at a time
-            char ble_buf[128];
-            snprintf(ble_buf, sizeof(ble_buf), "V:%.2fV|Spd:%.0f|Hdg:%.1f|IR:%d,%d,%d,%d,%d,%d|W:[%c%c%c]",
-                     snap.vbat_volts,
-                     snap.encoders.linear_speed_mm_s,
-                     snap.imu.heading_deg,
-                     snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
-                     snap.ir.wall_left ? 'L' : '.',
-                     snap.ir.wall_front ? 'F' : '.',
-                     snap.ir.wall_right ? 'R' : '.');
-            BLEDebug::println(ble_buf);
-        }
 #endif
+
+        // The live readings line, when switched on with the console command "stream"
+        if (isTelemetryStreaming()) {
+            Serial.printf("[TEL] VBat: %4.2fV | Loop: %3uus | Enc: L=%6.1f R=%6.1f mm | Spd: %5.1f mm/s | Hdg: %5.1f° | IR: L90=%3d L45=%3d FL=%3d FR=%3d R45=%3d R90=%3d | Walls: [%c%c%c]\n",
+                          snap.vbat_volts,
+                          (unsigned int)snap.timing.loop_time_us,
+                          snap.encoders.left_dist_mm,
+                          snap.encoders.right_dist_mm,
+                          snap.encoders.linear_speed_mm_s,
+                          snap.imu.heading_deg,
+                          snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
+                          snap.ir.wall_left ? 'L' : '.',
+                          snap.ir.wall_front ? 'F' : '.',
+                          snap.ir.wall_right ? 'R' : '.');
+        }
     }
 }
 
@@ -300,7 +342,7 @@ void setup() {
     // 2. Initialize Shared I2C Bus (SDA = GPIO21, SCL = GPIO20)
     Serial.println("[INIT] Initializing I2C Bus (SDA: 21, SCL: 20 @ 400kHz)...");
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_CLOCK_SPEED);
-    Wire.setTimeOut(1); // Bound a stalled I2C transaction to the 500 Hz control-loop period
+    Wire.setTimeOut(I2C_TIMEOUT_MS);
 
     // 3. Initialize Hardware Drivers
     Serial.println("[INIT] Initializing N20 PCNT Hardware Encoders (30:1, 840 CPR)...");
@@ -345,6 +387,7 @@ void setup() {
 #if ENABLE_WIFI_OTA
     Serial.println("[INIT] Starting Wi-Fi Wireless Hotspot, ArduinoOTA & Telnet Console...");
     WifiOTA::begin();
+    WifiOTA::setStatusProvider(buildAppStatus);
 #endif
 
     // 7. Spawn FreeRTOS Tasks
@@ -354,6 +397,9 @@ void setup() {
     xTaskCreatePinnedToCore(telemetryTask,     "Telemetry",  4096, nullptr, PRIORITY_TELEMETRY,   nullptr, CORE_NAVIGATION);
 
     Serial.println("[READY] Antigravitieee is Ready!");
+#if !ENABLE_GESTURE_UI
+    Serial.printf("[UI] HAND WAVES ARE OFF. A search starts by itself %d s after power-on.\n", (int)AUTO_START_DELAY_S);
+#endif
     Serial.println("[UI] Wave a hand in front of the front sensors, then pause:");
     Serial.println("  1 wave  = Search run          2 waves = Speed run (hybrid)");
     Serial.println("  3 waves = Speed run (diag)    4 waves = Speed run (curves)");

@@ -20,6 +20,7 @@
     <section class="controls">
       <button id="connectBtn">Connect to Mouse</button>
       <button id="refreshBtn" class="secondary" disabled>Refresh</button>
+      <button id="usbBtn" class="secondary">Connect by USB</button>
     </section>
 
     <section class="grid">
@@ -49,6 +50,37 @@
     <p id="message" class="message">
       Open this page in a browser with Web Bluetooth support, then connect to Antigrav-Mouse.
     </p>
+
+    <!-- Live IR wall sensors, read from the robot's "[TEL]" lines -->
+    <section class="sensors">
+      <div class="console-head">
+        <p>IR wall sensors <span id="sensorAge" class="dim">(no data yet)</span></p>
+        <p class="dim">Walls seen: <strong id="walls">- - -</strong> &nbsp; Loop: <strong id="loopTime">--</strong> µs</p>
+      </div>
+      <div class="bars">
+        <div class="bar"><div class="track"><div class="fill" id="bar0"></div></div><strong id="ir0">--</strong><span>Left 90°</span></div>
+        <div class="bar"><div class="track"><div class="fill" id="bar1"></div></div><strong id="ir1">--</strong><span>Left 45°</span></div>
+        <div class="bar"><div class="track"><div class="fill" id="bar2"></div></div><strong id="ir2">--</strong><span>Front L</span></div>
+        <div class="bar"><div class="track"><div class="fill" id="bar3"></div></div><strong id="ir3">--</strong><span>Front R</span></div>
+        <div class="bar"><div class="track"><div class="fill" id="bar4"></div></div><strong id="ir4">--</strong><span>Right 45°</span></div>
+        <div class="bar"><div class="track"><div class="fill" id="bar5"></div></div><strong id="ir5">--</strong><span>Right 90°</span></div>
+      </div>
+      <p class="dim hint">Hold a hand a few centimetres in front of one sensor: only that bar should jump. A bar that never moves means that sensor is not working.</p>
+    </section>
+
+    <!-- Everything the robot prints (the same text as the serial monitor), plus a box to send it commands -->
+    <section class="console">
+      <div class="console-head">
+        <p>Robot output</p>
+        <button id="clearLog" class="secondary small">Clear</button>
+      </div>
+      <pre id="log">Connect to see what the robot is printing.</pre>
+      <form id="commandForm">
+        <input id="commandInput" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Type a command (help, status, health, stream, enc) and press Enter">
+        <button type="submit">Send</button>
+      </form>
+    </section>
   </main>
   <script src="app.js"></script>
 </body>

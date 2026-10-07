@@ -2,7 +2,7 @@
 
 // Wireless links (both can be switched off in config.h for competition):
 //   BLEDebug - Bluetooth text console + readable telemetry for the web dashboard
-//   WifiOTA  - Wi-Fi hotspot, over-the-air firmware upload, Telnet console
+//   WifiOTA  - Wi-Fi hotspot, the phone app, over-the-air firmware upload, Telnet console
 
 #include "config.h"
 
@@ -79,9 +79,14 @@ public:
     static void println(const char* str);
     static void printf(const char* fmt, ...);
 
-    // Incoming wireless commands from Telnet
+    // Incoming wireless commands from Telnet or from the phone app
     static bool hasCommand();
     static String readCommand();
+
+    // The phone app (http://192.168.4.1). `provider` returns the robot's live numbers as a JSON
+    // object; appendWebLog feeds it the same text the serial monitor shows.
+    static void setStatusProvider(String (*provider)());
+    static void appendWebLog(const char* text, size_t length);
 
     static IPAddress getIP();
 };

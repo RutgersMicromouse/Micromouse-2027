@@ -8,3 +8,14 @@ header{display:flex;justify-content:space-between;align-items:center;gap:20px;ma
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.card{background:rgba(25,30,38,.9);border:1px solid #2c3440;border-radius:20px;padding:22px;min-height:150px;box-shadow:0 18px 50px rgba(0,0,0,.18)}.card p{margin:0;color:#8f9aaa;font-size:14px}.card div{display:flex;align-items:baseline;gap:8px;margin-top:25px}.card strong{font-size:clamp(34px,9vw,58px);line-height:1;letter-spacing:-.04em}.card span{color:#8f9aaa;font-size:15px}
 .actions{margin-top:18px}.message{color:#8f9aaa;line-height:1.55;font-size:14px;margin-top:22px}
 @media(max-width:560px){body{padding:16px}.grid{grid-template-columns:1fr 1fr}.card{padding:18px;min-height:125px}.controls,.actions{display:grid;grid-template-columns:1fr 1fr}header{align-items:flex-start;flex-direction:column}}
+.console{margin-top:26px;background:rgba(25,30,38,.9);border:1px solid #2c3440;border-radius:20px;padding:18px}
+.console-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.console-head p{margin:0;color:#8f9aaa;font-size:14px}
+button.small{padding:6px 12px;font-size:13px;border-radius:10px}
+#log{margin:0;height:340px;overflow:auto;background:#07090c;border:1px solid #232a34;border-radius:12px;padding:12px;font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;color:#cfe3d4;white-space:pre-wrap;word-break:break-word}
+#commandForm{display:flex;gap:10px;margin-top:12px}#commandInput{flex:1;min-width:0;background:#07090c;border:1px solid #303844;border-radius:12px;padding:12px 14px;color:#f5f7fa;font:14px ui-monospace,SFMono-Regular,Consolas,monospace}
+.sensors{margin-top:26px;background:rgba(25,30,38,.9);border:1px solid #2c3440;border-radius:20px;padding:18px}
+.dim{color:#8f9aaa;font-size:13px}.hint{margin:12px 0 0}
+.bars{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:6px}
+.bar{display:flex;flex-direction:column;align-items:center;gap:6px}.bar strong{font:600 16px ui-monospace,SFMono-Regular,Consolas,monospace}.bar span{color:#8f9aaa;font-size:12px;text-align:center}
+.track{width:100%;height:150px;background:#07090c;border:1px solid #232a34;border-radius:10px;display:flex;align-items:flex-end;overflow:hidden}
+.fill{width:100%;height:0;background:linear-gradient(#7cf29a,#2f9e52);transition:height .12s linear}

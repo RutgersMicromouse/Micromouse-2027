@@ -1,6 +1,47 @@
 #include "wireless.h"
 
 // ==============================================================================
+// DEBUG LOG (see config.h section 8)
+// ==============================================================================
+
+DebugLog g_debug_log;
+
+static portMUX_TYPE s_log_mux = portMUX_INITIALIZER_UNLOCKED;
+static char   s_log_ring[DEBUG_LOG_BUFFER_BYTES];
+static size_t s_log_start = 0; // Index of the oldest byte not yet sent
+static size_t s_log_count = 0; // Bytes waiting
+
+size_t DebugLog::write(const uint8_t* data, size_t length) {
+    usbSerial().write(data, length);
+
+#if ENABLE_BLE_DEBUG || ENABLE_WIFI_OTA
+    portENTER_CRITICAL(&s_log_mux);
+    for (size_t i = 0; i < length; ++i) {
+        if (s_log_count == DEBUG_LOG_BUFFER_BYTES) { // Full: drop the oldest byte
+            s_log_start = (s_log_start + 1) % DEBUG_LOG_BUFFER_BYTES;
+            s_log_count--;
+        }
+        s_log_ring[(s_log_start + s_log_count) % DEBUG_LOG_BUFFER_BYTES] = (char)data[i];
+        s_log_count++;
+    }
+    portEXIT_CRITICAL(&s_log_mux);
+#endif
+    return length;
+}
+
+size_t DebugLog::drain(char* out, size_t max_length) {
+    portENTER_CRITICAL(&s_log_mux);
+    size_t n = (s_log_count < max_length) ? s_log_count : max_length;
+    for (size_t i = 0; i < n; ++i) {
+        out[i] = s_log_ring[(s_log_start + i) % DEBUG_LOG_BUFFER_BYTES];
+    }
+    s_log_start = (s_log_start + n) % DEBUG_LOG_BUFFER_BYTES;
+    s_log_count -= n;
+    portEXIT_CRITICAL(&s_log_mux);
+    return n;
+}
+
+// ==============================================================================
 // BLUETOOTH LOW ENERGY
 // ==============================================================================
 
@@ -614,6 +655,215 @@ static const char UPDATE_INDEX_HTML[] PROGMEM =
     "<div id='progress'>⚡ Flashing firmware to ESP32-S3... Robot will reboot in ~8 seconds.</div>"
     "</div></body></html>";
 
+
+// The phone app: one page served by the robot itself at http://192.168.4.1
+// (join the robot's Wi-Fi first). It asks /data four times a second and sends button presses to /cmd.
+static const char APP_PAGE_HTML[] PROGMEM = R"PAGE(<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Antigrav">
+<meta name="theme-color" content="#0b0d10">
+<title>Antigrav-Mouse</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:16px;padding-top:max(16px,env(safe-area-inset-top));background:#0b0d10;color:#f5f7fa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+h1{font-size:24px;margin:0}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#6d7480;margin-right:6px}
+.live .dot{background:#52d273;box-shadow:0 0 12px #52d273}
+.dim{color:#8f9aaa;font-size:13px}
+.card{background:#171c24;border:1px solid #2c3440;border-radius:16px;padding:14px;margin-bottom:12px}
+#state{font-size:17px;font-weight:700;margin:2px 0 0}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{appearance:none;border:0;border-radius:14px;padding:16px 10px;font-size:17px;font-weight:700;color:#0b0d10;background:#f5f7fa;width:100%}
+button:active{opacity:.6}
+#start{background:#52d273;font-size:22px;padding:22px 10px}
+#stop{background:#ff5d5d;color:#fff;font-size:22px;padding:22px 10px}
+button.plain{background:#232a34;color:#eef2f7;border:1px solid #303844;font-size:15px;padding:13px 8px}
+.bars{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.bar{display:flex;flex-direction:column;align-items:center;gap:4px}
+.bar b{font:600 13px ui-monospace,Consolas,monospace}
+.bar span{color:#8f9aaa;font-size:11px}
+.track{width:100%;height:110px;background:#07090c;border:1px solid #232a34;border-radius:8px;display:flex;align-items:flex-end;overflow:hidden}
+.fill{width:100%;height:0;background:linear-gradient(#7cf29a,#2f9e52);transition:height .15s linear}
+.vals{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:14px}
+.vals b{font-family:ui-monospace,Consolas,monospace}
+#log{margin:0;height:220px;overflow:auto;background:#07090c;border:1px solid #232a34;border-radius:10px;padding:10px;font:12px/1.4 ui-monospace,Consolas,monospace;color:#cfe3d4;white-space:pre-wrap;word-break:break-word}
+form{display:flex;gap:8px;margin-top:10px}
+input{flex:1;min-width:0;background:#07090c;border:1px solid #303844;border-radius:12px;padding:12px;color:#f5f7fa;font:14px ui-monospace,Consolas,monospace}
+form button{width:auto;padding:12px 18px}
+a{color:#7fb6ff}
+</style></head><body>
+<div class="top"><h1>Antigrav-Mouse</h1><div id="link" class="dim"><span class="dot"></span><span id="linkText">connecting</span></div></div>
+
+<div class="card"><div class="dim">The robot is</div><div id="state">...</div><div class="dim" id="mode"></div>
+<div style="margin-top:8px">It thinks it is in cell <b id="cell">--</b></div><div class="dim">Cells explored so far: <b id="visited">--</b> &nbsp;(the start cell is (0, 0); first number counts right, second counts forward)</div></div>
+
+<div class="row" style="margin-bottom:12px">
+  <button id="start">START</button>
+  <button id="stop">STOP</button>
+</div>
+<div class="row" style="margin-bottom:12px">
+  <button class="plain" data-cmd="speedrun">Speed run</button>
+  <button class="plain" data-cmd="calib">Calibrate sensors</button>
+  <button class="plain" data-cmd="clear">Forget the maze</button>
+  <button class="plain" data-cmd="health">Health check</button>
+  <button class="plain" data-cmd="resetall">Reset sensors</button>
+  <button class="plain" data-cmd="ir">Raw IR readings</button>
+</div>
+
+<div class="card">
+  <div class="top" style="margin-bottom:8px"><span class="dim">IR wall sensors</span><span class="dim">Walls: <b id="walls">- - -</b></span></div>
+  <div class="bars">
+    <div class="bar"><div class="track"><div class="fill" id="f0"></div></div><b id="v0">--</b><span>L 90</span></div>
+    <div class="bar"><div class="track"><div class="fill" id="f1"></div></div><b id="v1">--</b><span>L 45</span></div>
+    <div class="bar"><div class="track"><div class="fill" id="f2"></div></div><b id="v2">--</b><span>Front L</span></div>
+    <div class="bar"><div class="track"><div class="fill" id="f3"></div></div><b id="v3">--</b><span>Front R</span></div>
+    <div class="bar"><div class="track"><div class="fill" id="f4"></div></div><b id="v4">--</b><span>R 45</span></div>
+    <div class="bar"><div class="track"><div class="fill" id="f5"></div></div><b id="v5">--</b><span>R 90</span></div>
+  </div>
+</div>
+
+<div class="card"><div class="vals">
+  <div>Heading <b id="heading">--</b>&deg;</div><div>Battery <b id="vbat">--</b> V</div>
+  <div>Left wheel <b id="encL">--</b></div><div>Right wheel <b id="encR">--</b></div>
+  <div>Motor driver <b id="motor">--</b></div><div>IMU <b id="imu">--</b></div>
+  <div>Motor supply <b id="supply">--</b> V</div><div>Loop <b id="loop">--</b> &micro;s</div>
+</div></div>
+
+<div class="card">
+  <div class="top" style="margin-bottom:8px"><span class="dim">Robot output (same as the serial monitor)</span><button class="plain" id="clear" style="width:auto;padding:6px 12px;font-size:13px">Clear</button></div>
+  <pre id="log"></pre>
+  <form id="form"><input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="command, e.g. status"><button type="submit">Send</button></form>
+</div>
+<p class="dim" style="text-align:center"><a href="/update">Upload new firmware</a></p>
+
+<script>
+const $ = id => document.getElementById(id);
+let next = 0, misses = 0;
+
+function send(command) {
+  $("log").textContent += "> " + command + "\n";
+  $("log").scrollTop = $("log").scrollHeight;
+  fetch("/cmd?c=" + encodeURIComponent(command)).catch(() => {});
+}
+
+$("start").onclick = () => send("start");
+$("stop").onclick = () => send("stop");
+document.querySelectorAll("button[data-cmd]").forEach(b => b.onclick = () => send(b.dataset.cmd));
+$("clear").onclick = () => { $("log").textContent = ""; };
+$("form").onsubmit = e => {
+  e.preventDefault();
+  const c = $("cmd").value.trim();
+  if (c) send(c);
+  $("cmd").value = "";
+};
+
+function show(d) {
+  const s = d.status || {};
+  $("state").textContent = s.state || "...";
+  $("mode").textContent = s.mode ? "Mode: " + s.mode + (s.tier ? ", speed tier " + s.tier : "") : "";
+  if (s.ir) for (let i = 0; i < 6; i++) {
+    $("v" + i).textContent = s.ir[i];
+    $("f" + i).style.height = Math.min(100, s.ir[i] / 4095 * 100) + "%";
+  }
+  if (s.walls) $("walls").textContent =
+    (s.walls[0] === "L" ? "LEFT " : "- ") + (s.walls[1] === "F" ? "FRONT " : "- ") + (s.walls[2] === "R" ? "RIGHT" : "-");
+  for (const k of ["heading", "vbat", "encL", "encR", "motor", "imu", "supply", "loop", "cell", "visited"])
+    if (s[k] !== undefined) $(k).textContent = s[k];
+  if (d.log) {
+    const log = $("log");
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    log.textContent = (log.textContent + d.log).slice(-30000);
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+  next = d.next;
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/data?since=" + next, { cache: "no-store" });
+    show(await r.json());
+    misses = 0;
+  } catch (e) {
+    misses++;
+  }
+  $("link").className = misses < 4 ? "dim live" : "dim";
+  $("linkText").textContent = misses < 4 ? "live" : "no answer from the robot";
+  setTimeout(poll, 250);
+}
+poll();
+</script>
+</body></html>)PAGE";
+
+// Recent robot output kept for the phone app, which asks for "everything since byte N"
+static portMUX_TYPE s_web_log_mux = portMUX_INITIALIZER_UNLOCKED;
+static char     s_web_log[4096];
+static uint32_t s_web_log_total = 0; // Bytes ever logged; the newest byte is at (total - 1) % size
+
+static String (*s_status_provider)() = nullptr;
+
+void WifiOTA::setStatusProvider(String (*provider)()) {
+    s_status_provider = provider;
+}
+
+void WifiOTA::appendWebLog(const char* text, size_t length) {
+    portENTER_CRITICAL(&s_web_log_mux);
+    for (size_t i = 0; i < length; ++i) {
+        s_web_log[s_web_log_total % sizeof(s_web_log)] = text[i];
+        s_web_log_total++;
+    }
+    portEXIT_CRITICAL(&s_web_log_mux);
+}
+
+// GET /data?since=N  ->  {"next":M,"log":"...new output...","status":{...}}
+static void handleAppData() {
+    static char slice[1025];
+    uint32_t since = (uint32_t)s_web_server.arg("since").toInt();
+
+    portENTER_CRITICAL(&s_web_log_mux);
+    uint32_t total = s_web_log_total;
+    uint32_t oldest = (total > sizeof(s_web_log)) ? total - sizeof(s_web_log) : 0;
+    if (since > total || since < oldest) since = oldest; // Robot restarted, or the app fell too far behind
+    uint32_t count = total - since;
+    if (count > sizeof(slice) - 1) count = sizeof(slice) - 1;
+    for (uint32_t i = 0; i < count; ++i) {
+        slice[i] = s_web_log[(since + i) % sizeof(s_web_log)];
+    }
+    portEXIT_CRITICAL(&s_web_log_mux);
+
+    String out;
+    out.reserve(count + 600);
+    out += "{\"next\":";
+    out += String(since + count);
+    out += ",\"log\":\"";
+    for (uint32_t i = 0; i < count; ++i) {
+        char c = slice[i];
+        if (c == '"' || c == '\\') { out += '\\'; out += c; }
+        else if (c == '\n') out += "\\n";
+        else if ((uint8_t)c >= 0x20) out += c; // Other control characters are dropped
+    }
+    out += "\",\"status\":";
+    out += s_status_provider ? s_status_provider() : String("{}");
+    out += "}";
+    s_web_server.sendHeader("Cache-Control", "no-store");
+    s_web_server.send(200, "application/json", out);
+}
+
+// GET /cmd?c=text  ->  hands the text to the debug console, as if it had been typed over Telnet
+static void handleAppCommand() {
+    String command = s_web_server.arg("c");
+    command.trim();
+    if (command.length() > 0 && command.length() < 64 && !s_telnet_cmd_ready) {
+        s_telnet_rx_buf = command;
+        s_telnet_cmd_ready = true;
+    }
+    s_web_server.send(200, "text/plain", "ok");
+}
+
 void WifiOTA::begin() {
     Serial.println("[WIFI] Initializing Wireless Network for OTA & Debugging...");
 
@@ -671,8 +921,10 @@ void WifiOTA::begin() {
 
     // 2. Configure WebServer for Browser-based OTA updates
     s_web_server.on("/", HTTP_GET, []() {
-        s_web_server.send(200, "text/html", UPDATE_INDEX_HTML);
+        s_web_server.send_P(200, "text/html", APP_PAGE_HTML);
     });
+    s_web_server.on("/data", HTTP_GET, handleAppData);
+    s_web_server.on("/cmd", HTTP_GET, handleAppCommand);
 
     s_web_server.on("/update", HTTP_GET, []() {
         s_web_server.send(200, "text/html", UPDATE_INDEX_HTML);
@@ -704,7 +956,7 @@ void WifiOTA::begin() {
     });
 
     s_web_server.begin();
-    Serial.println("[WEB] Browser OTA server listening on port 80 (http://192.168.4.1/update)");
+    Serial.println("[WEB] Phone app at http://192.168.4.1  (firmware upload at http://192.168.4.1/update)");
 
     // 3. Configure Telnet Server for Wireless Terminal Monitoring
     s_telnet_server.begin();
