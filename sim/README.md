@@ -12,7 +12,7 @@ Run the focused physical-model tests and a small headless trial from the
 repository root:
 
 ```powershell
-python test\test_physics_model.py
+python sim\tests\test_physics_model.py
 python sim\verify_headless.py --mazes 1 --trials 1
 ```
 

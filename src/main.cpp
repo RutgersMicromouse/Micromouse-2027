@@ -1,304 +1,64 @@
+// ==============================================================================
+// ANTIGRAVITIEEE MICROMOUSE - FIRMWARE ENTRY POINT
+//
+// The ESP32-S3 has two cores, and this file gives each one a job:
+//
+//   Core 1  motionControlTask   500 Hz: read sensors, run the PID loops, drive the motors
+//   Core 0  navigationTask      decide where to go, listen for hand waves and text commands
+//   Core 0  telemetryTask       5 Hz status line over USB / Bluetooth / Telnet
+//
+// There are no buttons: power the robot on and control it with hand waves (GestureUI in ui.h).
+// The LED on the ESP32 board shows what it is doing. The text console (Console in ui.h) is for
+// debugging only and cannot start a run.
+// ==============================================================================
+
 #include <Arduino.h>
 #include <Wire.h>
+#include <atomic>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 
-#include "config.h"
-#include "types.h"
-
-#include "hardware/encoders.h"
-#include "hardware/motors.h"
-#include "hardware/ir_sensors.h"
-#include "hardware/imu.h"
-
-#include "control/motion_controller.h"
-#include "navigation/navigator.h"
-#include "hardware/ble_debug.h"
-#include "hardware/wifi_ota.h"
-#include "calibration/dyno_protocol.h"
+#include "robot.h"
+#include "ui.h"
+#include "wireless.h"
 
 // ==============================================================================
-// GLOBAL HARDWARE & CONTROL INSTANCES
+// SHARED ROBOT OBJECTS (declared in robot.h)
 // ==============================================================================
-static Encoders         g_encoders;
-static Motors           g_motors;
-static IRSensors        g_ir_sensors;
-static IMU              g_imu;
-static MotionController g_motion_controller(g_encoders, g_motors, g_ir_sensors, g_imu);
+Encoders         g_encoders;
+Motors           g_motors;
+IRSensors        g_ir_sensors;
+IMU              g_imu;
+MotionController g_motion_controller(g_encoders, g_motors, g_ir_sensors, g_imu);
+Navigator*       g_navigator        = nullptr;
+QueueHandle_t    g_motion_cmd_queue = nullptr;
 
-// FreeRTOS Inter-Task Communication
-static QueueHandle_t     g_motion_cmd_queue = nullptr;
-static QueueHandle_t     g_telemetry_queue  = nullptr;
-static SemaphoreHandle_t g_telemetry_mutex  = nullptr;
-static SemaphoreHandle_t g_motion_done_sem  = nullptr;
-
+// Sensor snapshot published by the motion task for everyone on Core 0
 static RobotTelemetry    g_shared_telemetry;
-static Navigator*        g_navigator        = nullptr;
+static SemaphoreHandle_t g_telemetry_mutex = nullptr;
 
-// ==============================================================================
-// ==============================================================================
-// RGB STATUS LED HELPER (ESP32-S3-DevKitC-1 Onboard WS2812 NeoPixel on GPIO 48)
-// ==============================================================================
-void setRGB(bool red, bool green, bool blue) {
-    const uint8_t level = RGB_BRIGHTNESS_LEVEL;
-    uint8_t r = red   ? level : 0;
-    uint8_t g = green ? level : 0;
-    uint8_t b = blue  ? level : 0;
-    neopixelWrite(PIN_ESP32_RGB_LED, r, g, b);
+// Given by the motion task each time a motion command finishes
+static SemaphoreHandle_t g_motion_done_sem = nullptr;
+
+// Reference-frame resets requested by Core 0 and carried out by the motion task
+static const uint8_t RESET_REQ_ENCODERS = 0x01;
+static const uint8_t RESET_REQ_HEADING  = 0x02;
+static std::atomic<uint8_t> g_pending_resets{0};
+
+bool getTelemetry(RobotTelemetry& out) {
+    if (xSemaphoreTake(g_telemetry_mutex, pdMS_TO_TICKS(10)) != pdTRUE) return false;
+    out = g_shared_telemetry;
+    xSemaphoreGive(g_telemetry_mutex);
+    return true;
 }
 
-void setRGBColor(uint8_t r, uint8_t g, uint8_t b) {
-    neopixelWrite(PIN_ESP32_RGB_LED, r, g, b);
-}
-
-void flashRGB(bool red, bool green, bool blue, int count = 3, int delay_ms = 150) {
-    for (int i = 0; i < count; ++i) {
-        setRGB(red, green, blue);
-        delay(delay_ms);
-        setRGB(false, false, false);
-        delay(delay_ms);
-    }
-}
-
-void updateModeLED(uint8_t mode) {
-    switch (mode) {
-        case 0: setRGB(false, true, false); break; // Green (Search / Exploration)
-        case 1: setRGB(true, true, false);  break; // Yellow (Hybrid Auto-Optimizer)
-        case 2: setRGB(false, true, true);  break; // Cyan (Pure Diagonal Specialist)
-        case 3: setRGB(true, false, true);  break; // Magenta (Pure Continuous Curves)
-        default: setRGB(false, false, true); break; // Blue (Ready / Idle)
-    }
-}
-
-void launchRunForMode(uint8_t mode, const IRReadings& ir_snapshot) {
-    if (mode == 0) {
-        Serial.println("[UI] CONFIRMED -> Launching Search Run!");
-        g_navigator->startSearchRun();
-        g_navigator->step(ir_snapshot);
-        updateModeLED(0);
-    } else if (mode == 1) {
-        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: ⚡ HYBRID AUTO-OPTIMIZER!");
-        g_navigator->startSpeedRun(SPEEDRUN_HYBRID_AUTO);
-        updateModeLED(1);
-    } else if (mode == 2) {
-        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: 📐 PURE DIAGONAL SPECIALIST!");
-        g_navigator->startSpeedRun(SPEEDRUN_DIAGONALS_ONLY);
-        updateModeLED(2);
-    } else {
-        Serial.println("[UI] CONFIRMED -> Launching SPEED RUN: 🏎 PURE CONTINUOUS CURVES!");
-        g_navigator->startSpeedRun(SPEEDRUN_CURVES_ONLY);
-        updateModeLED(3);
-    }
-}
-
-// Unified wireless command dispatcher (BLE + Wi-Fi Telnet)
-void handleRemoteCommand(String cmd, uint8_t& selected_mode, bool is_active_run, const IRReadings& ir_snapshot, bool is_ble) {
-    cmd.toLowerCase();
-    cmd.trim();
-    Serial.printf("[%s CMD] Received: '%s'\n", is_ble ? "BLE" : "TELNET", cmd.c_str());
-
-    auto reply = [&](const char* msg) {
-#if ENABLE_BLE_DEBUG
-        if (is_ble) BLEDebug::println(msg);
-#endif
-#if ENABLE_WIFI_OTA
-        if (!is_ble) WifiOTA::println(msg);
-#endif
-    };
-
-    if (cmd == "stop" || cmd == "estop" || cmd == "halt") {
-        Serial.println("[REMOTE] 🛑 Emergency stop triggered wirelessly!");
-        g_navigator->stop();
-        flashRGB(true, false, false, 3, 100);
-        updateModeLED(selected_mode);
-        reply("ACK: STOPPED");
-    } else if (cmd == "start" || cmd == "go") {
-        if (!is_active_run) {
-            launchRunForMode(selected_mode, ir_snapshot);
-            char buf[32];
-            snprintf(buf, sizeof(buf), "ACK: STARTED MODE %d", selected_mode);
-            reply(buf);
-        } else {
-            reply("ERR: ALREADY_RUNNING");
-        }
-    } else if (cmd == "mode 0" || cmd == "search") {
-        selected_mode = 0;
-        updateModeLED(selected_mode);
-        reply("ACK: MODE 0 (SEARCH - Green LED)");
-    } else if (cmd == "mode 1" || cmd == "hybrid") {
-        selected_mode = 1;
-        updateModeLED(selected_mode);
-        reply("ACK: MODE 1 (HYBRID - Yellow LED)");
-    } else if (cmd == "mode 2" || cmd == "diag") {
-        selected_mode = 2;
-        updateModeLED(selected_mode);
-        reply("ACK: MODE 2 (DIAGONALS - Cyan LED)");
-    } else if (cmd == "mode 3" || cmd == "curve") {
-        selected_mode = 3;
-        updateModeLED(selected_mode);
-        reply("ACK: MODE 3 (CURVES - Magenta LED)");
-    } else if (cmd == "calib") {
-        if (!is_active_run) {
-            reply("Starting in-cell IR auto-calibration...");
-            setRGB(true, true, false);
-            bool ok = g_ir_sensors.calibrateInCell(200);
-            if (ok) {
-                flashRGB(false, true, false, 3, 120);
-                reply("ACK: CALIB SUCCESS");
-            } else {
-                flashRGB(true, false, false, 3, 120);
-                reply("ERR: CALIB FAILED");
-            }
-            updateModeLED(selected_mode);
-        } else {
-            reply("ERR: CANNOT_CALIB_WHILE_RUNNING");
-        }
-    } else if (cmd == "motorcal") {
-        if (!is_active_run) {
-            reply("Starting automated motor speed calibration (wheels must be freewheeling)...");
-            setRGB(true, true, false); // Yellow during calibration
-            bool ok = g_motion_controller.calibrateMotors();
-            if (ok) {
-                flashRGB(false, true, false, 4, 100); // Green
-                float tl = 1.0f, tr = 1.0f;
-                g_motors.getTrim(tl, tr);
-                char buf[64];
-                snprintf(buf, sizeof(buf), "ACK: MOTOR CALIB SUCCESS (L=%.4f, R=%.4f)", tl, tr);
-                reply(buf);
-            } else {
-                flashRGB(true, false, false, 4, 100); // Red
-                reply("ERR: MOTOR CALIB FAILED (check wheels or battery)");
-            }
-            updateModeLED(selected_mode);
-        } else {
-            reply("ERR: CANNOT_CALIB_WHILE_RUNNING");
-        }
-    } else if (cmd.startsWith("motorrpm")) {
-        if (!is_active_run) {
-            float duty = 0.5f;
-            int space_idx = cmd.indexOf(' ');
-            if (space_idx > 0) {
-                float parsed = cmd.substring(space_idx + 1).toFloat();
-                if (parsed > 0.05f && parsed <= 1.0f) {
-                    duty = parsed;
-                }
-            }
-            char buf[64];
-            snprintf(buf, sizeof(buf), "Running tachometer benchmark at %.0f%% duty for 4000ms...", duty * 100.0f);
-            reply(buf);
-            setRGB(false, true, true); // Cyan
-            g_motion_controller.runTachometerBenchmark(duty, 4000);
-            reply("ACK: TACH BENCHMARK FINISHED");
-            updateModeLED(selected_mode);
-        } else {
-            reply("ERR: CANNOT_BENCHMARK_WHILE_RUNNING");
-        }
-    } else if (cmd.startsWith("motortrim")) {
-        int space_idx = cmd.indexOf(' ');
-        if (space_idx > 0) {
-            float tl = 1.0f, tr = 1.0f;
-            if (sscanf(cmd.c_str() + space_idx + 1, "%f %f", &tl, &tr) == 2) {
-                g_motors.setTrim(tl, tr);
-                g_motors.saveToNVS();
-                char buf[64];
-                snprintf(buf, sizeof(buf), "ACK: TRIM UPDATED & SAVED (L=%.4f, R=%.4f)", tl, tr);
-                reply(buf);
-            } else {
-                reply("ERR: USAGE 'motortrim <left> <right>'");
-            }
-        } else {
-            float tl = 1.0f, tr = 1.0f;
-            g_motors.getTrim(tl, tr);
-            char buf[64];
-            snprintf(buf, sizeof(buf), "MOTORS TRIM: Left=%.4f | Right=%.4f", tl, tr);
-            reply(buf);
-        }
-    } else if (cmd == "enc" || cmd == "encinfo") {
-        EncoderState enc = g_encoders.getState();
-        bool inv_l = false, inv_r = false;
-        g_encoders.getInverted(inv_l, inv_r);
-        char buf[128];
-        snprintf(buf, sizeof(buf), "ENC: L=%ld (%4.1fmm, %4.0fmm/s, inv=%d) | R=%ld (%4.1fmm, %4.0fmm/s, inv=%d)",
-                 (long)enc.left_ticks_total, enc.left_dist_mm, enc.left_speed_mm_s, (int)inv_l,
-                 (long)enc.right_ticks_total, enc.right_dist_mm, enc.right_speed_mm_s, (int)inv_r);
-        reply(buf);
-    } else if (cmd.startsWith("motorinv")) {
-        int space_idx = cmd.indexOf(' ');
-        if (space_idx > 0) {
-            int inv_l = 0, inv_r = 0;
-            if (sscanf(cmd.c_str() + space_idx + 1, "%d %d", &inv_l, &inv_r) == 2) {
-                g_motors.setInverted(inv_l != 0, inv_r != 0);
-                char buf[64];
-                snprintf(buf, sizeof(buf), "ACK: MOTOR INVERT SET (L=%d, R=%d)", inv_l != 0, inv_r != 0);
-                reply(buf);
-            } else {
-                reply("ERR: USAGE 'motorinv <left:0/1> <right:0/1>'");
-            }
-        } else {
-            bool il = false, ir = false;
-            g_motors.getInverted(il, ir);
-            char buf[64];
-            snprintf(buf, sizeof(buf), "MOTOR INVERT: L=%d | R=%d", (int)il, (int)ir);
-            reply(buf);
-        }
-    } else if (cmd.startsWith("encinv")) {
-        int space_idx = cmd.indexOf(' ');
-        if (space_idx > 0) {
-            int inv_l = 0, inv_r = 0;
-            if (sscanf(cmd.c_str() + space_idx + 1, "%d %d", &inv_l, &inv_r) == 2) {
-                g_encoders.setInverted(inv_l != 0, inv_r != 0);
-                char buf[64];
-                snprintf(buf, sizeof(buf), "ACK: ENCODER INVERT SET (L=%d, R=%d)", inv_l != 0, inv_r != 0);
-                reply(buf);
-            } else {
-                reply("ERR: USAGE 'encinv <left:0/1> <right:0/1>'");
-            }
-        } else {
-            bool il = false, ir = false;
-            g_encoders.getInverted(il, ir);
-            char buf[64];
-            snprintf(buf, sizeof(buf), "ENCODER INVERT: L=%d | R=%d", (int)il, (int)ir);
-            reply(buf);
-        }
-    } else if (cmd == "clear") {
-        if (!is_active_run) {
-            g_navigator->clearSavedMaze();
-            flashRGB(false, false, true, 4, 100);
-            updateModeLED(selected_mode);
-            reply("ACK: MAZE CLEARED");
-        } else {
-            reply("ERR: CANNOT_CLEAR_WHILE_RUNNING");
-        }
-    } else if (cmd == "status") {
-        float vbat = (float)analogReadMilliVolts(PIN_VSENSE_COM) / 1000.0f * BATTERY_DIVIDER_RATIO;
-        char buf[64];
-        snprintf(buf, sizeof(buf), "STATUS: VBat=%.2fV | Mode=%d | State=%d", vbat, selected_mode, (int)g_navigator->getState());
-        reply(buf);
-    } else if (cmd == "perf") {
-        TimingStats t;
-        if (xSemaphoreTake(g_telemetry_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-            t = g_shared_telemetry.timing;
-            xSemaphoreGive(g_telemetry_mutex);
-        }
-        char buf[160];
-        snprintf(buf, sizeof(buf), "PERF: [Core 1] Loop=%u us (Peak=%u us, Budget=2000 us) | Overruns=%lu | [Core 0] Nav=Active | Stack Rem=%lu words",
-                 (unsigned int)t.loop_time_us, (unsigned int)t.max_loop_time_us, (unsigned long)t.loop_overruns, (unsigned long)t.stack_high_water);
-        reply(buf);
-    } else if (DynoProtocol::handleCommand(cmd, g_motors, g_motion_controller, g_motion_cmd_queue, reply)) {
-        // Handled by Dyno Calibration Protocol (active in dyno build, 0 overhead in competition build)
-    } else if (cmd == "help") {
-        reply("Commands: start, stop, search, hybrid, diag, curve, calib, clear, status, perf, motorcal, motorrpm [duty], motortrim [l r], enc, motorinv [l r], encinv [l r]");
-    } else {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "ERR: UNKNOWN COMMAND '%s' (type 'help')", cmd.c_str());
-        reply(buf);
-    }
-}
+void requestEncoderReset() { g_pending_resets.fetch_or(RESET_REQ_ENCODERS); }
+void requestHeadingReset() { g_pending_resets.fetch_or(RESET_REQ_HEADING); }
 
 // Battery Voltage Sense (10k / 10k divider on Computer Battery)
-float readBatteryVoltage() {
+static float readBatteryVoltage() {
     // analogReadMilliVolts utilizes ESP32-S3 factory eFuse calibration for exact mV
     float pin_voltage = (float)analogReadMilliVolts(PIN_VSENSE_COM) / 1000.0f;
     return pin_voltage * BATTERY_DIVIDER_RATIO;
@@ -326,13 +86,20 @@ void motionControlTask(void* pvParameters) {
         vTaskDelayUntil(&last_wake_time, period_ticks > 0 ? period_ticks : 1);
         uint32_t t_start_us = micros();
 
-        // 1. Read Encoders (PCNT hardware 4x decoding) & Pulsed 5-Channel IR
+        // 0. Carry out reference-frame resets requested from Core 0 (only between motions)
+        if (!was_busy && g_pending_resets.load() != 0) {
+            uint8_t resets = g_pending_resets.exchange(0);
+            if (resets & RESET_REQ_ENCODERS) g_encoders.reset();
+            if (resets & RESET_REQ_HEADING)  g_motion_controller.resetHeading();
+        }
+
+        // 1. Read Encoders (PCNT hardware 4x decoding) & Pulsed 6-Channel IR (one emitter group per tick)
         g_encoders.update(CONTROL_DT_S);
         g_ir_sensors.update();
 
         EncoderState enc = g_encoders.getState();
 
-        // 2. High-rate IMU sensor fusion (500 Hz continuous dead-reckoning + 100 Hz I2C poll)
+        // 2. Heading: BNO055 at 100 Hz, smoothed to 500 Hz, with encoder odometry as the backup
         float yaw_rate = (enc.right_speed_mm_s - enc.left_speed_mm_s) / WHEEL_BASE_MM * (180.0f / PI);
         g_imu.update(CONTROL_DT_S, yaw_rate, enc.linear_speed_mm_s);
 
@@ -348,9 +115,7 @@ void motionControlTask(void* pvParameters) {
         // 5. Signal movement completion
         if (was_busy && g_motion_controller.isCommandFinished()) {
             was_busy = false;
-            if (g_motion_done_sem) {
-                xSemaphoreGive(g_motion_done_sem);
-            }
+            xSemaphoreGive(g_motion_done_sem);
         }
 
         // 6. Measure real-time loop duration & jitter (2000 µs period)
@@ -378,7 +143,7 @@ void motionControlTask(void* pvParameters) {
                     battery_cutoff_latched = true;
                     g_motion_controller.emergencyStop();
                     g_motors.setMotorPowerEnabled(false);
-                    setRGB(true, false, false); // Solid Red Alarm
+                    StatusLED::set(StatusLED::RED); // Solid Red Alarm
                     Serial.printf("[SAFETY ALERT] Low Battery Voltage: %4.2f V! Motors disabled.\n", vbat);
                 }
             } else {
@@ -400,145 +165,52 @@ void motionControlTask(void* pvParameters) {
 }
 
 // ==============================================================================
-// CORE 0 TASK: HIGH-LEVEL NAVIGATION & STATE CONTROLS
+// CORE 0 TASK: HIGH-LEVEL NAVIGATION & OPERATOR CONTROLS
 // ==============================================================================
 void navigationTask(void* pvParameters) {
-    Serial.printf("[CORE 0] Navigation & State Task running on Core %d\n", xPortGetCoreID());
+    Serial.printf("[CORE 0] Navigation Task running on Core %d\n", xPortGetCoreID());
 
-    bool last_state_btn = HIGH;
-    bool last_confirm_btn = HIGH;
-    uint32_t state_press_start = 0;
-#ifdef FORCE_PURE_DIAGONALS
-    uint8_t selected_mode = 2; // Dedicated Pure Diagonal Specialist
-    Serial.println("[UI] Default Profile: PURE DIAGONAL SPECIALIST (Cyan LED)");
-#elif defined(FORCE_PURE_CURVES)
-    uint8_t selected_mode = 3; // Dedicated Pure Continuous Curves
-    Serial.println("[UI] Default Profile: PURE CONTINUOUS CURVES (Magenta LED)");
-#elif defined(FORCE_HYBRID_AUTO)
-    uint8_t selected_mode = 1; // Dedicated Hybrid Auto-Optimizer
-    Serial.println("[UI] Default Profile: HYBRID AUTO-OPTIMIZER (Yellow LED)");
-#else
-    uint8_t selected_mode = 0; // Search Run
-    Serial.println("[UI] Default Profile: SEARCH / EXPLORATION RUN (Green LED)");
-#endif
-    updateModeLED(selected_mode);
+    static RobotTelemetry telemetry = {}; // Kept between loops so a missed snapshot reuses the last one
+    bool was_running = false;
 
-    uint32_t confirm_press_start = 0;
+    Actions::showSelectedMode();
+    GestureUI::restart();
 
     for (;;) {
-        bool curr_state_btn = digitalRead(PIN_BTN_STATE);
-        bool curr_confirm_btn = digitalRead(PIN_BTN_CONFIRM);
+        // 1. Debug console on Bluetooth / Telnet / USB (also keeps Wi-Fi OTA alive)
+        Console::poll();
 
-        // Fetch latest IR readings for navigation
-        IRReadings ir_snapshot;
-        if (xSemaphoreTake(g_telemetry_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            ir_snapshot = g_shared_telemetry.ir;
-            xSemaphoreGive(g_telemetry_mutex);
+        getTelemetry(telemetry);
+
+        // 2. Automatic safety stop (motor stall / dead encoder): abort the run, don't send the next move
+        if (g_motion_controller.consumeSafetyStop()) {
+            Serial.println("\n[SAFETY] Run aborted by the motion controller (motor stall or encoder fault).");
+            g_navigator->stop();
+            xSemaphoreTake(g_motion_done_sem, 0);
+            StatusLED::flash(StatusLED::RED, 5, 100);
+            Actions::showSelectedMode();
         }
 
-        NavState cur_nav_state = g_navigator->getState();
-        bool is_active_run = (cur_nav_state == NAV_STATE_EXPLORING_TO_CENTER ||
-                              cur_nav_state == NAV_STATE_RETURNING_TO_START ||
-                              cur_nav_state == NAV_STATE_SPEED_RUNNING);
-
-#if ENABLE_BLE_DEBUG
-        // --- BLUETOOTH LOW ENERGY REMOTE CONTROL COMMANDS ---
-        if (BLEDebug::hasCommand()) {
-            handleRemoteCommand(BLEDebug::readCommand(), selected_mode, is_active_run, ir_snapshot, true);
-        }
-#endif
-
-#if ENABLE_WIFI_OTA
-        // --- WI-FI OTA UPDATE HANDLER & TELNET CONSOLE COMMANDS ---
-        WifiOTA::handle();
-        if (WifiOTA::hasCommand()) {
-            handleRemoteCommand(WifiOTA::readCommand(), selected_mode, is_active_run, ir_snapshot, false);
-        }
-#endif
-
-        // --- USB SERIAL CONSOLE COMMANDS ---
-        if (Serial.available()) {
-            String serial_cmd = Serial.readStringUntil('\n');
-            serial_cmd.trim();
-            if (serial_cmd.length() > 0) {
-                handleRemoteCommand(serial_cmd, selected_mode, is_active_run, ir_snapshot, false);
-            }
-        }
-
-        // --- MANUAL E-STOP / PAUSE WHILE MOVING ---
-        // Tapping either button while the robot is running immediately brakes and halts navigation
-        if (is_active_run) {
-            if ((last_state_btn == HIGH && curr_state_btn == LOW) ||
-                (last_confirm_btn == HIGH && curr_confirm_btn == LOW)) {
-                Serial.println("\n[UI] 🛑 USER EMERGENCY STOP ENGAGED! Halting robot.");
-                g_navigator->stop();
-                flashRGB(true, false, false, 3, 100); // Flash Red
-                updateModeLED(selected_mode);
-                last_state_btn = curr_state_btn;
-                last_confirm_btn = curr_confirm_btn;
-                vTaskDelay(pdMS_TO_TICKS(100));
-                continue;
-            }
-        } else {
-            // --- STATE BUTTON (when idle): Short press = cycle mode, Long press (>2s) = Auto-Calibrate ---
-            if (last_state_btn == HIGH && curr_state_btn == LOW) {
-                state_press_start = millis();
-            } else if (last_state_btn == LOW && curr_state_btn == HIGH) {
-                uint32_t hold_time = millis() - state_press_start;
-                if (hold_time > 2000) {
-                    // Long press: trigger in-cell auto-calibration
-                    Serial.println("\n[UI] Long Press STATE Detected -> Starting IR Auto-Calibration!");
-                    setRGB(true, true, false); // Yellow during calibration
-
-                    bool success = g_ir_sensors.calibrateInCell(200);
-                    if (success) {
-                        flashRGB(false, true, false, 3, 120); // Flash Green = Success
-                    } else {
-                        flashRGB(true, false, false, 3, 120); // Flash Red = Failed
-                    }
-                    updateModeLED(selected_mode);
-                } else if (hold_time > 50) {
-                    // Short press: cycle between 4 operating modes
-                    selected_mode = (selected_mode + 1) % 4;
-                    updateModeLED(selected_mode);
-                    switch (selected_mode) {
-                        case 0: Serial.println("[UI] Selected Mode [0]: SEARCH / EXPLORATION RUN (Green LED)"); break;
-                        case 1: Serial.println("[UI] Selected Mode [1]: SPEED RUN -> ⚡ HYBRID AUTO-OPTIMIZER (Yellow LED)"); break;
-                        case 2: Serial.println("[UI] Selected Mode [2]: SPEED RUN -> 📐 PURE DIAGONAL SPECIALIST (Cyan LED)"); break;
-                        case 3: Serial.println("[UI] Selected Mode [3]: SPEED RUN -> 🏎 PURE CONTINUOUS CURVES (Magenta LED)"); break;
-                    }
-                }
-            }
-
-            // --- CONFIRM BUTTON (when idle): Short press = Launch run, Long press (>2.5s) = Clear Flash Maze ---
-            if (last_confirm_btn == HIGH && curr_confirm_btn == LOW) {
-                confirm_press_start = millis();
-            } else if (last_confirm_btn == LOW && curr_confirm_btn == HIGH) {
-                uint32_t confirm_hold = millis() - confirm_press_start;
-                if (confirm_hold > 2500) {
-                    // Long press CONFIRM: Clear mapped maze in NVS
-                    Serial.println("\n[UI] Long Press CONFIRM Detected -> Clearing Saved Flash Maze!");
-                    g_navigator->clearSavedMaze();
-                    flashRGB(false, false, true, 4, 100); // Flash Blue = Cleared
-                    updateModeLED(selected_mode);
-                } else if (confirm_hold > 50) {
-                    // Short press CONFIRM: Launch selected run
-                    launchRunForMode(selected_mode, ir_snapshot);
-                }
-            }
-        }
-
-        last_state_btn = curr_state_btn;
-        last_confirm_btn = curr_confirm_btn;
-
-        // Advance FSM strictly when physical motion completes
+        // 3. Advance the navigator strictly when a physical motion completes
         if (xSemaphoreTake(g_motion_done_sem, 0) == pdTRUE) {
             g_navigator->notifyMotionComplete();
-            g_navigator->step(ir_snapshot);
+            g_navigator->step(telemetry.ir, g_motion_controller.getWallPreview());
         }
 
+        // 4. Hand-wave controls, only while the robot is standing still between runs
+        bool running = Actions::isRunActive();
+#if ENABLE_GESTURE_UI
+        if (was_running && !running) {
+            GestureUI::restart(); // Re-learn what the front sensors see where the robot stopped
+        }
+        if (!running) {
+            GestureUI::update(telemetry.ir);
+        }
+#endif
+        was_running = running;
+
         // Fast 1ms yield during active runs for seamless motion chaining; 20ms during idle
-        vTaskDelay(is_active_run ? pdMS_TO_TICKS(1) : pdMS_TO_TICKS(20));
+        vTaskDelay(running ? pdMS_TO_TICKS(1) : pdMS_TO_TICKS(20));
     }
 }
 
@@ -550,54 +222,49 @@ void telemetryTask(void* pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(200)); // 5 Hz telemetry
 
         RobotTelemetry snap;
-        if (xSemaphoreTake(g_telemetry_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-            snap = g_shared_telemetry;
-            xSemaphoreGive(g_telemetry_mutex);
+        if (!getTelemetry(snap)) continue;
 
-            Serial.printf("[TEL] VBat: %4.2fV | Loop: %3uus | Enc: L=%6.1f R=%6.1f mm | Spd: %5.1f mm/s | Hdg: %5.1f° | IR: L90=%3d L45=%3d FL=%3d FR=%3d R45=%3d R90=%3d | Walls: [%c%c%c]\n",
-                          snap.vbat_volts,
-                          (unsigned int)snap.timing.loop_time_us,
-                          snap.encoders.left_dist_mm,
-                          snap.encoders.right_dist_mm,
-                          snap.encoders.linear_speed_mm_s,
-                          snap.imu.heading_deg,
-                          snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
-                          snap.ir.wall_left ? 'L' : '.',
-                          snap.ir.wall_front ? 'F' : '.',
-                          snap.ir.wall_right ? 'R' : '.');
-
-#if ENABLE_BLE_DEBUG
-            if (BLEDebug::isConnected()) {
-                char ble_buf[128];
-                snprintf(ble_buf, sizeof(ble_buf), "V:%.2fV|Spd:%.0f|Hdg:%.1f|IR:%d,%d,%d,%d,%d,%d|W:[%c%c%c]",
-                         snap.vbat_volts,
-                         snap.encoders.linear_speed_mm_s,
-                         snap.imu.heading_deg,
-                         snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
-                         snap.ir.wall_left ? 'L' : '.',
-                         snap.ir.wall_front ? 'F' : '.',
-                         snap.ir.wall_right ? 'R' : '.');
-                BLEDebug::println(ble_buf);
-            }
-#endif
+        char line[200];
+        snprintf(line, sizeof(line),
+                 "[TEL] VBat: %4.2fV | Loop: %3uus | Enc: L=%6.1f R=%6.1f mm | Spd: %5.1f mm/s | Hdg: %5.1f° | IR: L90=%3d L45=%3d FL=%3d FR=%3d R45=%3d R90=%3d | Walls: [%c%c%c]",
+                 snap.vbat_volts,
+                 (unsigned int)snap.timing.loop_time_us,
+                 snap.encoders.left_dist_mm,
+                 snap.encoders.right_dist_mm,
+                 snap.encoders.linear_speed_mm_s,
+                 snap.imu.heading_deg,
+                 snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
+                 snap.ir.wall_left ? 'L' : '.',
+                 snap.ir.wall_front ? 'F' : '.',
+                 snap.ir.wall_right ? 'R' : '.');
+        Serial.println(line);
 
 #if ENABLE_WIFI_OTA
-            if (WifiOTA::isClientConnected()) {
-                char telnet_buf[160];
-                snprintf(telnet_buf, sizeof(telnet_buf), "[TEL] VBat: %4.2fV | Enc: L=%6.1f R=%6.1f mm | Spd: %5.1f mm/s | Hdg: %5.1f° | IR: L90=%3d L45=%3d FL=%3d FR=%3d R45=%3d R90=%3d | Walls: [%c%c%c]\r\n",
-                         snap.vbat_volts,
-                         snap.encoders.left_dist_mm,
-                         snap.encoders.right_dist_mm,
-                         snap.encoders.linear_speed_mm_s,
-                         snap.imu.heading_deg,
-                         snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
-                         snap.ir.wall_left ? 'L' : '.',
-                         snap.ir.wall_front ? 'F' : '.',
-                         snap.ir.wall_right ? 'R' : '.');
-                WifiOTA::print(telnet_buf);
-            }
-#endif
+        if (WifiOTA::isClientConnected()) {
+            WifiOTA::println(line);
         }
+#endif
+
+#if ENABLE_BLE_DEBUG
+        // Readable characteristics polled by the web dashboard (tools/web_dashboard)
+        BLEDebug::updateTelemetry(snap.vbat_volts, snap.imu.heading_deg,
+                                  (long)snap.encoders.left_ticks_total,
+                                  (long)snap.encoders.right_ticks_total);
+
+        if (BLEDebug::isConnected()) {
+            // Shorter line: Bluetooth sends 20 bytes at a time
+            char ble_buf[128];
+            snprintf(ble_buf, sizeof(ble_buf), "V:%.2fV|Spd:%.0f|Hdg:%.1f|IR:%d,%d,%d,%d,%d,%d|W:[%c%c%c]",
+                     snap.vbat_volts,
+                     snap.encoders.linear_speed_mm_s,
+                     snap.imu.heading_deg,
+                     snap.ir.left_90, snap.ir.left_45, snap.ir.front_left, snap.ir.front_right, snap.ir.right_45, snap.ir.right_90,
+                     snap.ir.wall_left ? 'L' : '.',
+                     snap.ir.wall_front ? 'F' : '.',
+                     snap.ir.wall_right ? 'R' : '.');
+            BLEDebug::println(ble_buf);
+        }
+#endif
     }
 }
 
@@ -612,13 +279,9 @@ void setup() {
     Serial.println("  ANTIGRAVITIEEE MICROMOUSE - REVISION 1.0       ");
     Serial.println("==================================================");
 
-    // 1. Initialize UI Controls & Indicators
-    pinMode(PIN_BTN_CONFIRM, INPUT_PULLUP);
-    pinMode(PIN_BTN_STATE, INPUT_PULLUP);
-
-    // Initialize ESP32-S3 Onboard WS2812 RGB LED (GPIO 48)
-    pinMode(PIN_ESP32_RGB_LED, OUTPUT);
-    setRGB(false, false, true); // Blue = Initializing
+    // 1. Status LED on the ESP32 board
+    StatusLED::begin();
+    StatusLED::set(StatusLED::BLUE); // Blue = Initializing
 
     // 2. Initialize Shared I2C Bus (SDA = GPIO21, SCL = GPIO20)
     Serial.println("[INIT] Initializing I2C Bus (SDA: 21, SCL: 20 @ 400kHz)...");
@@ -632,11 +295,21 @@ void setup() {
     Serial.println("[INIT] Initializing Pololu Motoron M2T256 Motor Driver...");
     g_motors.begin();
 
-    Serial.println("[INIT] Initializing 5-Channel SFH4545/TEFT4300 IR System...");
+    Serial.println("[INIT] Initializing 6-Channel SFH4545/TEFT4300 IR System...");
     g_ir_sensors.begin();
 
     Serial.println("[INIT] Initializing Bosch BNO055 IMU...");
     g_imu.begin();
+
+    // Power-on self-check: the robot still boots with a missing peripheral, but says so clearly
+    if (!g_motors.isConnected()) {
+        Serial.println("[INIT] WARNING: Motor driver not responding -> robot cannot drive until it comes back.");
+        StatusLED::flash(StatusLED::RED, 5, 120);
+    }
+    if (!g_imu.isHardwareConnected()) {
+        Serial.println("[INIT] WARNING: IMU missing -> heading runs on encoder odometry (reduced turn accuracy).");
+        StatusLED::flash(StatusLED::YELLOW, 3, 120);
+    }
 
     Serial.println("[INIT] Initializing Cascaded Motion Controller...");
     g_motion_controller.begin();
@@ -647,44 +320,10 @@ void setup() {
     g_motion_done_sem  = xSemaphoreCreateBinary();
 
     // 5. Initialize Navigator
-    g_navigator = new Navigator(g_motion_cmd_queue, g_telemetry_queue);
+    g_navigator = new Navigator(g_motion_cmd_queue, nullptr);
     g_navigator->begin();
 
-    // 6. Spawn FreeRTOS Tasks
-    Serial.println("[INIT] Launching FreeRTOS Core 1 & Core 0 Tasks...");
-
-    xTaskCreatePinnedToCore(
-        motionControlTask,
-        "MotionCtrl",
-        4096,
-        nullptr,
-        PRIORITY_MOTION_TASK,
-        nullptr,
-        CORE_MOTION_CONTROL
-    );
-
-    xTaskCreatePinnedToCore(
-        navigationTask,
-        "NavTask",
-        4096,
-        nullptr,
-        PRIORITY_NAV_TASK,
-        nullptr,
-        CORE_NAVIGATION
-    );
-
-    xTaskCreatePinnedToCore(
-        telemetryTask,
-        "Telemetry",
-        3072,
-        nullptr,
-        PRIORITY_TELEMETRY,
-        nullptr,
-        CORE_NAVIGATION
-    );
-
-    Serial.println("[READY] Antigravitieee is Ready!");
-    Serial.printf("[BATT] Computer Battery Voltage: %4.2f V\n", readBatteryVoltage());
+    // 6. Wireless links
 #if ENABLE_BLE_DEBUG
     Serial.println("[INIT] Starting Nordic UART Bluetooth Low Energy Service...");
     BLEDebug::begin(BLE_DEVICE_NAME);
@@ -693,13 +332,20 @@ void setup() {
     Serial.println("[INIT] Starting Wi-Fi Wireless Hotspot, ArduinoOTA & Telnet Console...");
     WifiOTA::begin();
 #endif
-    Serial.println("[UI] Controls Guide:");
-    Serial.println("  - When Moving: Press EITHER button or send 'stop' over BLE/Telnet -> Instant Emergency Stop");
-    Serial.println("  - Short Press STATE (GPIO42) or send 'search/hybrid/diag/curve'   -> Cycle Mode");
-    Serial.println("  - Long Press STATE (>2 sec) or send 'calib'                       -> In-Cell IR Auto-Calibration");
-    Serial.println("  - Short Press CONFIRM (GPIO41) or send 'start'                    -> Launch Selected Run");
-    Serial.println("  - Long Press CONFIRM (>2.5 sec) or send 'clear'                   -> Clear Saved Maze from Flash");
-    Serial.println("  - Bench Motor Calib: send 'motorcal' or 'motorrpm [duty]'         -> Auto-balance wheel RPMs & Save");
+
+    // 7. Spawn FreeRTOS Tasks
+    Serial.println("[INIT] Launching FreeRTOS Core 1 & Core 0 Tasks...");
+    xTaskCreatePinnedToCore(motionControlTask, "MotionCtrl", 4096, nullptr, PRIORITY_MOTION_TASK, nullptr, CORE_MOTION_CONTROL);
+    xTaskCreatePinnedToCore(navigationTask,    "NavTask",    6144, nullptr, PRIORITY_NAV_TASK,    nullptr, CORE_NAVIGATION);
+    xTaskCreatePinnedToCore(telemetryTask,     "Telemetry",  4096, nullptr, PRIORITY_TELEMETRY,   nullptr, CORE_NAVIGATION);
+
+    Serial.println("[READY] Antigravitieee is Ready!");
+    Serial.println("[UI] Wave a hand in front of the front sensors, then pause:");
+    Serial.println("  1 wave  = Search run          2 waves = Speed run (hybrid)");
+    Serial.println("  3 waves = Speed run (diag)    4 waves = Speed run (curves)");
+    Serial.println("  5 waves = Calibrate IR        6 waves = Clear saved maze");
+    Serial.println("  Cover the sensors during the blinking countdown to cancel.");
+    Serial.println("  To halt a run: lift the robot and turn it sideways (or send 'stop' when debugging).");
 }
 
 void loop() {

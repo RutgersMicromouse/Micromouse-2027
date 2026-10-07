@@ -1,0 +1,1456 @@
+#include "navigation.h"
+
+// ==============================================================================
+// MAZE MAP
+// ==============================================================================
+
+#include <Preferences.h>
+
+Maze::Maze() {
+    reset();
+}
+
+void Maze::reset() {
+    memset(cells_, 0, sizeof(cells_));
+
+    // Initialize outer boundary walls
+    for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+        cells_[x][0] |= WALL_SOUTH_BIT;
+        cells_[x][MAZE_HEIGHT - 1] |= WALL_NORTH_BIT;
+    }
+
+    for (int8_t y = 0; y < MAZE_HEIGHT; ++y) {
+        cells_[0][y] |= WALL_WEST_BIT;
+        cells_[MAZE_WIDTH - 1][y] |= WALL_EAST_BIT;
+    }
+
+    // Standard starting cell (0, 0) has an East wall in classical micromouse rules
+    cells_[0][0] |= WALL_EAST_BIT;
+    cells_[1][0] |= WALL_WEST_BIT;
+}
+
+bool Maze::hasWall(int8_t x, int8_t y, Direction dir) const {
+    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) {
+        return true; // Boundaries treated as walls
+    }
+
+    switch (dir) {
+        case DIR_NORTH: return (cells_[x][y] & WALL_NORTH_BIT) != 0;
+        case DIR_EAST:  return (cells_[x][y] & WALL_EAST_BIT)  != 0;
+        case DIR_SOUTH: return (cells_[x][y] & WALL_SOUTH_BIT) != 0;
+        case DIR_WEST:  return (cells_[x][y] & WALL_WEST_BIT)  != 0;
+        default:        return true;
+    }
+}
+
+void Maze::setWall(int8_t x, int8_t y, Direction dir) {
+    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return;
+
+    switch (dir) {
+        case DIR_NORTH:
+            cells_[x][y] |= WALL_NORTH_BIT;
+            if (y + 1 < MAZE_HEIGHT) cells_[x][y + 1] |= WALL_SOUTH_BIT;
+            break;
+        case DIR_EAST:
+            cells_[x][y] |= WALL_EAST_BIT;
+            if (x + 1 < MAZE_WIDTH) cells_[x + 1][y] |= WALL_WEST_BIT;
+            break;
+        case DIR_SOUTH:
+            cells_[x][y] |= WALL_SOUTH_BIT;
+            if (y - 1 >= 0) cells_[x][y - 1] |= WALL_NORTH_BIT;
+            break;
+        case DIR_WEST:
+            cells_[x][y] |= WALL_WEST_BIT;
+            if (x - 1 >= 0) cells_[x - 1][y] |= WALL_EAST_BIT;
+            break;
+        default:
+            break;
+    }
+}
+
+void Maze::clearWall(int8_t x, int8_t y, Direction dir) {
+    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return;
+
+    switch (dir) {
+        case DIR_NORTH:
+            cells_[x][y] &= ~WALL_NORTH_BIT;
+            if (y + 1 < MAZE_HEIGHT) cells_[x][y + 1] &= ~WALL_SOUTH_BIT;
+            break;
+        case DIR_EAST:
+            cells_[x][y] &= ~WALL_EAST_BIT;
+            if (x + 1 < MAZE_WIDTH) cells_[x + 1][y] &= ~WALL_WEST_BIT;
+            break;
+        case DIR_SOUTH:
+            cells_[x][y] &= ~WALL_SOUTH_BIT;
+            if (y - 1 >= 0) cells_[x][y - 1] &= ~WALL_NORTH_BIT;
+            break;
+        case DIR_WEST:
+            cells_[x][y] &= ~WALL_WEST_BIT;
+            if (x - 1 >= 0) cells_[x - 1][y] &= ~WALL_EAST_BIT;
+            break;
+        default:
+            break;
+    }
+}
+
+bool Maze::isVisited(int8_t x, int8_t y) const {
+    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return false;
+    return (cells_[x][y] & CELL_VISITED_BIT) != 0;
+}
+
+void Maze::setVisited(int8_t x, int8_t y) {
+    if (x >= 0 && x < MAZE_WIDTH && y >= 0 && y < MAZE_HEIGHT) {
+        cells_[x][y] |= CELL_VISITED_BIT;
+    }
+}
+
+Direction Maze::getAbsoluteDirection(Direction heading, int8_t relative_turn) {
+    // relative_turn: 0 = front, 1 = right, 2 = behind, 3 (or -1) = left
+    int8_t dir = ((int8_t)heading + relative_turn) % 4;
+    if (dir < 0) dir += 4;
+    return (Direction)dir;
+}
+
+void Maze::updateCellWalls(int8_t x, int8_t y, Direction heading, bool wall_left, bool wall_front, bool wall_right) {
+    setVisited(x, y);
+
+    Direction dir_front = getAbsoluteDirection(heading, 0);
+    Direction dir_right = getAbsoluteDirection(heading, 1);
+    Direction dir_left  = getAbsoluteDirection(heading, -1);
+
+    if (wall_front) setWall(x, y, dir_front);
+    if (wall_right) setWall(x, y, dir_right);
+    if (wall_left)  setWall(x, y, dir_left);
+}
+
+void Maze::printMazeToSerial(int8_t current_x, int8_t current_y) const {
+    Serial.println("\n--- Current Maze Grid ---");
+    for (int8_t y = MAZE_HEIGHT - 1; y >= 0; --y) {
+        // Print north walls
+        for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+            Serial.print("+");
+            Serial.print(hasWall(x, y, DIR_NORTH) ? "---" : "   ");
+        }
+        Serial.println("+");
+
+        // Print west/east walls and mouse location
+        for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+            Serial.print(hasWall(x, y, DIR_WEST) ? "|" : " ");
+            if (x == current_x && y == current_y) {
+                Serial.print(" M ");
+            } else if (isVisited(x, y)) {
+                Serial.print(" . ");
+            } else {
+                Serial.print("   ");
+            }
+        }
+        Serial.println(hasWall(MAZE_WIDTH - 1, y, DIR_EAST) ? "|" : " ");
+    }
+
+    // Bottom south walls
+    for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+        Serial.print("+---");
+    }
+    Serial.println("+");
+}
+
+void Maze::saveToNVS() {
+    Preferences prefs;
+    prefs.begin("maze_grid", false);
+    prefs.putBytes("cells", cells_, sizeof(cells_));
+    prefs.putBool("valid", true);
+    prefs.end();
+    Serial.println("[MAZE] Mapped maze saved to Flash NVS!");
+}
+
+bool Maze::loadFromNVS() {
+    Preferences prefs;
+    prefs.begin("maze_grid", true);
+    if (!prefs.getBool("valid", false)) {
+        prefs.end();
+        return false;
+    }
+    prefs.getBytes("cells", cells_, sizeof(cells_));
+    prefs.end();
+    Serial.println("[MAZE] Mapped maze loaded from Flash NVS!");
+    return true;
+}
+
+void Maze::clearNVS() {
+    Preferences prefs;
+    prefs.begin("maze_grid", false);
+    prefs.clear();
+    prefs.end();
+    Serial.println("[MAZE] Flash NVS maze cleared.");
+}
+
+bool Maze::hasSavedMaze() const {
+    Preferences prefs;
+    prefs.begin("maze_grid", true);
+    bool valid = prefs.getBool("valid", false);
+    prefs.end();
+    return valid;
+}
+
+// ==============================================================================
+// FLOODFILL SOLVER
+// ==============================================================================
+
+// Ring buffer queue for BFS floodfill
+struct CellQueue {
+    Coordinate buffer[MAZE_WIDTH * MAZE_HEIGHT];
+    int head;
+    int tail;
+
+    void init() { head = 0; tail = 0; }
+    bool isEmpty() const { return head == tail; }
+    void push(Coordinate c) {
+        buffer[tail] = c;
+        tail = (tail + 1) % (MAZE_WIDTH * MAZE_HEIGHT);
+    }
+    Coordinate pop() {
+        Coordinate c = buffer[head];
+        head = (head + 1) % (MAZE_WIDTH * MAZE_HEIGHT);
+        return c;
+    }
+};
+
+Floodfill::Floodfill(const Maze& maze) : maze_(maze) {
+    setGoalToCenter();
+    recalculate();
+}
+
+void Floodfill::setGoalToCenter() {
+    memset(is_goal_, 0, sizeof(is_goal_));
+    // Standard 16x16 center cells
+    is_goal_[7][7] = true;
+    is_goal_[7][8] = true;
+    is_goal_[8][7] = true;
+    is_goal_[8][8] = true;
+}
+
+void Floodfill::setGoalToStart() {
+    memset(is_goal_, 0, sizeof(is_goal_));
+    is_goal_[0][0] = true;
+}
+
+bool Floodfill::isAtGoal(int8_t x, int8_t y) const {
+    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return false;
+    return is_goal_[x][y];
+}
+
+uint16_t Floodfill::getDistance(int8_t x, int8_t y) const {
+    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return DIST_INFINITY;
+    return distance_[x][y];
+}
+
+void Floodfill::recalculate() {
+    // Reset all distances to infinity
+    for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+        for (int8_t y = 0; y < MAZE_HEIGHT; ++y) {
+            distance_[x][y] = DIST_INFINITY;
+        }
+    }
+
+    CellQueue queue;
+    queue.init();
+
+    // Push all goal cells with distance 0
+    for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+        for (int8_t y = 0; y < MAZE_HEIGHT; ++y) {
+            if (is_goal_[x][y]) {
+                distance_[x][y] = 0;
+                queue.push({x, y});
+            }
+        }
+    }
+
+    // BFS wave expansion
+    while (!queue.isEmpty()) {
+        Coordinate curr = queue.pop();
+        uint16_t next_dist = distance_[curr.x][curr.y] + 1;
+
+        // Check North
+        if (!maze_.hasWall(curr.x, curr.y, DIR_NORTH)) {
+            if (curr.y + 1 < MAZE_HEIGHT && distance_[curr.x][curr.y + 1] > next_dist) {
+                distance_[curr.x][curr.y + 1] = next_dist;
+                queue.push({curr.x, (int8_t)(curr.y + 1)});
+            }
+        }
+
+        // Check East
+        if (!maze_.hasWall(curr.x, curr.y, DIR_EAST)) {
+            if (curr.x + 1 < MAZE_WIDTH && distance_[curr.x + 1][curr.y] > next_dist) {
+                distance_[curr.x + 1][curr.y] = next_dist;
+                queue.push({(int8_t)(curr.x + 1), curr.y});
+            }
+        }
+
+        // Check South
+        if (!maze_.hasWall(curr.x, curr.y, DIR_SOUTH)) {
+            if (curr.y - 1 >= 0 && distance_[curr.x][curr.y - 1] > next_dist) {
+                distance_[curr.x][curr.y - 1] = next_dist;
+                queue.push({curr.x, (int8_t)(curr.y - 1)});
+            }
+        }
+
+        // Check West
+        if (!maze_.hasWall(curr.x, curr.y, DIR_WEST)) {
+            if (curr.x - 1 >= 0 && distance_[curr.x - 1][curr.y] > next_dist) {
+                distance_[curr.x - 1][curr.y] = next_dist;
+                queue.push({(int8_t)(curr.x - 1), curr.y});
+            }
+        }
+    }
+}
+
+Direction Floodfill::getNextDirection(int8_t current_x, int8_t current_y, Direction current_heading) {
+    uint16_t min_dist = DIST_INFINITY;
+    Direction best_dir = DIR_INVALID;
+
+    // Order of checks: prioritize going straight to avoid turn penalties
+    const int8_t turn_preference[4] = {0, 1, -1, 2}; // Straight, Right, Left, Turn Around
+
+    for (int i = 0; i < 4; ++i) {
+        Direction candidate_dir = Maze::getAbsoluteDirection(current_heading, turn_preference[i]);
+
+        if (!maze_.hasWall(current_x, current_y, candidate_dir)) {
+            int8_t nx = current_x;
+            int8_t ny = current_y;
+
+            if (candidate_dir == DIR_NORTH) ny++;
+            else if (candidate_dir == DIR_EAST)  nx++;
+            else if (candidate_dir == DIR_SOUTH) ny--;
+            else if (candidate_dir == DIR_WEST)  nx--;
+
+            if (nx >= 0 && nx < MAZE_WIDTH && ny >= 0 && ny < MAZE_HEIGHT) {
+                uint16_t d = distance_[nx][ny];
+                if (d < min_dist) {
+                    min_dist = d;
+                    best_dir = candidate_dir;
+                }
+            }
+        }
+    }
+
+    return best_dir;
+}
+
+// ==============================================================================
+// DIJKSTRA SOLVER
+// ==============================================================================
+
+#include <string.h>
+
+Dijkstra::Dijkstra(const Maze& maze) : maze_(maze) {}
+
+static const int8_t DX[4] = { 0, 1, 0, -1 };
+static const int8_t DY[4] = { 1, 0, -1, 0 };
+
+static bool isCenterGoal(int8_t x, int8_t y) {
+    return (x == 7 || x == 8) && (y == 7 || y == 8);
+}
+
+static bool isStartGoal(int8_t x, int8_t y) {
+    return (x == 0 && y == 0);
+}
+
+uint8_t Dijkstra::findFastestPathToCenter(int8_t start_x, int8_t start_y, Direction start_h,
+                                          Coordinate* out_path, uint8_t max_path_len) {
+    return findFastestPath(start_x, start_y, start_h, isCenterGoal, out_path, max_path_len);
+}
+
+uint8_t Dijkstra::findFastestPathToStart(int8_t start_x, int8_t start_y, Direction start_h,
+                                         Coordinate* out_path, uint8_t max_path_len) {
+    return findFastestPath(start_x, start_y, start_h, isStartGoal, out_path, max_path_len);
+}
+
+// Simple Binary Min-Heap
+class MinHeap {
+public:
+    MinHeap() : size_(0) { clear(); }
+
+    void clear() {
+        size_ = 0;
+        for (uint16_t i = 0; i < STATE_COUNT; ++i) {
+            positions_[i] = -1;
+        }
+    }
+
+    bool isEmpty() const { return size_ == 0; }
+
+    void pushOrDecrease(float cost, int8_t x, int8_t y, uint8_t h) {
+        const uint16_t state = stateIndex(x, y, h);
+        int16_t i = positions_[state];
+        if (i < 0) {
+            i = (int16_t)size_++;
+            heap_[i] = { cost, x, y, h };
+            positions_[state] = i;
+        } else {
+            if (cost >= heap_[i].cost) return;
+            heap_[i].cost = cost;
+        }
+
+        siftUp(i);
+    }
+
+    Dijkstra::HeapNode pop() {
+        Dijkstra::HeapNode root = heap_[0];
+        positions_[stateIndex(root.x, root.y, root.h)] = -1;
+        --size_;
+        if (size_ > 0) {
+            heap_[0] = heap_[size_];
+            positions_[stateIndex(heap_[0].x, heap_[0].y, heap_[0].h)] = 0;
+            siftDown(0);
+        }
+        return root;
+    }
+
+private:
+    static constexpr uint16_t STATE_COUNT = 16 * 16 * 4;
+
+    static uint16_t stateIndex(int8_t x, int8_t y, uint8_t h) {
+        return (uint16_t)(((uint16_t)x * 16 + (uint16_t)y) * 4 + h);
+    }
+
+    void swapNodes(int16_t a, int16_t b) {
+        Dijkstra::HeapNode tmp = heap_[a];
+        heap_[a] = heap_[b];
+        heap_[b] = tmp;
+        positions_[stateIndex(heap_[a].x, heap_[a].y, heap_[a].h)] = a;
+        positions_[stateIndex(heap_[b].x, heap_[b].y, heap_[b].h)] = b;
+    }
+
+    void siftUp(int16_t i) {
+        while (i > 0) {
+            int16_t parent = (i - 1) / 2;
+            if (heap_[parent].cost <= heap_[i].cost) break;
+            swapNodes(parent, i);
+            i = parent;
+        }
+    }
+
+    void siftDown(int16_t i) {
+        for (;;) {
+            int16_t left = 2 * i + 1;
+            int16_t right = left + 1;
+            int16_t smallest = i;
+            if (left < (int16_t)size_ && heap_[left].cost < heap_[smallest].cost) smallest = left;
+            if (right < (int16_t)size_ && heap_[right].cost < heap_[smallest].cost) smallest = right;
+            if (smallest == i) break;
+            swapNodes(i, smallest);
+            i = smallest;
+        }
+    }
+
+    Dijkstra::HeapNode heap_[STATE_COUNT];
+    int16_t positions_[STATE_COUNT];
+    uint16_t size_;
+};
+
+static MinHeap g_min_heap;
+static float g_best_cost[16][16][4];
+static Dijkstra::ParentEdge g_parent[16][16][4];
+static bool g_finalized[16][16][4];
+
+static void relaxState(float cost, int8_t x, int8_t y, uint8_t h,
+                       const Dijkstra::ParentEdge& parent) {
+    if (g_finalized[x][y][h] || cost >= g_best_cost[x][y][h]) return;
+
+    g_best_cost[x][y][h] = cost;
+    g_parent[x][y][h] = parent;
+    g_min_heap.pushOrDecrease(cost, x, y, h);
+}
+
+uint8_t Dijkstra::findFastestPath(int8_t start_x, int8_t start_y, Direction start_h,
+                                  bool (*is_goal_fn)(int8_t, int8_t),
+                                  Coordinate* out_path, uint8_t max_path_len) {
+    if (!out_path || !is_goal_fn || max_path_len < 2 ||
+        start_x < 0 || start_x >= 16 || start_y < 0 || start_y >= 16 ||
+        start_h > DIR_WEST) return 0;
+
+    for (int x = 0; x < 16; ++x) {
+        for (int y = 0; y < 16; ++y) {
+            for (int h = 0; h < 4; ++h) {
+                g_best_cost[x][y][h] = 1e9f;
+                g_parent[x][y][h].has_parent = false;
+                g_finalized[x][y][h] = false;
+            }
+        }
+    }
+
+    g_min_heap.clear();
+    g_best_cost[start_x][start_y][start_h] = 0.0f;
+    g_min_heap.pushOrDecrease(0.0f, start_x, start_y, (uint8_t)start_h);
+
+    int8_t goal_state_x = -1;
+    int8_t goal_state_y = -1;
+    uint8_t goal_state_h = 0;
+    bool goal_found = false;
+
+    while (!g_min_heap.isEmpty()) {
+        HeapNode node = g_min_heap.pop();
+        int8_t x = node.x;
+        int8_t y = node.y;
+        uint8_t h = node.h;
+        float cost = node.cost;
+
+        if (g_finalized[x][y][h] || cost > g_best_cost[x][y][h]) continue;
+        g_finalized[x][y][h] = true;
+
+        if (is_goal_fn(x, y)) {
+            goal_state_x = x;
+            goal_state_y = y;
+            goal_state_h = h;
+            goal_found = true;
+            break;
+        }
+
+        // 1. In-place turn (90 deg left / right)
+        for (int td : { 1, 3 }) {
+            uint8_t nh = (h + td) % 4;
+            float tc = cost + 1.5f;
+            ParentEdge parent = { x, y, h, 0, 0, 0, true };
+            relaxState(tc, x, y, nh, parent);
+        }
+
+        // 2. Straight sprint (1 to 15 cells)
+        int8_t dx = DX[h];
+        int8_t dy = DY[h];
+        for (uint8_t L = 1; L <= 15; ++L) {
+            int8_t px = x + dx * (L - 1);
+            int8_t py = y + dy * (L - 1);
+            if (maze_.hasWall(px, py, (Direction)h)) break;
+
+            int8_t nx = x + dx * L;
+            int8_t ny = y + dy * L;
+            if (nx < 0 || nx >= 16 || ny < 0 || ny >= 16) break;
+            if (!maze_.isVisited(nx, ny)) break;
+
+            float sprint_cost = cost + 1.0f + 0.35f * (float)(L - 1);
+            ParentEdge parent = { x, y, h, 1, L, 0, true };
+            relaxState(sprint_cost, nx, ny, h, parent);
+        }
+
+        // 3. Big Diagonal Staircase (M >= 2)
+        for (int td : { 1, 3 }) {
+            uint8_t d1 = (h + td) % 4;
+            int8_t cur_x = x;
+            int8_t cur_y = y;
+
+            for (uint8_t m_step = 1; m_step <= 15; ++m_step) {
+                uint8_t s_dir = (m_step % 2 == 1) ? h : d1;
+                if (maze_.hasWall(cur_x, cur_y, (Direction)s_dir)) break;
+
+                cur_x += DX[s_dir];
+                cur_y += DY[s_dir];
+                if (cur_x < 0 || cur_x >= 16 || cur_y < 0 || cur_y >= 16) break;
+                if (!maze_.isVisited(cur_x, cur_y)) break;
+
+                if (m_step >= 2) {
+                    float diag_cost = cost + 1.8f + (float)(m_step - 1) * 0.5f;
+                    uint8_t end_h = s_dir;
+                    ParentEdge parent = { x, y, h, 2, m_step, d1, true };
+                    relaxState(diag_cost, cur_x, cur_y, end_h, parent);
+                }
+            }
+        }
+
+        // 4. Up-and-Down Slalom Zigzag (Length >= 5, odd)
+        for (int td : { 1, 3 }) {
+            uint8_t d_c1 = (h + td) % 4;
+            uint8_t d_c2 = (d_c1 + 2) % 4;
+            int8_t cur_x = x;
+            int8_t cur_y = y;
+
+            for (uint8_t m_idx = 0; m_idx < 15; ++m_idx) {
+                uint8_t s_dir;
+                if (m_idx % 2 == 0) {
+                    s_dir = h;
+                } else {
+                    s_dir = ((m_idx / 2) % 2 == 0) ? d_c1 : d_c2;
+                }
+
+                if (maze_.hasWall(cur_x, cur_y, (Direction)s_dir)) break;
+
+                cur_x += DX[s_dir];
+                cur_y += DY[s_dir];
+                if (cur_x < 0 || cur_x >= 16 || cur_y < 0 || cur_y >= 16) break;
+                if (!maze_.isVisited(cur_x, cur_y)) break;
+
+                uint8_t m_count = m_idx + 1;
+                if (m_count >= 5 && m_count % 2 == 1) {
+                    uint8_t num_w = (m_count - 1) / 2;
+                    float slalom_cost = cost + 1.5f + (float)num_w * 1.2f + 0.5f;
+                    uint8_t end_h = h;
+                    ParentEdge parent = { x, y, h, 3, m_count, d_c1, true };
+                    relaxState(slalom_cost, cur_x, cur_y, end_h, parent);
+                }
+            }
+        }
+    }
+
+    if (!goal_found) return 0;
+
+    // Backtrack to reconstruct full cell path
+    static Coordinate temp_path[256];
+    uint16_t temp_len = 0;
+
+    int8_t curr_x = goal_state_x;
+    int8_t curr_y = goal_state_y;
+    uint8_t curr_h = goal_state_h;
+    uint16_t backtrack_steps = 0;
+
+    while (g_parent[curr_x][curr_y][curr_h].has_parent && backtrack_steps++ < 1024) {
+        ParentEdge edge = g_parent[curr_x][curr_y][curr_h];
+        if (edge.move_type == 0) {
+            // In-place turn (no spatial change)
+        } else if (edge.move_type == 1) {
+            // Straight sprint
+            int8_t dx = DX[edge.prev_h];
+            int8_t dy = DY[edge.prev_h];
+            for (int s = edge.count; s >= 1; --s) {
+                if (temp_len >= 256) return 0;
+                temp_path[temp_len++] = { (int8_t)(edge.prev_x + dx * s), (int8_t)(edge.prev_y + dy * s) };
+            }
+        } else if (edge.move_type == 2) {
+            // Big Diagonal Staircase
+            static Coordinate d_cells[16];
+            int8_t cx = edge.prev_x;
+            int8_t cy = edge.prev_y;
+            for (uint8_t s = 1; s <= edge.count; ++s) {
+                uint8_t s_dir = (s % 2 == 1) ? edge.prev_h : edge.d_cross;
+                cx += DX[s_dir];
+                cy += DY[s_dir];
+                d_cells[s - 1] = { cx, cy };
+            }
+            for (int s = edge.count - 1; s >= 0; --s) {
+                if (temp_len >= 256) return 0;
+                temp_path[temp_len++] = d_cells[s];
+            }
+        } else if (edge.move_type == 3) {
+            // Up-and-Down Slalom Zigzag
+            static Coordinate s_cells[16];
+            int8_t cx = edge.prev_x;
+            int8_t cy = edge.prev_y;
+            uint8_t d_c1 = edge.d_cross;
+            uint8_t d_c2 = (d_c1 + 2) % 4;
+            for (uint8_t s = 0; s < edge.count; ++s) {
+                uint8_t s_dir = (s % 2 == 0) ? edge.prev_h : (((s / 2) % 2 == 0) ? d_c1 : d_c2);
+                cx += DX[s_dir];
+                cy += DY[s_dir];
+                s_cells[s] = { cx, cy };
+            }
+            for (int s = edge.count - 1; s >= 0; --s) {
+                if (temp_len >= 256) return 0;
+                temp_path[temp_len++] = s_cells[s];
+            }
+        } else {
+            return 0;
+        }
+
+        curr_x = edge.prev_x;
+        curr_y = edge.prev_y;
+        curr_h = edge.prev_h;
+    }
+
+    if (backtrack_steps > 1024 || curr_x != start_x || curr_y != start_y ||
+        curr_h != (uint8_t)start_h || temp_len + 1 > max_path_len) return 0;
+
+    // Add start cell
+    temp_path[temp_len++] = { start_x, start_y };
+
+    // Reverse into out_path
+    uint8_t path_len = 0;
+    for (int i = (int)temp_len - 1; i >= 0; --i) {
+        out_path[path_len++] = temp_path[i];
+    }
+
+    return path_len;
+}
+
+// ==============================================================================
+// PATH DECOMPOSER
+// ==============================================================================
+
+Direction Decomposer::getDirection(Coordinate from, Coordinate to) {
+    int8_t dx = to.x - from.x;
+    int8_t dy = to.y - from.y;
+    if (dx == 0 && dy == 1)  return DIR_NORTH;
+    if (dx == 1 && dy == 0)  return DIR_EAST;
+    if (dx == 0 && dy == -1) return DIR_SOUTH;
+    if (dx == -1 && dy == 0) return DIR_WEST;
+    return DIR_INVALID;
+}
+
+uint8_t Decomposer::findSlalomLength(const Direction* dirs, uint8_t start_idx, uint8_t n) {
+    if (start_idx + 4 >= n) return 0;
+
+    Direction d_prog = dirs[start_idx];
+    Direction d_c1 = dirs[start_idx + 1];
+    int8_t p_diff = ((int8_t)d_c1 - (int8_t)d_prog + 4) % 4;
+    if (p_diff != 1 && p_diff != 3) return 0; // Must be perpendicular
+
+    Direction d_c2 = (Direction)(((int8_t)d_c1 + 2) % 4);
+    uint8_t length = 2;
+
+    while (start_idx + length < n) {
+        uint8_t rel = length;
+        if (rel % 2 == 0) {
+            if (dirs[start_idx + length] != d_prog) break;
+        } else {
+            Direction exp_c = ((rel / 2) % 2 == 0) ? d_c1 : d_c2;
+            if (dirs[start_idx + length] != exp_c) break;
+        }
+        length++;
+    }
+
+    // Must be an odd length >= 5 so entrance & exit align with d_prog
+    while (length >= 5 && length % 2 == 0) {
+        length--;
+    }
+
+    return (length >= 5) ? length : 0;
+}
+
+uint8_t Decomposer::decompose(const Coordinate* path, uint8_t path_len,
+                              PathSegment* out_segments, uint8_t max_segments,
+                              bool allow_diagonals) {
+    if (!path || path_len < 2 || !out_segments || max_segments == 0) return 0;
+
+    static Direction dirs[256];
+    uint8_t n = path_len - 1;
+    for (uint8_t i = 0; i < n; ++i) {
+        dirs[i] = getDirection(path[i], path[i + 1]);
+    }
+
+    uint8_t seg_count = 0;
+    uint8_t i = 0;
+
+    while (i < n && seg_count < max_segments) {
+        if (allow_diagonals) {
+            // 1. Up-and-Down Slalom Zigzag
+            uint8_t slen = findSlalomLength(dirs, i, n);
+            if (slen >= 5) {
+                out_segments[seg_count++] = {
+                    SEG_SLALOM,
+                    dirs[i],             // Progression direction
+                    dirs[i + 1],         // First wave direction
+                    dirs[i],             // Exit direction aligns with prog
+                    slen,
+                    path[i].x, path[i].y,
+                    path[i + slen].x, path[i + slen].y
+                };
+                i += slen;
+                continue;
+            }
+
+            // Avoid bundling dirs[i] into a 2-step diagonal if the NEXT step starts a slalom
+            if (i + 1 < n && findSlalomLength(dirs, i + 1, n) >= 5) {
+                out_segments[seg_count++] = {
+                    SEG_STRAIGHT,
+                    dirs[i],
+                    DIR_INVALID,
+                    dirs[i],
+                    1,
+                    path[i].x, path[i].y,
+                    path[i + 1].x, path[i + 1].y
+                };
+                i += 1;
+                continue;
+            }
+
+            // 2. Big Diagonal Staircase (M >= 2)
+            uint8_t diag_len = 0;
+            if (i + 1 < n) {
+                Direction d_a = dirs[i];
+                Direction d_b = dirs[i + 1];
+                int8_t diff = ((int8_t)d_b - (int8_t)d_a + 4) % 4;
+                if (diff == 1 || diff == 3) {
+                    uint8_t k = 2;
+                    while (i + k < n) {
+                        Direction exp = (k % 2 == 0) ? d_a : d_b;
+                        if (dirs[i + k] == exp) {
+                            k++;
+                        } else {
+                            break;
+                        }
+                    }
+                    diag_len = k;
+                }
+            }
+
+            if (diag_len >= 2) {
+                out_segments[seg_count++] = {
+                    SEG_DIAGONAL,
+                    dirs[i],             // Entry direction d1
+                    dirs[i + 1],         // Secondary cross direction d2
+                    dirs[i + diag_len - 1], // Exit direction d_last
+                    diag_len,
+                    path[i].x, path[i].y,
+                    path[i + diag_len].x, path[i + diag_len].y
+                };
+                i += diag_len;
+                continue;
+            }
+        }
+
+        // 3. Straight Sprint
+        Direction d = dirs[i];
+        uint8_t cnt = 1;
+        while (i + cnt < n && dirs[i + cnt] == d) {
+            if (allow_diagonals) {
+                if (findSlalomLength(dirs, i + cnt, n) >= 5) break;
+                if (i + cnt + 1 < n && findSlalomLength(dirs, i + cnt + 1, n) >= 5) break;
+                if (i + cnt + 1 < n) {
+                    int8_t p_diff = ((int8_t)dirs[i + cnt + 1] - (int8_t)d + 4) % 4;
+                    if (p_diff == 1 || p_diff == 3) break;
+                }
+            }
+            cnt++;
+        }
+
+        out_segments[seg_count++] = {
+            SEG_STRAIGHT,
+            d,
+            DIR_INVALID,
+            d,
+            cnt,
+            path[i].x, path[i].y,
+            path[i + cnt].x, path[i + cnt].y
+        };
+        i += cnt;
+    }
+
+    return seg_count;
+}
+
+// ==============================================================================
+// NAVIGATOR
+// ==============================================================================
+
+Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_queue)
+    : motion_cmd_queue_(motion_cmd_queue),
+      telemetry_queue_(telemetry_queue),
+      floodfill_(maze_),
+      dijkstra_(maze_),
+      state_(NAV_STATE_IDLE),
+      current_strategy_(SPEEDRUN_HYBRID_AUTO),
+      waiting_for_motion_(false),
+      current_search_speed_(0.0f),
+      search_phase_(PHASE_AT_CENTRE),
+      curve_cell_x_(0), curve_cell_y_(0), curve_entry_dir_(DIR_NORTH), curve_cell_was_known_(false),
+      sub_cmd_count_(0),
+      sub_cmd_idx_(0),
+      segment_count_(0),
+      segment_idx_(0),
+      carry_speed_(0.0f),
+      curve_in_(false) {
+    memset(&pose_, 0, sizeof(pose_));
+    pose_.cell_x = 0;
+    pose_.cell_y = 0;
+    pose_.current_dir = DIR_NORTH;
+}
+
+void Navigator::begin() {
+    maze_.reset();
+    if (maze_.loadFromNVS()) {
+        Serial.println("[NAV] Found previously saved maze in Flash! Loaded successfully for instant Speedrun.");
+    }
+    floodfill_.setGoalToCenter();
+    floodfill_.recalculate();
+    state_ = NAV_STATE_IDLE;
+    waiting_for_motion_ = false;
+    current_search_speed_ = 0.0f;
+    sub_cmd_count_ = 0;
+    sub_cmd_idx_ = 0;
+    segment_count_ = 0;
+    segment_idx_ = 0;
+}
+
+void Navigator::startSearchRun() {
+    maze_.reset();
+    maze_.setVisited(0, 0); // Start cell (0,0) is visited
+    floodfill_.setGoalToCenter();
+    floodfill_.recalculate();
+    pose_.cell_x = 0;
+    pose_.cell_y = 0;
+    pose_.current_dir = DIR_NORTH;
+    state_ = NAV_STATE_EXPLORING_TO_CENTER;
+    search_phase_ = PHASE_AT_CENTRE;
+    waiting_for_motion_ = false;
+    current_search_speed_ = 0.0f;
+    sub_cmd_count_ = 0;
+    sub_cmd_idx_ = 0;
+    segment_count_ = 0;
+    segment_idx_ = 0;
+    Serial.println("[NAV] Starting Continuous High-Speed Flying Search to Maze Center!");
+}
+
+void Navigator::startReturnRun() {
+    state_ = NAV_STATE_RETURNING_TO_START;
+    waiting_for_motion_ = false;
+    carry_speed_ = 0.0f;
+    curve_in_ = false;
+    sub_cmd_count_ = 0;
+    sub_cmd_idx_ = 0;
+    Serial.printf("[NAV] Center reached at (%d, %d)! Planning FASTEST DIAGONAL RETURN to (0,0)...\n",
+                  pose_.cell_x, pose_.cell_y);
+
+    // Auto-save discovered maze grid to NVS Flash immediately upon reaching the Goal!
+    maze_.saveToNVS();
+    Serial.println("[NAV] Maze successfully auto-saved to Flash NVS at Goal!");
+
+    static Coordinate path[256];
+    uint8_t path_len = dijkstra_.findFastestPathToStart(pose_.cell_x, pose_.cell_y, pose_.current_dir, path, 255);
+
+    if (path_len < 2) {
+        // Fallback to floodfill if Dijkstra has no visited path
+        floodfill_.setGoalToStart();
+        floodfill_.recalculate();
+        path[0] = { pose_.cell_x, pose_.cell_y };
+        path_len = 1;
+        int8_t cur_x = pose_.cell_x;
+        int8_t cur_y = pose_.cell_y;
+        Direction cur_h = pose_.current_dir;
+        for (int step = 0; step < 254; ++step) {
+            Direction nd = floodfill_.getNextDirection(cur_x, cur_y, cur_h);
+            if (nd == DIR_INVALID) break;
+            cur_h = nd;
+            if (nd == DIR_NORTH) cur_y++;
+            else if (nd == DIR_EAST) cur_x++;
+            else if (nd == DIR_SOUTH) cur_y--;
+            else if (nd == DIR_WEST) cur_x--;
+            path[path_len++] = { cur_x, cur_y };
+            if (cur_x == 0 && cur_y == 0) break;
+        }
+    }
+
+    segment_count_ = Decomposer::decompose(path, path_len, segment_queue_, MAX_SEGMENTS);
+    segment_idx_ = 0;
+
+    Serial.printf("[NAV] Return Route: %d cells decomposed into %d high-speed segments.\n",
+                  path_len, segment_count_);
+
+    if (segment_count_ > 0) {
+        queueSegment(segment_queue_[segment_idx_++], RETURN_CRUISE_SPEED_MM_S, RETURN_ACCEL_MM_S2);
+    }
+}
+
+void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
+    current_strategy_ = strategy;
+    state_ = NAV_STATE_SPEED_RUNNING;
+    waiting_for_motion_ = false;
+    carry_speed_ = 0.0f;
+    curve_in_ = false;
+    sub_cmd_count_ = 0;
+    sub_cmd_idx_ = 0;
+
+    static Coordinate path[256];
+    uint8_t path_len = dijkstra_.findFastestPathToCenter(pose_.cell_x, pose_.cell_y, pose_.current_dir, path, 255);
+
+    if (path_len < 2) {
+        Serial.println("[NAV] Error: No speedrun path found!");
+        state_ = NAV_STATE_ERROR;
+        return;
+    }
+
+    if (strategy == SPEEDRUN_HYBRID_AUTO) {
+        Serial.println("\n[NAV-OPTIMIZER] ⚡ Benchmarking Continuous Curves vs Diagonal Sprints...");
+        static PathSegment segs_curves[MAX_SEGMENTS];
+        static PathSegment segs_diags[MAX_SEGMENTS];
+
+        uint8_t count_curves = Decomposer::decompose(path, path_len, segs_curves, MAX_SEGMENTS, false);
+        uint8_t count_diags  = Decomposer::decompose(path, path_len, segs_diags, MAX_SEGMENTS, true);
+
+        // Estimate total traversal time for Curves
+        float t_curves = 0.0f;
+        for (uint8_t i = 0; i < count_curves; ++i) {
+            float dist = segs_curves[i].count * 180.0f;
+            t_curves += (dist / SPEEDRUN_CRUISE_SPEED_MM_S) + 0.18f; // straight cruise + 90 deg curve
+        }
+
+        // Estimate total traversal time for Diagonals
+        float t_diags = 0.0f;
+        for (uint8_t i = 0; i < count_diags; ++i) {
+            if (segs_diags[i].type == SEG_DIAGONAL) {
+                float dist = 180.0f + (segs_diags[i].count - 1) * 127.28f;
+                t_diags += (dist / SPEEDRUN_DIAG_SPEED_MM_S) + 0.22f; // diagonal sprint + 45 deg curves
+            } else if (segs_diags[i].type == SEG_SLALOM) {
+                float dist = 180.0f + segs_diags[i].count * 127.28f;
+                t_diags += (dist / (SPEEDRUN_DIAG_SPEED_MM_S * 0.9f)) + 0.35f;
+            } else {
+                float dist = segs_diags[i].count * 180.0f;
+                t_diags += (dist / SPEEDRUN_CRUISE_SPEED_MM_S) + 0.18f;
+            }
+        }
+
+        Serial.printf("  • Continuous Curves Estimate: %5.2fs (%d segments)\n", t_curves, count_curves);
+        Serial.printf("  • Diagonal Sprints Estimate:  %5.2fs (%d segments)\n", t_diags, count_diags);
+
+        if (t_diags < t_curves) {
+            Serial.printf("  ⚡ AUTO-SELECTED: DIAGONALS (saves %5.2fs, %.1f%% faster)!\n",
+                          t_curves - t_diags, (t_curves - t_diags) / t_curves * 100.0f);
+            segment_count_ = count_diags;
+            for (uint8_t i = 0; i < count_diags; ++i) segment_queue_[i] = segs_diags[i];
+        } else {
+            Serial.printf("  ⚡ AUTO-SELECTED: CONTINUOUS CURVES (saves %5.2fs)!\n", t_diags - t_curves);
+            segment_count_ = count_curves;
+            for (uint8_t i = 0; i < count_curves; ++i) segment_queue_[i] = segs_curves[i];
+        }
+
+    } else if (strategy == SPEEDRUN_DIAGONALS_ONLY) {
+        Serial.println("\n[NAV] 📐 Launching PURE DIAGONAL SPECIALIST Speedrun (Max Sprint Speed)!");
+        segment_count_ = Decomposer::decompose(path, path_len, segment_queue_, MAX_SEGMENTS, true);
+    } else { // SPEEDRUN_CURVES_ONLY
+        Serial.println("\n[NAV] 🏎 Launching PURE CONTINUOUS CURVES Speedrun (Zero Diagonals)!");
+        segment_count_ = Decomposer::decompose(path, path_len, segment_queue_, MAX_SEGMENTS, false);
+    }
+
+    segment_idx_ = 0;
+    Serial.printf("[NAV] Championship Path: %d cells, %d high-speed segments.\n",
+                  path_len, segment_count_);
+
+    if (segment_count_ > 0) {
+        queueSegment(segment_queue_[segment_idx_++], SPEEDRUN_CRUISE_SPEED_MM_S, SPEEDRUN_ACCEL_MM_S2);
+    }
+}
+
+void Navigator::stop() {
+    state_ = NAV_STATE_IDLE;
+    carry_speed_ = 0.0f;
+    curve_in_ = false;
+    sub_cmd_count_ = 0;
+    sub_cmd_idx_ = 0;
+    segment_count_ = 0;
+    segment_idx_ = 0;
+    sendMotionCommand(ACTION_EMERGENCY_STOP, 0.0f, 0.0f, 0.0f);
+}
+
+void Navigator::notifyMotionComplete() {
+    waiting_for_motion_ = false;
+    processSubcommandQueue();
+}
+
+void Navigator::sendMotionCommand(MotionAction action, float param, float max_speed, float accel,
+                                  bool wall_centering, float entry_speed, float exit_speed) {
+    MotionCommand cmd;
+    cmd.action = action;
+    cmd.param_value = param;
+    cmd.max_speed_mm_s = max_speed;
+    cmd.acceleration = accel;
+    cmd.enable_wall_centering = wall_centering;
+    cmd.entry_speed_mm_s = entry_speed;
+    cmd.exit_speed_mm_s = exit_speed;
+    cmd.start_offset_mm = 0.0f;
+
+    xQueueSend(motion_cmd_queue_, &cmd, portMAX_DELAY);
+    waiting_for_motion_ = true;
+}
+
+void Navigator::processSubcommandQueue() {
+    if (sub_cmd_idx_ < sub_cmd_count_) {
+        // Send next sub-command in current segment
+        MotionCommand next_cmd = sub_cmd_queue_[sub_cmd_idx_++];
+        xQueueSend(motion_cmd_queue_, &next_cmd, portMAX_DELAY);
+        waiting_for_motion_ = true;
+        return;
+    }
+
+    // Current segment finished! Check if more segments are queued
+    if (segment_idx_ < segment_count_) {
+        float speed = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_CRUISE_SPEED_MM_S : RETURN_CRUISE_SPEED_MM_S;
+        float accel = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_ACCEL_MM_S2 : RETURN_ACCEL_MM_S2;
+        queueSegment(segment_queue_[segment_idx_++], speed, accel);
+        return;
+    }
+
+    // All segments finished in Return or Speedrun!
+    if (state_ == NAV_STATE_RETURNING_TO_START) {
+        Serial.println("[NAV] 🚀 START REACHED at (0,0)! Maze fully explored and saved.");
+        maze_.saveToNVS();
+        state_ = NAV_STATE_PREPARING_SPEED_RUN;
+        Serial.println("[NAV] Staged in Start Cell. Press CONFIRM button to execute Speedrun!");
+    } else if (state_ == NAV_STATE_SPEED_RUNNING) {
+        Serial.println("[NAV] 🏆 CHAMPIONSHIP SPEED RUN COMPLETE! Center reached at maximum velocity!");
+        state_ = NAV_STATE_FINISHED;
+    }
+}
+
+void Navigator::pushSubCommand(MotionAction action, float param, float max_speed, float accel,
+                               bool wall_centering, float entry_speed, float exit_speed) {
+    if (sub_cmd_count_ >= MAX_SUB_CMDS) return;
+    sub_cmd_queue_[sub_cmd_count_++] = { action, param, max_speed, accel, wall_centering, entry_speed, exit_speed, 0.0f };
+}
+
+void Navigator::pushPivot(Direction target, float turn_speed, float turn_accel) {
+    // Turn on the spot to face `target`. Only ever queued while the robot is standing still.
+    int8_t diff = ((int8_t)target - (int8_t)pose_.current_dir + 4) % 4;
+    if (diff == 1) {
+        pushSubCommand(ACTION_TURN_RIGHT_90, 90.0f, turn_speed, turn_accel, false);
+    } else if (diff == 3) {
+        pushSubCommand(ACTION_TURN_LEFT_90, 90.0f, turn_speed, turn_accel, false);
+    } else if (diff == 2) {
+        pushSubCommand(ACTION_TURN_AROUND_180, 180.0f, turn_speed, turn_accel, false);
+    }
+    pose_.current_dir = target;
+}
+
+// Turns one path segment into motion commands for the return run and speed runs.
+//
+// The robot keeps moving wherever the path allows it:
+//   straight -> straight at a right angle : smooth 90° curve through the corner cell
+//   straight -> diagonal (same heading)   : rolls straight into the diagonal's 45° curve
+//   anything -> same heading              : no stop in between
+// It only stops to turn on the spot where the path doubles back or a diagonal starts sideways.
+//
+// Every segment starts and ends on a cell centre, except across a smooth 90° curve, which runs
+// from the edge of the corner cell to its next edge (so the straights either side lose 90 mm).
+void Navigator::queueSegment(const PathSegment& seg, float cruise_speed, float accel) {
+    sub_cmd_count_ = 0;
+    sub_cmd_idx_ = 0;
+
+    const bool speed_run     = (state_ == NAV_STATE_SPEED_RUNNING);
+    const float turn_speed   = speed_run ? SPEEDRUN_TURN_SPEED_DEG_S  : SEARCH_TURN_SPEED_DEG_S;
+    const float turn_accel   = speed_run ? SPEEDRUN_TURN_ACCEL_DEG_S2 : SEARCH_TURN_ACCEL_DEG_S2;
+    const float diag_speed   = speed_run ? SPEEDRUN_DIAG_SPEED_MM_S   : cruise_speed;
+    const float curve_speed  = speed_run ? SPEEDRUN_CURVE_SPEED_MM_S  : SEARCH_CURVE_SPEED_MM_S;
+
+    // How this segment begins: left over from the previous one
+    const float entry_speed = carry_speed_;
+    const bool  curve_in    = curve_in_;
+
+    // How this segment must end: decided by the one that follows it
+    const PathSegment* next = (segment_idx_ < segment_count_) ? &segment_queue_[segment_idx_] : nullptr;
+    const Direction end_dir = (seg.type == SEG_STRAIGHT) ? seg.dir : seg.last_dir;
+    const int8_t next_turn  = next ? (int8_t)(((int8_t)next->dir - (int8_t)end_dir + 4) % 4) : (int8_t)-1;
+
+    const bool curve_out = next && seg.type == SEG_STRAIGHT && next->type == SEG_STRAIGHT &&
+                           (next_turn == 1 || next_turn == 3);
+    const bool roll_out  = next && next_turn == 0 && seg.type != SEG_SLALOM;
+    const float exit_speed = (curve_out || roll_out) ? curve_speed : 0.0f;
+
+    if (pose_.current_dir != seg.dir) {
+        pushPivot(seg.dir, turn_speed, turn_accel);
+    }
+
+    if (seg.type == SEG_STRAIGHT) {
+        float length = (float)seg.count * MAZE_CELL_SIZE_MM;
+        if (curve_in)  length -= HALF_CELL_SIZE_MM; // The curve before already carried us to the cell edge
+        if (curve_out) length -= HALF_CELL_SIZE_MM; // The curve after starts at the corner cell's edge
+
+        if (length > 1.0f) {
+            pushSubCommand(ACTION_MOVE_DISTANCE, length, cruise_speed, accel, true, entry_speed, exit_speed);
+            // After a curve the straight begins on a cell edge, not a centre (for post-edge correction)
+            if (curve_in) sub_cmd_queue_[sub_cmd_count_ - 1].start_offset_mm = HALF_CELL_SIZE_MM;
+        }
+        if (curve_out) {
+            pushSubCommand((next_turn == 1) ? ACTION_CURVE_RIGHT_90 : ACTION_CURVE_LEFT_90,
+                           CURVE_90_LENGTH_MM, curve_speed, accel, false, curve_speed, curve_speed);
+        }
+
+    } else if (seg.type == SEG_DIAGONAL) {
+        // Path: cell centre -> short straight -> 45° curve -> diagonal -> 45° curve -> short
+        // straight -> cell centre. The curve lengths and trims in config.h make the diagonal pass
+        // exactly through the cell-edge midpoints, 63.6 mm from the posts on either side.
+        const int8_t turn_in_diff  = ((int8_t)seg.secondary_dir - (int8_t)seg.dir + 4) % 4;
+        const Direction d_prev     = (seg.count % 2 == 1) ? seg.secondary_dir : seg.dir;
+        const int8_t turn_out_diff = ((int8_t)seg.last_dir - (int8_t)d_prev + 4) % 4;
+
+        const float diagonal_mm = (float)(seg.count - 1) * DIAG_HALF_STEP_MM - 2.0f * DIAG_TRIM_MM;
+
+        pushSubCommand(ACTION_MOVE_DISTANCE, DIAG_LEAD_MM, cruise_speed, accel, true, entry_speed, curve_speed);
+        pushSubCommand((turn_in_diff == 1) ? ACTION_CURVE_RIGHT_45 : ACTION_CURVE_LEFT_45,
+                       CURVE_45_LENGTH_MM, curve_speed, accel, false, curve_speed, curve_speed);
+        pushSubCommand(ACTION_MOVE_DIAGONAL_HALF, diagonal_mm / DIAG_HALF_STEP_MM, diag_speed, accel, false,
+                       curve_speed, curve_speed);
+        pushSubCommand((turn_out_diff == 1) ? ACTION_CURVE_RIGHT_45 : ACTION_CURVE_LEFT_45,
+                       CURVE_45_LENGTH_MM, curve_speed, accel, false, curve_speed, curve_speed);
+        pushSubCommand(ACTION_MOVE_DISTANCE, DIAG_LEAD_MM, cruise_speed, accel, true, curve_speed, exit_speed);
+
+    } else if (seg.type == SEG_SLALOM) {
+        // Zigzag of short diagonals. Turns on the spot at each reversal (stops between waves).
+        const int8_t t_in_diff = ((int8_t)seg.secondary_dir - (int8_t)seg.dir + 4) % 4;
+        const uint8_t num_waves = (seg.count - 1) / 2;
+
+        // 1. Approach entrance edge
+        pushSubCommand(ACTION_MOVE_HALF_CELL, 1.0f, cruise_speed, accel, true, entry_speed, 0.0f);
+
+        // 2. Turn 45° into first wave
+        pushSubCommand((t_in_diff == 1) ? ACTION_TURN_RIGHT_45 : ACTION_TURN_LEFT_45,
+                       45.0f, turn_speed, turn_accel, false);
+
+        // 3. Weave through all waves
+        for (uint8_t w = 0; w < num_waves; ++w) {
+            pushSubCommand(ACTION_MOVE_DIAGONAL_HALF, 2.0f, diag_speed, accel, false);
+            if (w < num_waves - 1) {
+                bool turn_left = (t_in_diff == 1 && w % 2 == 0) || (t_in_diff == 3 && w % 2 == 1);
+                pushSubCommand(turn_left ? ACTION_TURN_LEFT_90 : ACTION_TURN_RIGHT_90,
+                               90.0f, turn_speed, turn_accel, false);
+            }
+        }
+
+        // 4. Align with exit heading
+        bool exit_left = (t_in_diff == 1 && (num_waves - 1) % 2 == 0) || (t_in_diff == 3 && (num_waves - 1) % 2 == 1);
+        pushSubCommand(exit_left ? ACTION_TURN_LEFT_45 : ACTION_TURN_RIGHT_45,
+                       45.0f, turn_speed, turn_accel, false);
+
+        // 5. Enter destination cell center
+        pushSubCommand(ACTION_MOVE_HALF_CELL, 1.0f, cruise_speed, accel, true);
+    }
+
+    // Where the robot is (or will be) when this segment's commands have run
+    pose_.cell_x = seg.end_x;
+    pose_.cell_y = seg.end_y;
+    pose_.current_dir = curve_out ? next->dir : end_dir;
+    carry_speed_ = exit_speed;
+    curve_in_ = curve_out;
+
+    // Launch first sub-command in queue
+    processSubcommandQueue();
+}
+
+// Search run: one decision per cell, taken at the cell centre where the wall sensors are reliable.
+//
+// The robot rolls straight through cells without stopping whenever the way ahead is clear:
+// at full search speed through cells it already knows, at SEARCH_PROBE_SPEED into cells it has
+// never seen (so it can stop within a few millimetres if a wall turns up). It stops and turns on
+// the spot only where the path actually turns.
+void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
+    if (waiting_for_motion_ || state_ != NAV_STATE_EXPLORING_TO_CENTER) {
+        return;
+    }
+
+    // Part-way through a look-ahead move: the robot is on a cell edge, not a centre
+    if (search_phase_ == PHASE_AT_EDGE)     { stepAtCellEdge(ir, preview); return; }
+    if (search_phase_ == PHASE_AFTER_CURVE) { stepAfterCurve(preview);     return; }
+
+    const float search_speed = SEARCH_SPEED_DEFAULT_MM_S;
+    const float search_accel = SEARCH_ACCEL_DEFAULT_MM_S2;
+    const float turn_speed   = SEARCH_TURN_SPEED_DEG_S;
+    const float turn_accel   = SEARCH_TURN_ACCEL_DEG_S2;
+
+    // 1. Update walls in current cell based on reliable 90° and front sensor readings
+    maze_.updateCellWalls(pose_.cell_x, pose_.cell_y, pose_.current_dir,
+                          ir.wall_left, ir.wall_front, ir.wall_right);
+
+    // 2. Work out which way to go next
+    const bool at_goal = floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y);
+    static Coordinate path[256];
+    uint8_t path_len = 1;
+    int8_t diff = 0;
+    Direction d0 = pose_.current_dir;
+
+    if (!at_goal) {
+        floodfill_.recalculate();
+
+        path[0] = { pose_.cell_x, pose_.cell_y };
+        int8_t cur_x = pose_.cell_x;
+        int8_t cur_y = pose_.cell_y;
+        Direction cur_h = pose_.current_dir;
+
+        for (int step_i = 0; step_i < 254; ++step_i) {
+            Direction nd = floodfill_.getNextDirection(cur_x, cur_y, cur_h);
+            if (nd == DIR_INVALID) break;
+            cur_h = nd;
+            if (nd == DIR_NORTH) cur_y++;
+            else if (nd == DIR_EAST)  cur_x++;
+            else if (nd == DIR_SOUTH) cur_y--;
+            else if (nd == DIR_WEST)  cur_x--;
+            path[path_len++] = { cur_x, cur_y };
+            if (floodfill_.isAtGoal(cur_x, cur_y)) break;
+        }
+
+        if (path_len < 2) {
+            Serial.println("[NAV] Error: Trapped! No valid paths.");
+            state_ = NAV_STATE_ERROR;
+            return;
+        }
+
+        d0 = Decomposer::getDirection({ pose_.cell_x, pose_.cell_y }, path[1]);
+        diff = ((int8_t)d0 - (int8_t)pose_.current_dir + 4) % 4;
+    }
+
+    // 3. Anything other than "straight on" happens from a standstill: brake first, decide again
+    if ((at_goal || diff != 0) && current_search_speed_ > 0.0f) {
+        float v = current_search_speed_;
+        float brake_mm = (v * v) / (2.0f * search_accel) + 2.0f;
+        sendMotionCommand(ACTION_MOVE_DISTANCE, brake_mm, v, search_accel, false, v, 0.0f);
+        current_search_speed_ = 0.0f;
+        return;
+    }
+
+    if (at_goal) {
+        startReturnRun();
+        return;
+    }
+
+    if (diff == 0) {
+        // --- STRAIGHT ON: one cell forward, without stopping if the plan keeps going straight ---
+        Coordinate next_cell = path[1];
+        float exit_v = 0.0f;
+        bool plan_continues_straight = path_len >= 3 &&
+                                       Decomposer::getDirection(path[1], path[2]) == d0 &&
+                                       !floodfill_.isAtGoal(next_cell.x, next_cell.y);
+        if (plan_continues_straight) {
+            exit_v = maze_.isVisited(next_cell.x, next_cell.y) ? search_speed : SEARCH_PROBE_SPEED_MM_S;
+        }
+
+#if ENABLE_SEARCH_LOOKAHEAD
+        // Look-ahead: if the next cell is new, or the plan turns there, drive only as far as its
+        // edge. By then the 45° sensors have seen its side walls, and stepAtCellEdge() can curve
+        // straight through it instead of stopping at its centre to turn on the spot.
+        const bool next_is_goal  = floodfill_.isAtGoal(next_cell.x, next_cell.y);
+        const bool next_is_known = maze_.isVisited(next_cell.x, next_cell.y);
+        if (!next_is_goal && (!next_is_known || !plan_continues_straight)) {
+            float edge_v = next_is_known ? SEARCH_CURVE_SPEED_MM_S : SEARCH_PROBE_SPEED_MM_S;
+            sendMotionCommand(ACTION_MOVE_DISTANCE, HALF_CELL_SIZE_MM, search_speed, search_accel, true,
+                              current_search_speed_, edge_v);
+            current_search_speed_ = edge_v;
+            pose_.cell_x = next_cell.x;
+            pose_.cell_y = next_cell.y;
+            search_phase_ = PHASE_AT_EDGE;
+            return;
+        }
+#endif
+        sendMotionCommand(ACTION_MOVE_FORWARD_CELLS, 1.0f, search_speed, search_accel, true,
+                          current_search_speed_, exit_v);
+        current_search_speed_ = exit_v;
+        pose_.cell_x = next_cell.x;
+        pose_.cell_y = next_cell.y;
+
+    } else if (diff == 1 || diff == 3) {
+        // --- TURN: on the spot at the cell centre. The robot stays in this cell; the next step
+        // re-reads the walls facing the new way and then drives straight on.
+        sendMotionCommand((diff == 1) ? ACTION_TURN_RIGHT_90 : ACTION_TURN_LEFT_90,
+                          90.0f, turn_speed, turn_accel, false);
+        pose_.current_dir = d0;
+
+    } else {
+        // --- DEAD END: OPTICAL FRONT SQUARING + 180° TURNAROUND ---
+        Serial.printf("[NAV] Dead end reached at (%d, %d). Squaring optically against front wall...\n",
+                      pose_.cell_x, pose_.cell_y);
+
+        sub_cmd_count_ = 0;
+        sub_cmd_idx_ = 0;
+
+        // 1. Optically square against front wall using FL and FR sensor symmetry
+        pushSubCommand(ACTION_SQUARE_FRONT_OPTICAL, 0.0f, 0.0f, 0.0f, false);
+
+        // 2. High-precision 180° turnaround from a freshly zeroed heading baseline
+        pushSubCommand(ACTION_TURN_AROUND_180, 180.0f, turn_speed, turn_accel, false);
+
+        processSubcommandQueue();
+        pose_.current_dir = d0;
+    }
+}
+
+// The robot is on the entry edge of pose_.cell, still rolling. Curve through the cell if the path
+// turns there and the turn is certain to be clear; otherwise carry on to its centre and decide
+// there in the normal way.
+void Navigator::stepAtCellEdge(const IRReadings& ir, const WallPreview& preview) {
+    const int8_t x = pose_.cell_x;
+    const int8_t y = pose_.cell_y;
+    const Direction heading = pose_.current_dir;
+    const Direction left  = Maze::getAbsoluteDirection(heading, -1);
+    const Direction right = Maze::getAbsoluteDirection(heading, 1);
+
+    const bool known = maze_.isVisited(x, y);
+    bool sides_certain = known;
+
+    if (!known) {
+        // Two different sensors must agree about each side: the 45° sensor on the way here, and
+        // the 90° sensor now that the robot's nose is inside the cell.
+        const bool left_wall  = preview.left_wall  && ir.wall_left;
+        const bool left_open  = preview.left_open  && !ir.wall_left;
+        const bool right_wall = preview.right_wall && ir.wall_right;
+        const bool right_open = preview.right_open && !ir.wall_right;
+        sides_certain = (left_wall || left_open) && (right_wall || right_open);
+
+        if (sides_certain) {
+            if (left_wall)  maze_.setWall(x, y, left);
+            if (right_wall) maze_.setWall(x, y, right);
+            floodfill_.recalculate();
+        }
+    }
+
+    // The front wall is not known yet, so the floodfill treats it as open. If turning is still the
+    // best way out of this cell, it is the best way whatever the front wall turns out to be.
+    const Direction best = sides_certain ? floodfill_.getNextDirection(x, y, heading) : DIR_INVALID;
+
+    if (best == left || best == right) {
+        const float v = current_search_speed_;
+        curve_cell_x_ = x;
+        curve_cell_y_ = y;
+        curve_entry_dir_ = heading;
+        curve_cell_was_known_ = known;
+
+        sendMotionCommand((best == right) ? ACTION_CURVE_RIGHT_90 : ACTION_CURVE_LEFT_90,
+                          CURVE_90_LENGTH_MM, v, SEARCH_ACCEL_DEFAULT_MM_S2, false, v, SEARCH_PROBE_SPEED_MM_S);
+        current_search_speed_ = SEARCH_PROBE_SPEED_MM_S;
+
+        // The curve ends on the entry edge of the neighbouring cell
+        pose_.current_dir = best;
+        if (best == DIR_NORTH) pose_.cell_y++;
+        else if (best == DIR_EAST)  pose_.cell_x++;
+        else if (best == DIR_SOUTH) pose_.cell_y--;
+        else if (best == DIR_WEST)  pose_.cell_x--;
+        search_phase_ = PHASE_AFTER_CURVE;
+        return;
+    }
+
+    driveToCellCentre();
+}
+
+// The curve through (curve_cell_x_, curve_cell_y_) has finished. Half-way round it the outer 45°
+// sensor was facing that cell's front wall, which completes what is known about the cell.
+void Navigator::stepAfterCurve(const WallPreview& preview) {
+    if (!curve_cell_was_known_) {
+        if (preview.front_wall) {
+            maze_.setWall(curve_cell_x_, curve_cell_y_, curve_entry_dir_);
+        }
+        // Only count the cell as explored if the front wall reading was clear either way;
+        // otherwise it stays unexplored and the speed run will not be routed through it on trust.
+        if (preview.front_wall || preview.front_open) {
+            maze_.setVisited(curve_cell_x_, curve_cell_y_);
+        }
+    }
+    driveToCellCentre();
+}
+
+// Second half of a look-ahead move: from the entry edge of pose_.cell to its centre, where the
+// next decision is taken with all the sensors in the normal way.
+void Navigator::driveToCellCentre() {
+    const Direction best = floodfill_.getNextDirection(pose_.cell_x, pose_.cell_y, pose_.current_dir);
+    const bool keep_rolling = (best == pose_.current_dir) && !floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y);
+    const float exit_v = keep_rolling ? SEARCH_PROBE_SPEED_MM_S : 0.0f;
+
+    sendMotionCommand(ACTION_MOVE_DISTANCE, HALF_CELL_SIZE_MM, SEARCH_SPEED_DEFAULT_MM_S, SEARCH_ACCEL_DEFAULT_MM_S2,
+                      true, current_search_speed_, exit_v);
+    current_search_speed_ = exit_v;
+    search_phase_ = PHASE_AT_CENTRE;
+}
+
+NavState Navigator::getState() const {
+    return state_;
+}
+
+RobotPose Navigator::getPose() const {
+    return pose_;
+}
+
+const Maze& Navigator::getMaze() const {
+    return maze_;
+}
+
+Maze& Navigator::getMaze() {
+    return maze_;
+}
+
+void Navigator::clearSavedMaze() {
+    maze_.clearNVS();
+    maze_.reset();
+    floodfill_.setGoalToCenter();
+    floodfill_.recalculate();
+    Serial.println("[NAV] Flash NVS maze cleared and grid reset.");
+}
