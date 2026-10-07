@@ -79,6 +79,7 @@ void showSelectedMode();
 bool isRunActive();
 
 // Start the selected run. Does nothing if a run is already active.
+// The robot must be in the start cell, facing into the maze.
 void launchSelectedRun();
 
 // Brake immediately and abandon the run
@@ -90,6 +91,13 @@ bool calibrateIR();
 
 // Forget the maze saved in flash
 void clearSavedMaze();
+
+// Speed tier the next speed run will use: 1 (safest) to 3 (fastest). See SPEED_TIER_* in config.h.
+uint8_t getSpeedTier();
+
+// Call once when a run ends. Shows the result on the LED and moves the speed tier:
+// up after a speed run that reached the centre, down after one that was aborted.
+void onRunEnded(bool aborted);
 
 } // namespace Actions
 

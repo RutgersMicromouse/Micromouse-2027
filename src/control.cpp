@@ -558,6 +558,23 @@ void MotionController::update(float dt_seconds) {
         profile_linear_.update(dt_seconds);
 
         float dist_traveled = current_distance - start_distance_mm_;
+
+        // Search moves roll into a cell at speed in case the way ahead is open. If the front
+        // sensors find a wall instead, re-plan the rest of this move to come to rest exactly on
+        // its target (the cell centre), rather than arriving at speed with a wall ahead.
+        if (active_cmd_.stop_at_front_wall && active_cmd_.exit_speed_mm_s > 10.0f && ir_.hasFrontWall()) {
+            float remaining = target_relative_dist_mm_ - profile_linear_.getTargetDistance();
+            if (remaining > 1.0f) {
+                float v_now = profile_linear_.getTargetVelocity();
+                start_distance_mm_ += profile_linear_.getTargetDistance();
+                dist_traveled = current_distance - start_distance_mm_;
+                target_relative_dist_mm_ = remaining;
+                profile_linear_.start(remaining, v_now, active_cmd_.acceleration, v_now, 0.0f);
+                profile_linear_.update(dt_seconds);
+            }
+            active_cmd_.exit_speed_mm_s = 0.0f;
+        }
+
         float target_dist = profile_linear_.getTargetDistance();
         float target_vel = profile_linear_.getTargetVelocity();
 

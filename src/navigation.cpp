@@ -838,6 +838,7 @@ Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_que
       current_strategy_(SPEEDRUN_HYBRID_AUTO),
       waiting_for_motion_(false),
       current_search_speed_(0.0f),
+      speed_scale_(1.0f), best_route_explored_(false), maze_changed_(false), map_reset_this_run_(false),
       search_phase_(PHASE_AT_CENTRE),
       curve_cell_x_(0), curve_cell_y_(0), curve_entry_dir_(DIR_NORTH), curve_cell_was_known_(false),
       sub_cmd_count_(0),
@@ -869,7 +870,9 @@ void Navigator::begin() {
 }
 
 void Navigator::startSearchRun() {
-    maze_.reset();
+    // The map is NOT wiped: everything learned in earlier attempts (including ones that ended in
+    // a crash) is kept, so each search starts from what is already known and explores further.
+    map_reset_this_run_ = false;
     maze_.setVisited(0, 0); // Start cell (0,0) is visited
     floodfill_.setGoalToCenter();
     floodfill_.recalculate();
@@ -884,60 +887,58 @@ void Navigator::startSearchRun() {
     sub_cmd_idx_ = 0;
     segment_count_ = 0;
     segment_idx_ = 0;
-    Serial.println("[NAV] Starting Continuous High-Speed Flying Search to Maze Center!");
+    Serial.println("[NAV] Starting search run to the maze centre (keeping the known map).");
 }
 
-void Navigator::startReturnRun() {
-    state_ = NAV_STATE_RETURNING_TO_START;
-    waiting_for_motion_ = false;
-    carry_speed_ = 0.0f;
-    curve_in_ = false;
-    sub_cmd_count_ = 0;
-    sub_cmd_idx_ = 0;
-    Serial.printf("[NAV] Center reached at (%d, %d)! Planning FASTEST DIAGONAL RETURN to (0,0)...\n",
-                  pose_.cell_x, pose_.cell_y);
-
-    // Auto-save discovered maze grid to NVS Flash immediately upon reaching the Goal!
-    maze_.saveToNVS();
-    Serial.println("[NAV] Maze successfully auto-saved to Flash NVS at Goal!");
-
-    static Coordinate path[256];
-    uint8_t path_len = dijkstra_.findFastestPathToStart(pose_.cell_x, pose_.cell_y, pose_.current_dir, path, 255);
-
-    if (path_len < 2) {
-        // Fallback to floodfill if Dijkstra has no visited path
-        floodfill_.setGoalToStart();
-        floodfill_.recalculate();
-        path[0] = { pose_.cell_x, pose_.cell_y };
-        path_len = 1;
-        int8_t cur_x = pose_.cell_x;
-        int8_t cur_y = pose_.cell_y;
-        Direction cur_h = pose_.current_dir;
-        for (int step = 0; step < 254; ++step) {
-            Direction nd = floodfill_.getNextDirection(cur_x, cur_y, cur_h);
-            if (nd == DIR_INVALID) break;
-            cur_h = nd;
-            if (nd == DIR_NORTH) cur_y++;
-            else if (nd == DIR_EAST) cur_x++;
-            else if (nd == DIR_SOUTH) cur_y--;
-            else if (nd == DIR_WEST) cur_x--;
-            path[path_len++] = { cur_x, cur_y };
-            if (cur_x == 0 && cur_y == 0) break;
-        }
+void Navigator::saveMazeIfChanged() {
+    // Writing flash briefly stalls the processor, so this is only called while standing still
+    if (maze_changed_) {
+        maze_.saveToNVS();
+        maze_changed_ = false;
     }
+}
 
-    segment_count_ = Decomposer::decompose(path, path_len, segment_queue_, MAX_SEGMENTS);
-    segment_idx_ = 0;
-
-    Serial.printf("[NAV] Return Route: %d cells decomposed into %d high-speed segments.\n",
-                  path_len, segment_count_);
-
-    if (segment_count_ > 0) {
-        queueSegment(segment_queue_[segment_idx_++], RETURN_CRUISE_SPEED_MM_S, RETURN_ACCEL_MM_S2);
+// Follows the floodfill from the start cell to the centre with unexplored cells treated as open.
+// If that route never leaves explored cells, no shorter route can be hiding in the unknown.
+bool Navigator::checkBestRouteExplored() {
+    int8_t x = 0, y = 0;
+    Direction heading = DIR_NORTH;
+    for (int i = 0; i < 255; ++i) {
+        if (!maze_.isVisited(x, y)) return false;
+        if (floodfill_.isAtGoal(x, y)) return true;
+        Direction next = floodfill_.getNextDirection(x, y, heading);
+        if (next == DIR_INVALID) return false;
+        heading = next;
+        if (next == DIR_NORTH) y++;
+        else if (next == DIR_EAST)  x++;
+        else if (next == DIR_SOUTH) y--;
+        else if (next == DIR_WEST)  x--;
     }
+    return false;
+}
+
+// How many times the robot has to stop and turn on the spot along a list of segments
+// (same joining rules as queueSegment: it keeps rolling into a segment with the same heading,
+// and between two straights at right angles, and stops everywhere else).
+static uint8_t countStops(const PathSegment* segs, uint8_t count) {
+    uint8_t stops = 0;
+    for (uint8_t i = 0; i + 1 < count; ++i) {
+        const PathSegment& seg = segs[i];
+        const PathSegment& next = segs[i + 1];
+        const Direction end_dir = (seg.type == SEG_STRAIGHT) ? seg.dir : seg.last_dir;
+        const int8_t turn = ((int8_t)next.dir - (int8_t)end_dir + 4) % 4;
+        const bool curves = seg.type == SEG_STRAIGHT && next.type == SEG_STRAIGHT && (turn == 1 || turn == 3);
+        const bool rolls  = turn == 0 && seg.type != SEG_SLALOM;
+        if (!curves && !rolls) stops++;
+    }
+    return stops;
 }
 
 void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
+    // Every run begins with the robot placed in the start cell facing into the maze
+    pose_.cell_x = 0;
+    pose_.cell_y = 0;
+    pose_.current_dir = DIR_NORTH;
     current_strategy_ = strategy;
     state_ = NAV_STATE_SPEED_RUNNING;
     waiting_for_motion_ = false;
@@ -985,6 +986,10 @@ void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
             }
         }
 
+        // Stopping to turn on the spot costs far more than the distance it saves
+        t_curves += countStops(segs_curves, count_curves) * SPEEDRUN_STOP_PENALTY_S;
+        t_diags  += countStops(segs_diags,  count_diags)  * SPEEDRUN_STOP_PENALTY_S;
+
         Serial.printf("  • Continuous Curves Estimate: %5.2fs (%d segments)\n", t_curves, count_curves);
         Serial.printf("  • Diagonal Sprints Estimate:  %5.2fs (%d segments)\n", t_diags, count_diags);
 
@@ -1012,12 +1017,18 @@ void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
                   path_len, segment_count_);
 
     if (segment_count_ > 0) {
-        queueSegment(segment_queue_[segment_idx_++], SPEEDRUN_CRUISE_SPEED_MM_S, SPEEDRUN_ACCEL_MM_S2);
+        queueSegment(segment_queue_[segment_idx_++], SPEEDRUN_CRUISE_SPEED_MM_S * speed_scale_,
+                     SPEEDRUN_ACCEL_MM_S2 * speed_scale_);
     }
 }
 
 void Navigator::stop() {
+    // Keep what this run learned, even if it ended badly: the next search carries on from it
+    if (state_ == NAV_STATE_EXPLORING_TO_CENTER || state_ == NAV_STATE_RETURNING_TO_START) {
+        saveMazeIfChanged();
+    }
     state_ = NAV_STATE_IDLE;
+    search_phase_ = PHASE_AT_CENTRE;
     carry_speed_ = 0.0f;
     curve_in_ = false;
     sub_cmd_count_ = 0;
@@ -1033,7 +1044,8 @@ void Navigator::notifyMotionComplete() {
 }
 
 void Navigator::sendMotionCommand(MotionAction action, float param, float max_speed, float accel,
-                                  bool wall_centering, float entry_speed, float exit_speed) {
+                                  bool wall_centering, float entry_speed, float exit_speed,
+                                  bool stop_at_front_wall) {
     MotionCommand cmd;
     cmd.action = action;
     cmd.param_value = param;
@@ -1043,6 +1055,7 @@ void Navigator::sendMotionCommand(MotionAction action, float param, float max_sp
     cmd.entry_speed_mm_s = entry_speed;
     cmd.exit_speed_mm_s = exit_speed;
     cmd.start_offset_mm = 0.0f;
+    cmd.stop_at_front_wall = stop_at_front_wall;
 
     xQueueSend(motion_cmd_queue_, &cmd, portMAX_DELAY);
     waiting_for_motion_ = true;
@@ -1057,22 +1070,15 @@ void Navigator::processSubcommandQueue() {
         return;
     }
 
-    // Current segment finished! Check if more segments are queued
+    // Current segment finished! Check if more segments are queued (speed runs only)
     if (segment_idx_ < segment_count_) {
-        float speed = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_CRUISE_SPEED_MM_S : RETURN_CRUISE_SPEED_MM_S;
-        float accel = (state_ == NAV_STATE_SPEED_RUNNING) ? SPEEDRUN_ACCEL_MM_S2 : RETURN_ACCEL_MM_S2;
-        queueSegment(segment_queue_[segment_idx_++], speed, accel);
+        queueSegment(segment_queue_[segment_idx_++], SPEEDRUN_CRUISE_SPEED_MM_S * speed_scale_,
+                     SPEEDRUN_ACCEL_MM_S2 * speed_scale_);
         return;
     }
 
-    // All segments finished in Return or Speedrun!
-    if (state_ == NAV_STATE_RETURNING_TO_START) {
-        Serial.println("[NAV] 🚀 START REACHED at (0,0)! Maze fully explored and saved.");
-        maze_.saveToNVS();
-        state_ = NAV_STATE_PREPARING_SPEED_RUN;
-        Serial.println("[NAV] Staged in Start Cell. Press CONFIRM button to execute Speedrun!");
-    } else if (state_ == NAV_STATE_SPEED_RUNNING) {
-        Serial.println("[NAV] 🏆 CHAMPIONSHIP SPEED RUN COMPLETE! Center reached at maximum velocity!");
+    if (state_ == NAV_STATE_SPEED_RUNNING) {
+        Serial.println("[NAV] Speed run complete: centre reached.");
         state_ = NAV_STATE_FINISHED;
     }
 }
@@ -1080,7 +1086,7 @@ void Navigator::processSubcommandQueue() {
 void Navigator::pushSubCommand(MotionAction action, float param, float max_speed, float accel,
                                bool wall_centering, float entry_speed, float exit_speed) {
     if (sub_cmd_count_ >= MAX_SUB_CMDS) return;
-    sub_cmd_queue_[sub_cmd_count_++] = { action, param, max_speed, accel, wall_centering, entry_speed, exit_speed, 0.0f };
+    sub_cmd_queue_[sub_cmd_count_++] = { action, param, max_speed, accel, wall_centering, entry_speed, exit_speed, 0.0f, false };
 }
 
 void Navigator::pushPivot(Direction target, float turn_speed, float turn_accel) {
@@ -1111,10 +1117,10 @@ void Navigator::queueSegment(const PathSegment& seg, float cruise_speed, float a
     sub_cmd_idx_ = 0;
 
     const bool speed_run     = (state_ == NAV_STATE_SPEED_RUNNING);
-    const float turn_speed   = speed_run ? SPEEDRUN_TURN_SPEED_DEG_S  : SEARCH_TURN_SPEED_DEG_S;
-    const float turn_accel   = speed_run ? SPEEDRUN_TURN_ACCEL_DEG_S2 : SEARCH_TURN_ACCEL_DEG_S2;
-    const float diag_speed   = speed_run ? SPEEDRUN_DIAG_SPEED_MM_S   : cruise_speed;
-    const float curve_speed  = speed_run ? SPEEDRUN_CURVE_SPEED_MM_S  : SEARCH_CURVE_SPEED_MM_S;
+    const float turn_speed   = speed_run ? SPEEDRUN_TURN_SPEED_DEG_S  * speed_scale_ : SEARCH_TURN_SPEED_DEG_S;
+    const float turn_accel   = speed_run ? SPEEDRUN_TURN_ACCEL_DEG_S2 * speed_scale_ : SEARCH_TURN_ACCEL_DEG_S2;
+    const float diag_speed   = speed_run ? SPEEDRUN_DIAG_SPEED_MM_S   * speed_scale_ : cruise_speed;
+    const float curve_speed  = speed_run ? SPEEDRUN_CURVE_SPEED_MM_S  * speed_scale_ : SEARCH_CURVE_SPEED_MM_S;
 
     // How this segment begins: left over from the previous one
     const float entry_speed = carry_speed_;
@@ -1211,13 +1217,16 @@ void Navigator::queueSegment(const PathSegment& seg, float cruise_speed, float a
 }
 
 // Search run: one decision per cell, taken at the cell centre where the wall sensors are reliable.
+// The same stepping drives both legs: out to the centre, then back to the start cell. Unexplored
+// cells count as open on both legs, so the way back naturally explores new ground.
 //
 // The robot rolls straight through cells without stopping whenever the way ahead is clear:
 // at full search speed through cells it already knows, at SEARCH_PROBE_SPEED into cells it has
 // never seen (so it can stop within a few millimetres if a wall turns up). It stops and turns on
 // the spot only where the path actually turns.
 void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
-    if (waiting_for_motion_ || state_ != NAV_STATE_EXPLORING_TO_CENTER) {
+    if (waiting_for_motion_ ||
+        (state_ != NAV_STATE_EXPLORING_TO_CENTER && state_ != NAV_STATE_RETURNING_TO_START)) {
         return;
     }
 
@@ -1231,8 +1240,13 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
     const float turn_accel   = SEARCH_TURN_ACCEL_DEG_S2;
 
     // 1. Update walls in current cell based on reliable 90° and front sensor readings
+    if (!maze_.isVisited(pose_.cell_x, pose_.cell_y)) maze_changed_ = true;
     maze_.updateCellWalls(pose_.cell_x, pose_.cell_y, pose_.current_dir,
                           ir.wall_left, ir.wall_front, ir.wall_right);
+
+    // A move that rolled in at speed comes to rest by itself if it met a wall ahead
+    // (MotionCommand::stop_at_front_wall), so with a wall in front the robot is standing still.
+    if (ir.wall_front) current_search_speed_ = 0.0f;
 
     // 2. Work out which way to go next
     const bool at_goal = floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y);
@@ -1262,6 +1276,18 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         }
 
         if (path_len < 2) {
+            // Walled in. If that happens in the start cell before moving, the remembered map must
+            // be wrong (it came from a run that went badly): forget it once and start afresh.
+            const bool at_start = (pose_.cell_x == 0 && pose_.cell_y == 0);
+            if (at_start && state_ == NAV_STATE_EXPLORING_TO_CENTER && !map_reset_this_run_) {
+                Serial.println("[NAV] Remembered map has no way out of the start cell. Forgetting it and starting afresh.");
+                map_reset_this_run_ = true;
+                maze_.reset();
+                maze_.setVisited(0, 0);
+                floodfill_.recalculate();
+                step(ir, preview);
+                return;
+            }
             Serial.println("[NAV] Error: Trapped! No valid paths.");
             state_ = NAV_STATE_ERROR;
             return;
@@ -1271,17 +1297,42 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         diff = ((int8_t)d0 - (int8_t)pose_.current_dir + 4) % 4;
     }
 
-    // 3. Anything other than "straight on" happens from a standstill: brake first, decide again
+    // 3. Anything other than "straight on" happens from a standstill at the cell centre. If the
+    // robot rolled in at speed, brake, then back up the few millimetres it overshot, so that
+    // turning on the spot never leaves it off-centre. Then decide again.
     if ((at_goal || diff != 0) && current_search_speed_ > 0.0f) {
         float v = current_search_speed_;
         float brake_mm = (v * v) / (2.0f * search_accel) + 2.0f;
-        sendMotionCommand(ACTION_MOVE_DISTANCE, brake_mm, v, search_accel, false, v, 0.0f);
+        sub_cmd_count_ = 0;
+        sub_cmd_idx_ = 0;
+        pushSubCommand(ACTION_MOVE_DISTANCE,  brake_mm, v, search_accel, false, v, 0.0f);
+        pushSubCommand(ACTION_MOVE_DISTANCE, -brake_mm, SEARCH_PROBE_SPEED_MM_S, search_accel, false);
+        processSubcommandQueue();
         current_search_speed_ = 0.0f;
         return;
     }
 
     if (at_goal) {
-        startReturnRun();
+        saveMazeIfChanged();
+
+        if (state_ == NAV_STATE_EXPLORING_TO_CENTER) {
+            // Centre reached: now explore back to the start cell
+            Serial.printf("[NAV] Centre reached at (%d, %d). Exploring back to the start.\n", pose_.cell_x, pose_.cell_y);
+            floodfill_.setGoalToStart();
+            floodfill_.recalculate();
+            state_ = NAV_STATE_RETURNING_TO_START;
+            step(ir, preview);
+            return;
+        }
+
+        // Back in the start cell: the search is over
+        floodfill_.setGoalToCenter();
+        floodfill_.recalculate();
+        best_route_explored_ = checkBestRouteExplored();
+        state_ = NAV_STATE_PREPARING_SPEED_RUN;
+        Serial.println(best_route_explored_
+            ? "[NAV] Search complete. The shortest possible route is fully explored: ready for speed runs."
+            : "[NAV] Search complete. A shorter route may still be hiding in unexplored cells: search again to look for it.");
         return;
     }
 
@@ -1314,12 +1365,14 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         }
 #endif
         sendMotionCommand(ACTION_MOVE_FORWARD_CELLS, 1.0f, search_speed, search_accel, true,
-                          current_search_speed_, exit_v);
+                          current_search_speed_, exit_v, true);
         current_search_speed_ = exit_v;
         pose_.cell_x = next_cell.x;
         pose_.cell_y = next_cell.y;
 
     } else if (diff == 1 || diff == 3) {
+        saveMazeIfChanged();
+
         // --- TURN: on the spot at the cell centre. The robot stays in this cell; the next step
         // re-reads the walls facing the new way and then drives straight on.
         sendMotionCommand((diff == 1) ? ACTION_TURN_RIGHT_90 : ACTION_TURN_LEFT_90,
@@ -1327,6 +1380,8 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         pose_.current_dir = d0;
 
     } else {
+        saveMazeIfChanged();
+
         // --- DEAD END: OPTICAL FRONT SQUARING + 180° TURNAROUND ---
         Serial.printf("[NAV] Dead end reached at (%d, %d). Squaring optically against front wall...\n",
                       pose_.cell_x, pose_.cell_y);
@@ -1413,6 +1468,7 @@ void Navigator::stepAfterCurve(const WallPreview& preview) {
         // otherwise it stays unexplored and the speed run will not be routed through it on trust.
         if (preview.front_wall || preview.front_open) {
             maze_.setVisited(curve_cell_x_, curve_cell_y_);
+            maze_changed_ = true;
         }
     }
     driveToCellCentre();
@@ -1426,7 +1482,7 @@ void Navigator::driveToCellCentre() {
     const float exit_v = keep_rolling ? SEARCH_PROBE_SPEED_MM_S : 0.0f;
 
     sendMotionCommand(ACTION_MOVE_DISTANCE, HALF_CELL_SIZE_MM, SEARCH_SPEED_DEFAULT_MM_S, SEARCH_ACCEL_DEFAULT_MM_S2,
-                      true, current_search_speed_, exit_v);
+                      true, current_search_speed_, exit_v, true);
     current_search_speed_ = exit_v;
     search_phase_ = PHASE_AT_CENTRE;
 }

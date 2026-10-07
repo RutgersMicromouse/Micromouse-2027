@@ -167,10 +167,19 @@ public:
     void notifyMotionComplete();
 
     // High level state triggers
+    // Every run starts with the robot in the start cell facing into the maze.
+    // The search keeps whatever map is already known (clearSavedMaze() forgets it), drives to the
+    // centre, then explores its way back to the start.
     void startSearchRun();
-    void startReturnRun();
     void startSpeedRun(SpeedrunStrategy strategy = SPEEDRUN_HYBRID_AUTO);
     void stop();
+
+    // Fraction of the SPEEDRUN_* speeds and accelerations the next speed run uses (speed tiers)
+    void setSpeedScale(float scale) { speed_scale_ = scale; }
+
+    // After a search: true if the shortest possible route to the centre runs only through cells
+    // the robot has seen, i.e. no further exploring can find a shorter one
+    bool isBestRouteExplored() const { return best_route_explored_; }
 
     NavState getState() const;
     RobotPose getPose() const;
@@ -180,7 +189,8 @@ public:
 
 private:
     void sendMotionCommand(MotionAction action, float param, float max_speed, float accel,
-                           bool wall_centering = true, float entry_speed = 0.0f, float exit_speed = 0.0f);
+                           bool wall_centering = true, float entry_speed = 0.0f, float exit_speed = 0.0f,
+                           bool stop_at_front_wall = false);
 
     // Segment & Subcommand Execution Pipeline
     void queueSegment(const PathSegment& seg, float cruise_speed, float accel);
@@ -213,6 +223,14 @@ private:
     int8_t curve_cell_x_, curve_cell_y_;   // Cell that was curved through
     Direction curve_entry_dir_;            // Heading on entering it (its front wall faces this way)
     bool curve_cell_was_known_;
+
+    bool checkBestRouteExplored();
+    void saveMazeIfChanged();
+
+    float speed_scale_;
+    bool best_route_explored_;
+    bool maze_changed_;          // New cells seen since the map was last written to flash
+    bool map_reset_this_run_;
 
     void stepAtCellEdge(const IRReadings& ir, const WallPreview& preview);
     void stepAfterCurve(const WallPreview& preview);

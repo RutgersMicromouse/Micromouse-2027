@@ -165,9 +165,13 @@
 #define DIAG_GUARD_RATIO       1.6f     // A 45° sensor reading this many times its centred level = post too close
 #define DIAG_GUARD_MAX_TRIM_DEG 8.0f    // Largest heading correction the guard may apply
 
-// Fast Return Run Kinematic Limits
-#define RETURN_CRUISE_SPEED_MM_S      380.0f   // Return cruise speed (mm/s)
-#define RETURN_ACCEL_MM_S2            2000.0f  // Return acceleration (mm/s^2)
+// Speed Tiers: every speed run that finishes moves the next one up a tier; a speed run that is
+// aborted (crash, stall, lifted off the maze) moves it back down. Power-on starts at tier 1.
+#define SPEED_TIER_1_SCALE     0.60f    // Fraction of the SPEEDRUN_* speeds and accelerations used
+#define SPEED_TIER_2_SCALE     0.80f
+#define SPEED_TIER_3_SCALE     1.00f
+
+#define SPEEDRUN_STOP_PENALTY_S        0.45f    // Time a stop-and-turn costs, when the hybrid mode compares routes
 
 // ==============================================================================
 // 3. MAZE GEOMETRY

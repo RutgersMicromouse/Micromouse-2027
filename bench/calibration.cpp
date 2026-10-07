@@ -3,6 +3,9 @@
 //
 //   motorcal            Balance the two motors and save the trims
 //   motorrpm [duty]     Tachometer benchmark at a fixed duty (default 0.5)
+//   drivecal [cells]    Drive straight N cells (default 5); measure how far it really went, then
+//   drivecal result <mm>  ...tells you the true WHEEL_DIAMETER_MM to put in config.h
+//   turncal             Spin two full turns by the IMU and work out the true WHEEL_BASE_MM
 //   dyno ...            Protocol spoken by the dyno test stand (tools/dyno_station)
 
 #include <functional>
@@ -67,6 +70,7 @@ bool handleCommand(const String& cmd, Motors& motors, MotionController& motion,
             mc.entry_speed_mm_s = 0.0f;
             mc.exit_speed_mm_s = 0.0f;
             mc.start_offset_mm = 0.0f;
+            mc.stop_at_front_wall = false;
             xQueueSend(motion_queue, &mc, 0);
             reply("DYNO_ACK TRAP_STARTED");
         } else {
@@ -341,6 +345,91 @@ void runTachometerBenchmark(float duty, uint16_t duration_ms) {
 // ==============================================================================
 
 
+// ==============================================================================
+// WHEEL GEOMETRY (robot on the floor, with room to move)
+// ==============================================================================
+
+namespace WheelCalibration {
+
+static float s_commanded_mm = 0.0f;
+
+// Sends one move to the motion task and waits for it to finish
+static bool runMove(const MotionCommand& cmd, uint32_t timeout_ms) {
+    if (xQueueSend(g_motion_cmd_queue, &cmd, 0) != pdTRUE) return false;
+    delay(50); // Let the motion task pick it up
+    uint32_t start_ms = millis();
+    while (!g_motion_controller.isCommandFinished()) {
+        if (millis() - start_ms > timeout_ms) return false;
+        delay(10);
+    }
+    delay(100); // Settle, and let the telemetry snapshot catch up
+    return true;
+}
+
+// Step 1: drive a known distance by the encoders. Measure the real distance with a ruler.
+static void driveStraight(int cells, std::function<void(const char*)> reply) {
+    MotionCommand cmd = {};
+    cmd.action = ACTION_MOVE_DISTANCE;
+    cmd.param_value = (float)cells * MAZE_CELL_SIZE_MM;
+    cmd.max_speed_mm_s = 200.0f;
+    cmd.acceleration = 800.0f;
+
+    s_commanded_mm = cmd.param_value;
+    bool ok = runMove(cmd, 15000);
+
+    char buf[120];
+    snprintf(buf, sizeof(buf), ok ? "ACK: DROVE %.0f mm BY THE ENCODERS. Measure the real distance, then send 'drivecal result <mm>'"
+                                  : "ERR: MOVE DID NOT FINISH (%.0f mm commanded)", s_commanded_mm);
+    reply(buf);
+}
+
+// Step 2: the wheel is bigger or smaller than config.h says by the same ratio the distance was off
+static void reportDiameter(float measured_mm, std::function<void(const char*)> reply) {
+    if (s_commanded_mm < 1.0f || measured_mm < 50.0f) {
+        reply("ERR: RUN 'drivecal' FIRST, THEN 'drivecal result <measured mm>'");
+        return;
+    }
+    char buf[120];
+    snprintf(buf, sizeof(buf), "RESULT: set WHEEL_DIAMETER_MM to %.2f in config.h (it is %.2f now)",
+             WHEEL_DIAMETER_MM * measured_mm / s_commanded_mm, (float)WHEEL_DIAMETER_MM);
+    reply(buf);
+}
+
+// Spins two full turns using the IMU as the reference, and compares that with how far each wheel
+// rolled. For a turn on the spot: (right distance - left distance) = angle in radians x wheelbase.
+static void measureWheelBase(std::function<void(const char*)> reply) {
+    if (g_imu.isUsingFallback()) {
+        reply("ERR: NEEDS A WORKING IMU (heading is currently running on the encoders)");
+        return;
+    }
+
+    RobotTelemetry before = {}, after = {};
+    getTelemetry(before);
+
+    MotionCommand cmd = {};
+    cmd.action = ACTION_TURN_AROUND_180;
+    cmd.param_value = 180.0f;
+    cmd.max_speed_mm_s = 180.0f;  // deg/s for turns
+    cmd.acceleration = 720.0f;    // deg/s²
+    for (int i = 0; i < 4; ++i) {
+        if (!runMove(cmd, 6000)) {
+            reply("ERR: TURN DID NOT FINISH");
+            return;
+        }
+    }
+    getTelemetry(after);
+
+    const float turned_rad = 720.0f * (PI / 180.0f);
+    const float wheel_difference_mm = (after.encoders.right_dist_mm - before.encoders.right_dist_mm) -
+                                      (after.encoders.left_dist_mm  - before.encoders.left_dist_mm);
+    char buf[120];
+    snprintf(buf, sizeof(buf), "RESULT: set WHEEL_BASE_MM to %.2f in config.h (it is %.2f now)",
+             fabsf(wheel_difference_mm) / turned_rad, (float)WHEEL_BASE_MM);
+    reply(buf);
+}
+
+} // namespace WheelCalibration
+
 namespace Calibration {
 
 bool handleCommand(const String& cmd, std::function<void(const char*)> reply) {
@@ -383,6 +472,27 @@ bool handleCommand(const String& cmd, std::function<void(const char*)> reply) {
         StatusLED::set(StatusLED::CYAN);
         MotorCalibration::runTachometerBenchmark(duty, 4000);
         reply("ACK: TACH BENCHMARK FINISHED");
+        Actions::showSelectedMode();
+        return true;
+    }
+
+    if (cmd.startsWith("drivecal") || cmd == "turncal") {
+        if (Actions::isRunActive()) {
+            reply("ERR: CANNOT_CALIB_WHILE_RUNNING");
+            return true;
+        }
+        StatusLED::set(StatusLED::YELLOW);
+        if (cmd == "turncal") {
+            reply("Spinning two full turns...");
+            WheelCalibration::measureWheelBase(reply);
+        } else if (cmd.startsWith("drivecal result")) {
+            WheelCalibration::reportDiameter(cmd.substring(15).toFloat(), reply);
+        } else {
+            int cells = cmd.substring(8).toInt();
+            if (cells < 1 || cells > 15) cells = 5;
+            reply("Driving straight. Keep the path clear...");
+            WheelCalibration::driveStraight(cells, reply);
+        }
         Actions::showSelectedMode();
         return true;
     }

@@ -172,6 +172,7 @@ void navigationTask(void* pvParameters) {
 
     static RobotTelemetry telemetry = {}; // Kept between loops so a missed snapshot reuses the last one
     bool was_running = false;
+    bool run_aborted = false;
 
     Actions::showSelectedMode();
     GestureUI::restart();
@@ -187,8 +188,7 @@ void navigationTask(void* pvParameters) {
             Serial.println("\n[SAFETY] Run aborted by the motion controller (motor stall or encoder fault).");
             g_navigator->stop();
             xSemaphoreTake(g_motion_done_sem, 0);
-            StatusLED::flash(StatusLED::RED, 5, 100);
-            Actions::showSelectedMode();
+            run_aborted = true;
         }
 
         // 3. Advance the navigator strictly when a physical motion completes
@@ -199,6 +199,10 @@ void navigationTask(void* pvParameters) {
 
         // 4. Hand-wave controls, only while the robot is standing still between runs
         bool running = Actions::isRunActive();
+        if (was_running && !running) {
+            Actions::onRunEnded(run_aborted); // LED result + speed tier up / down
+            run_aborted = false;
+        }
 #if ENABLE_GESTURE_UI
         if (was_running && !running) {
             GestureUI::restart(); // Re-learn what the front sensors see where the robot stopped

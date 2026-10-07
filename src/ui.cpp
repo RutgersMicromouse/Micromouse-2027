@@ -41,6 +41,9 @@ namespace Actions {
 
 static RunMode s_selected_mode = MODE_SEARCH;
 
+static const float kSpeedTierScale[3] = { SPEED_TIER_1_SCALE, SPEED_TIER_2_SCALE, SPEED_TIER_3_SCALE };
+static uint8_t s_speed_tier = 1; // 1..3
+
 const char* modeName(RunMode mode) {
     switch (mode) {
         case MODE_SEARCH:    return "SEARCH";
@@ -89,6 +92,11 @@ void launchSelectedRun() {
     Serial.printf("[UI] Launching: %s\n", modeName(s_selected_mode));
     showSelectedMode();
 
+    if (s_selected_mode != MODE_SEARCH) {
+        Serial.printf("[UI] Speed tier %d of 3 (%.0f%% speed)\n", (int)s_speed_tier, kSpeedTierScale[s_speed_tier - 1] * 100.0f);
+        g_navigator->setSpeedScale(kSpeedTierScale[s_speed_tier - 1]);
+    }
+
     switch (s_selected_mode) {
         case MODE_SEARCH: {
             g_navigator->startSearchRun();
@@ -127,6 +135,34 @@ void clearSavedMaze() {
 
     g_navigator->clearSavedMaze();
     StatusLED::flash(StatusLED::BLUE, 4, 100);
+    showSelectedMode();
+}
+
+uint8_t getSpeedTier() {
+    return s_speed_tier;
+}
+
+void onRunEnded(bool aborted) {
+    const NavState state = g_navigator->getState();
+    const bool was_speed_run = (s_selected_mode != MODE_SEARCH);
+
+    if (aborted) {
+        if (was_speed_run && s_speed_tier > 1) {
+            s_speed_tier--;
+            Serial.printf("[UI] Speed run aborted: next one drops to tier %d.\n", (int)s_speed_tier);
+        }
+        StatusLED::flash(StatusLED::RED, 5, 100);
+    } else if (state == NAV_STATE_FINISHED) {
+        if (s_speed_tier < 3) s_speed_tier++;
+        Serial.printf("[UI] Speed run finished: next one uses tier %d.\n", (int)s_speed_tier);
+        StatusLED::flash(StatusLED::GREEN, 3, 150);
+    } else if (state == NAV_STATE_PREPARING_SPEED_RUN) {
+        // Search finished. Green = the best route is fully explored; yellow = searching again
+        // might find a shorter one.
+        StatusLED::flash(g_navigator->isBestRouteExplored() ? StatusLED::GREEN : StatusLED::YELLOW, 2, 300);
+    } else if (state == NAV_STATE_ERROR) {
+        StatusLED::flash(StatusLED::RED, 2, 400);
+    }
     showSelectedMode();
 }
 
@@ -268,6 +304,11 @@ static void perform(uint8_t waves) {
         Actions::RunMode mode = (Actions::RunMode)(waves - 1);
         Actions::selectMode(mode);
         StatusLED::flash(Actions::modeColor(mode), waves, 150);
+        if (mode != Actions::MODE_SEARCH) {
+            // Speed tier the run will use: 1, 2, or 3 blue blinks
+            delay(300);
+            StatusLED::flash(StatusLED::BLUE, Actions::getSpeedTier(), 150);
+        }
         if (countdown(Actions::modeColor(mode), GESTURE_LAUNCH_DELAY_MS)) {
             Actions::launchSelectedRun();
         }

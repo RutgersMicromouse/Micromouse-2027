@@ -105,6 +105,8 @@ Type any of the following commands into the terminal:
 | `stop` or `estop` | **Emergency stop** — instantly brakes motors and aborts run | 🔴 3x Red Flash |
 | `motorcal` | **Calibration firmware only** (`pio run -e calibration -t upload`). Automated 3-point motor speed calibration and trim balancing | 🟡 Yellow $\rightarrow$ 🟢 Flash (Pass) / 🔴 Flash (Fail) |
 | `motorrpm [duty]` | **Calibration firmware only.** Runs tachometer benchmark at specified duty (default 50%) for 4s | 🌐 Solid Cyan |
+| `drivecal [cells]` | **Calibration firmware only.** Drives straight N cells (default 5) by the encoders. Measure how far it really went, then send `drivecal result <mm>` to get the true wheel diameter for `config.h` | 🟡 Solid Yellow |
+| `turncal` | **Calibration firmware only.** Spins two full turns by the IMU and reports the true wheelbase for `config.h` | 🟡 Solid Yellow |
 | `motortrim [l r]` | Sets or queries motor trim multipliers saved in NVS | — |
 | `enc` | Prints live raw encoder ticks, mm traveled, speed, and inversion status | — |
 | `motorinv <l:0/1> <r:0/1>` | Sets motor direction inversion at runtime | — |
@@ -132,9 +134,16 @@ The robot has no buttons or switches. Power it on, wait for the LED to turn soli
 | **5** | In-cell IR calibration (robot centred in a cell between two side walls) | 🟡 Yellow while sampling, then 🟢 3x Green = OK / 🔴 3x Red = failed |
 | **6** | Erase the saved maze | 🔵 4x Blue flash |
 
+**Before every run, put the robot in the start cell facing into the maze.** It always assumes that is where it is.
+
+### How a competition goes
+1. **1 wave: search.** The robot drives to the centre, then explores its way back to the start cell. When it stops, the LED blinks 🟢 green twice if it has found the shortest possible route, or 🟡 yellow twice if a shorter one might still be hiding in cells it has not seen.
+2. **Yellow? Wave once more.** The map is kept, so the next search goes straight for the unexplored part. If a search goes wrong (crash, or you lift the robot out), nothing is lost: what it learned is saved, and the next search carries on from there. Six waves wipe the map if you move to a different maze.
+3. **2, 3, or 4 waves: speed run.** The first speed run uses tier 1 (60 % speed). Each one that reaches the centre moves the next up a tier (80 %, then 100 %); one that is aborted moves it back down. The tier is shown as 1, 2, or 3 🔵 blue blinks before the countdown.
+
 ### What you will see
 1. **Each wave** it counts: one short ⚪ white blink.
-2. **About 1.5 seconds after your last wave**: it blinks the count back to you in the action's color.
+2. **About 1.5 seconds after your last wave**: it blinks the count back to you in the action's color. For a speed run, 1 to 3 blue blinks follow, showing the speed tier.
 3. **Before a run or calibration**: 2 seconds of rapid blinking. Get your hand out of the way.
 4. **The run starts** and the LED stays solid in the mode's color.
 
@@ -159,7 +168,11 @@ A hand in front of the sensors looks like a wall to a moving robot, so waves are
 | ⚪ White blink | Wave counted |
 | 🔴 5x Red flash at boot | Motor driver not responding |
 | 🟡 3x Yellow flash at boot | IMU not found (running on encoder heading) |
-| 🔴 5x Red flash during a run | Run aborted by stall / encoder protection |
+| 🔴 5x Red flash during a run | Run aborted (stall, encoder fault, or lifted and turned) |
+| 🟢 2x slow green after a search | Shortest possible route found |
+| 🟡 2x slow yellow after a search | A shorter route may exist: search again |
+| 🟢 3x green after a speed run | Centre reached; next speed run goes up a tier |
+| 🔵 1–3 blue before a speed run | Speed tier about to be used |
 | 🔴 Solid red | Low battery, motors disabled |
 
 ---
@@ -325,11 +338,15 @@ Before committing or flashing firmware to physical hardware:
    pio run -e main -e competition -e ota -e calibration
    pio run -e motor_test -e ir_test -e imu_test -e battery_test -e ble_test -e wifi_test
    ```
-2. **Algorithm Test Suite**: Desktop test suite must pass with 100% green assertions:
+2. **Firmware Navigation Test**: the robot's real navigation code must solve every maze on the PC without touching a wall (needs `pip install ziglang` once):
+   ```powershell
+   python sim/tests/test_firmware_nav.py
+   ```
+3. **Algorithm Test Suite**: Desktop test suite must pass with 100% green assertions:
    ```powershell
    python sim/tests/test_desktop_suite.py
    ```
-3. **Simulation Verification**: Full 10-maze championship tournament run must complete collision-free:
+4. **Simulation Verification**: Full 10-maze championship tournament run must complete collision-free:
    ```powershell
    python sim/verify_headless.py
    ```

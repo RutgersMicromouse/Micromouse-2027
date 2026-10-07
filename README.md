@@ -35,7 +35,7 @@ There are no buttons. Power it on, then **wave a hand in front of the front sens
 | 5 | Calibrate IR sensors | Yellow |
 | 6 | Clear the saved maze | Blue |
 
-The LED blinks the count back, then blinks rapidly for 2 seconds before moving; cover the sensors to cancel. To stop a run, lift the robot and turn it sideways. Details are in the [operator manual](docs/INSTRUCTIONS.md#4-hand-wave-controls--led-field-guide).
+Always start with the robot in the start cell facing into the maze. The LED blinks the count back, then blinks rapidly for 2 seconds before moving; cover the sensors to cancel. To stop a run, lift the robot and turn it sideways. The map is kept between searches, and speed runs get faster each time one succeeds. Details are in the [operator manual](docs/INSTRUCTIONS.md#4-hand-wave-controls--led-field-guide).
 
 ## Build and flash
 
@@ -54,6 +54,7 @@ Before flashing after a change:
 
 ```powershell
 pio run -e main -e competition -e calibration
+python sim/tests/test_firmware_nav.py        # runs the real navigation code on every maze (pip install ziglang)
 python sim/tests/test_desktop_suite.py
 python sim/verify_headless.py --mazes 1 --trials 1
 ```
