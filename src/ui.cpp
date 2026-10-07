@@ -92,6 +92,9 @@ void launchSelectedRun() {
     Serial.printf("[UI] Launching: %s\n", modeName(s_selected_mode));
     showSelectedMode();
 
+    // The robot was placed by hand: forget where the last run left its heading and distance
+    prepareForNewRun();
+
     if (s_selected_mode != MODE_SEARCH) {
         Serial.printf("[UI] Speed tier %d of 3 (%.0f%% speed)\n", (int)s_speed_tier, kSpeedTierScale[s_speed_tier - 1] * 100.0f);
         g_navigator->setSpeedScale(kSpeedTierScale[s_speed_tier - 1]);

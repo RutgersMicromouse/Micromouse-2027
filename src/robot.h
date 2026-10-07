@@ -36,3 +36,8 @@ bool getTelemetry(RobotTelemetry& out);
 // Ask the motion task to zero the encoders / heading. Carried out between motions.
 void requestEncoderReset();
 void requestHeadingReset();
+
+// Call before starting any run. The robot has just been put down by hand, so wherever it is
+// pointing now becomes "straight ahead" and its distance counters start from zero. Returns once
+// the motion task has done it.
+void prepareForNewRun();

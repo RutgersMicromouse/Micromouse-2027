@@ -353,6 +353,7 @@ Before committing or flashing firmware to physical hardware:
    python sim/tests/test_firmware_nav.py
    python sim/tests/test_firmware_drive.py
    ```
+   If Windows blocks the compiled test program ("An Application Control policy has blocked this file"), run the same two commands under WSL instead.
 3. **Algorithm Test Suite**: Desktop test suite must pass with 100% green assertions:
    ```powershell
    python sim/tests/test_desktop_suite.py

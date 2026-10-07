@@ -211,6 +211,7 @@ MotionController::MotionController(Encoders& encoders, Motors& motors, IRSensors
       preview_min_l_(0), preview_max_l_(0), preview_min_r_(0), preview_max_r_(0), preview_samples_(0),
       front_min_(0), front_max_(0), front_samples_(0), front_uses_left_sensor_(false),
       diag_peak_left_(0.0f), diag_peak_right_(0.0f),
+      settle_ticks_(0), idle_ticks_(0),
       prev_target_speed_mm_s_(0.0f), log_tick_(0),
       wall_centering_enabled_(true), calibrating_motors_(false), safety_stop_(false),
       k_wheel_sync_(0.0004f) {
@@ -248,6 +249,8 @@ void MotionController::resetTracking() {
     pid_wall_centering_.reset();
     command_active_ = false;
     command_finished_ = true;
+    chain_valid_ = false;
+    curve_active_ = false;
     start_distance_mm_ = 0.0f;
     start_heading_deg_ = 0.0f;
     accumulated_heading_deg_ = 0.0f;
@@ -258,6 +261,20 @@ void MotionController::resetTracking() {
     wall_align_timer_ = 0;
     chained_coast_timer_ = 0;
     motors_.coast();
+}
+
+// The robot has just been squared up against a wall, so it is pointing exactly along the maze
+// grid. Snap the heading reference to the nearest grid direction, removing whatever error had
+// built up. (It must stay the SAME direction it was tracking: every later move is measured
+// from it.)
+void MotionController::snapHeadingToGrid() {
+    float grid_heading = roundf(accumulated_heading_deg_ / 90.0f) * 90.0f;
+    imu_.resetHeading(normalizeAngle180(grid_heading));
+    accumulated_heading_deg_ = grid_heading;
+    start_heading_deg_ = grid_heading;
+    prev_raw_heading_deg_ = imu_.getHeadingDeg();
+    pid_angular_heading_.reset();
+    pid_wall_centering_.reset();
 }
 
 void MotionController::resetHeading() {
@@ -279,9 +296,9 @@ void MotionController::executeCommand(const MotionCommand& cmd) {
     wall_align_timer_ = 0;
     chained_coast_timer_ = 0;
 
-    // Where this move starts. When it follows straight on from a move that ended at speed, start
-    // from exactly where that move was supposed to end, so small tracking errors are corrected by
-    // this move instead of piling up along a chain of moves.
+    // Where this move starts. When it follows on from another move, start from exactly where
+    // that move was supposed to end, so small tracking errors are corrected by this move instead
+    // of piling up along a chain of moves.
     EncoderState enc = encoders_.getState();
     if (chain_valid_) {
         start_distance_mm_ = chain_end_distance_mm_;
@@ -291,6 +308,8 @@ void MotionController::executeCommand(const MotionCommand& cmd) {
     chain_valid_ = false;
     curve_active_ = false;
     prev_target_speed_mm_s_ = cmd.entry_speed_mm_s;
+    settle_ticks_ = 0;
+    idle_ticks_ = 0;
     preview_samples_ = 0;
     front_samples_ = 0;
     diag_peak_left_ = 0.0f;
@@ -530,7 +549,13 @@ void MotionController::update(float dt_seconds) {
             motors_.setEffort(forward_effort, forward_effort);
             return;
         }
-        chain_valid_ = false;
+        // A move that was meant to be followed at speed, but nothing followed: the robot is no
+        // longer where that move aimed to end. Likewise if it has simply been standing a while.
+        if (active_cmd_.exit_speed_mm_s > 10.0f || idle_ticks_ > CHAIN_TIMEOUT_TICKS) {
+            chain_valid_ = false;
+        } else {
+            idle_ticks_++;
+        }
         motors_.brake();
         return;
     }
@@ -554,15 +579,19 @@ void MotionController::update(float dt_seconds) {
     float rotational_effort = 0.0f;
 
     // 2. Linear Profile & Controller
-    if (!profile_linear_.isFinished()) {
-        profile_linear_.update(dt_seconds);
+    // While the speed profile is running the robot follows it. Once it has run out, the robot
+    // holds the point the move was aiming for (for a turn on the spot: the point it started on).
+    float dist_err = 0.0f;
+    {
+        const bool profile_running = !profile_linear_.isFinished();
+        if (profile_running) profile_linear_.update(dt_seconds);
 
         float dist_traveled = current_distance - start_distance_mm_;
 
         // Search moves roll into a cell at speed in case the way ahead is open. If the front
         // sensors find a wall instead, re-plan the rest of this move to come to rest exactly on
         // its target (the cell centre), rather than arriving at speed with a wall ahead.
-        if (active_cmd_.stop_at_front_wall && active_cmd_.exit_speed_mm_s > 10.0f && ir_.hasFrontWall()) {
+        if (profile_running && active_cmd_.stop_at_front_wall && active_cmd_.exit_speed_mm_s > 10.0f && ir_.hasFrontWall()) {
             float remaining = target_relative_dist_mm_ - profile_linear_.getTargetDistance();
             if (remaining > 1.0f) {
                 float v_now = profile_linear_.getTargetVelocity();
@@ -575,21 +604,27 @@ void MotionController::update(float dt_seconds) {
             active_cmd_.exit_speed_mm_s = 0.0f;
         }
 
-        float target_dist = profile_linear_.getTargetDistance();
-        float target_vel = profile_linear_.getTargetVelocity();
+        const bool holding = profile_linear_.isFinished() && !profile_running;
+        float target_dist = holding ? target_relative_dist_mm_ : profile_linear_.getTargetDistance();
+        float target_vel  = holding ? 0.0f : profile_linear_.getTargetVelocity();
 
         // Distance error
-        float dist_err = target_dist - dist_traveled;
+        dist_err = target_dist - dist_traveled;
         float vel_setpoint = target_vel + pid_linear_dist_.update(dist_err, dt_seconds);
 
         // Velocity error
         float vel_err = vel_setpoint - enc.linear_speed_mm_s;
         forward_effort = pid_linear_vel_.update(vel_err, dt_seconds);
 
-        // Feedforward: most of the effort comes straight from the planned speed and acceleration
-        float target_accel = (target_vel - prev_target_speed_mm_s_) / dt_seconds;
-        prev_target_speed_mm_s_ = target_vel;
-        forward_effort += wheelFeedforward(target_vel, target_accel);
+        // Feedforward: most of the effort comes straight from the planned speed and acceleration.
+        // While holding a position, it supplies the push needed to creep the last millimetres.
+        if (holding) {
+            forward_effort += wheelFeedforward(vel_setpoint, 0.0f);
+        } else {
+            float target_accel = (target_vel - prev_target_speed_mm_s_) / dt_seconds;
+            prev_target_speed_mm_s_ = target_vel;
+            forward_effort += wheelFeedforward(target_vel, target_accel);
+        }
     }
 
     // 3. Angular Profile & Controller (Continuous unwrapped heading)
@@ -689,9 +724,7 @@ void MotionController::update(float dt_seconds) {
                 command_finished_ = true;
                 command_active_ = false;
                 motors_.brake();
-                accumulated_heading_deg_ = 0.0f;
-                start_heading_deg_ = 0.0f;
-                imu_.resetHeading(0.0f);
+                snapHeadingToGrid();
                 encoders_.reset();
                 start_distance_mm_ = 0.0f;
                 return;
@@ -728,12 +761,7 @@ void MotionController::update(float dt_seconds) {
                 command_active_ = false;
                 motors_.brake();
 
-                // Recalibrate heading baseline to exact 0.0°
-                accumulated_heading_deg_ = 0.0f;
-                start_heading_deg_ = 0.0f;
-                imu_.resetHeading(0.0f);
-                pid_angular_heading_.reset();
-                pid_wall_centering_.reset();
+                snapHeadingToGrid();
                 return;
             }
         } else {
@@ -759,10 +787,7 @@ void MotionController::update(float dt_seconds) {
             command_finished_ = true;
             command_active_ = false;
             motors_.brake();
-            accumulated_heading_deg_ = 0.0f;
-            start_heading_deg_ = 0.0f;
-            imu_.resetHeading(0.0f);
-            stall_count_ = 0;
+            stall_count_ = 0; // Gave up squaring: keep the heading as it was rather than trust a bad alignment
             return;
         }
         return;
@@ -849,16 +874,34 @@ void MotionController::update(float dt_seconds) {
 
     // 7. Completion check
     if (profile_linear_.isFinished() && profile_angular_.isFinished()) {
+        const bool stopping = (active_cmd_.exit_speed_mm_s <= 10.0f);
+
+        // A move that ends in a stop is only finished once the robot has actually arrived: the
+        // planned motion running out just means it should be there by now. Otherwise each stop
+        // would leave it a few millimetres short, and those add up across a maze.
+        if (stopping) {
+            const bool arrived = fabsf(dist_err) < SETTLE_DISTANCE_MM &&
+                                 fabsf(heading_err) < SETTLE_HEADING_DEG &&
+                                 fabsf(enc.linear_speed_mm_s) < SETTLE_SPEED_MM_S;
+            if (!arrived && settle_ticks_ < SETTLE_TIMEOUT_TICKS) {
+                settle_ticks_++;
+                return; // Keep holding the target
+            }
+        }
+
         command_finished_ = true;
         command_active_ = false;
         curve_active_ = false;
         chained_coast_timer_ = 0;
-        // Brake if stopping, or maintain velocity if exit speed was requested
-        if (active_cmd_.exit_speed_mm_s <= 10.0f) {
+        idle_ticks_ = 0;
+
+        // The next move starts from where this one aimed to end, not from wherever the robot
+        // happened to be when it was declared finished
+        chain_valid_ = true;
+        chain_end_distance_mm_ = start_distance_mm_ + target_relative_dist_mm_;
+
+        if (stopping) {
             motors_.brake();
-        } else {
-            chain_valid_ = true;
-            chain_end_distance_mm_ = start_distance_mm_ + target_relative_dist_mm_;
         }
     }
 }

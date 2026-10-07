@@ -1033,6 +1033,14 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
     maze_.updateCellWalls(pose_.cell_x, pose_.cell_y, pose_.current_dir,
                           ir.wall_left, ir.wall_front, ir.wall_right);
 
+    // A wall the front sensors see right now, from the cell centre, is never driven into on the
+    // strength of older readings that said the way was open
+    if (ir.wall_front) {
+        for (int i = 0; i < 2 * WALL_VOTE_LIMIT && !maze_.hasWall(pose_.cell_x, pose_.cell_y, pose_.current_dir); ++i) {
+            maze_.observeWall(pose_.cell_x, pose_.cell_y, pose_.current_dir, true);
+        }
+    }
+
     // A move that rolled in at speed comes to rest by itself if it met a wall ahead
     // (MotionCommand::stop_at_front_wall), so with a wall in front the robot is standing still.
     if (ir.wall_front) current_search_speed_ = 0.0f;

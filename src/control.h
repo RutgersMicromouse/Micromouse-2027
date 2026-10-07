@@ -227,6 +227,7 @@ private:
     uint16_t wall_align_timer_;
     uint16_t chained_coast_timer_;
 
+    void snapHeadingToGrid();
     void checkPillarDriftCorrection(float current_dist_mm);
     void startCurve(const MotionCommand& cmd, float angle_deg, float default_length_mm);
 
@@ -248,6 +249,10 @@ private:
     // Diagonal centring: strongest recent reading of each row of posts (fraction of a centred wall)
     float diag_peak_left_;
     float diag_peak_right_;
+
+    // Settling at the end of a move that stops, and how long the robot has been idle since
+    uint16_t settle_ticks_;
+    uint16_t idle_ticks_;
 
     // Feedforward & logging
     float prev_target_speed_mm_s_;

@@ -45,6 +45,7 @@ static SemaphoreHandle_t g_motion_done_sem = nullptr;
 // Reference-frame resets requested by Core 0 and carried out by the motion task
 static const uint8_t RESET_REQ_ENCODERS = 0x01;
 static const uint8_t RESET_REQ_HEADING  = 0x02;
+static const uint8_t RESET_REQ_NEW_RUN  = 0x04;
 static std::atomic<uint8_t> g_pending_resets{0};
 
 bool getTelemetry(RobotTelemetry& out) {
@@ -56,6 +57,14 @@ bool getTelemetry(RobotTelemetry& out) {
 
 void requestEncoderReset() { g_pending_resets.fetch_or(RESET_REQ_ENCODERS); }
 void requestHeadingReset() { g_pending_resets.fetch_or(RESET_REQ_HEADING); }
+
+void prepareForNewRun() {
+    g_pending_resets.fetch_or(RESET_REQ_NEW_RUN);
+    // Wait for the motion task to carry it out (it runs every 2 ms)
+    for (int i = 0; i < 50 && (g_pending_resets.load() & RESET_REQ_NEW_RUN); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+}
 
 // Battery Voltage Sense (10k / 10k divider on Computer Battery)
 static float readBatteryVoltage() {
@@ -91,6 +100,7 @@ void motionControlTask(void* pvParameters) {
             uint8_t resets = g_pending_resets.exchange(0);
             if (resets & RESET_REQ_ENCODERS) g_encoders.reset();
             if (resets & RESET_REQ_HEADING)  g_motion_controller.resetHeading();
+            if (resets & RESET_REQ_NEW_RUN)  g_motion_controller.resetTracking();
         }
 
         // 1. Read Encoders (PCNT hardware 4x decoding) & Pulsed 6-Channel IR (one emitter group per tick)

@@ -630,12 +630,15 @@ bool IRSensors::calibrateInCell(uint16_t sample_count) {
     thresh_r45_ = (uint16_t)(avg_r45 * 0.40f);
     thresh_r90_ = (avg_r90 > 100) ? (uint16_t)(avg_r90 * 0.40f) : WALL_THRESH_R90;
 
-    // If front wall is present, calibrate from measurement; otherwise estimate from side 45° sensors
-    if (avg_front >= 100) {
+    // Is there a wall right in front? One this close reads far brighter than the side walls do
+    // on the 45° sensors. A dimmer reading is only a wall further down an open corridor, and must
+    // not be used as the "wall in front" level (it would make every distant wall look close).
+    const float side_level = ((float)avg_l45 + (float)avg_r45) * 0.5f;
+    if ((float)avg_front >= side_level * 1.5f) {
         thresh_front_ = (uint16_t)(avg_front * 0.40f);
     } else {
         Serial.println("[CALIB] Note: Front wall absent (open start corridor). Estimating front threshold from side sensors.");
-        thresh_front_ = (uint16_t)(((float)avg_l45 + (float)avg_r45) * 0.5f * 0.45f);
+        thresh_front_ = (uint16_t)(side_level * 0.45f);
     }
 
     // Save permanently to NVS Flash

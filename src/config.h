@@ -140,7 +140,18 @@
 #define RUN_LOG_SAMPLES        1500     // 30 seconds at 50 Hz (36 kB of RAM)
 #define RUN_LOG_DIVIDER        10       // Record every 10th control tick (50 Hz)
 
-#define POST_EDGE_PHASE_MM     90.0f    // Distance past a cell centre at which a side sensor sees a wall start / end
+
+// MEASURE THIS ON THE ROBOT: how far the two 90° side sensors sit in front of the wheel axle.
+// It sets where in a cell the robot is when a side sensor sees a wall start or end.
+#define SIDE_SENSOR_AHEAD_MM   40.0f
+#define POST_EDGE_PHASE_MM     (HALF_CELL_SIZE_MM - SIDE_SENSOR_AHEAD_MM) // Distance past a cell centre at that moment
+
+// Settling: a move that ends in a stop is not finished until the robot is actually there.
+#define SETTLE_DISTANCE_MM     2.0f     // Close enough along the direction of travel
+#define SETTLE_HEADING_DEG     1.5f     // Close enough in heading
+#define SETTLE_SPEED_MM_S      20.0f    // Slow enough to call it stopped
+#define SETTLE_TIMEOUT_TICKS   150      // Give up waiting after this many control ticks (0.3 s)
+#define CHAIN_TIMEOUT_TICKS    250      // Moves starting within 0.5 s of the last one carry on from where it aimed to end
 
 // Search Look-Ahead (smooth turns during the search run)
 // The 45° sensors point forward and outward, so while the robot drives from one cell centre to the
