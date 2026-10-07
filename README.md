@@ -1,38 +1,27 @@
-# Micromouse-2027
+# Antigrav-Mouse Web Telemetry
 
-## introduction
+A simple browser dashboard for the custom BLE telemetry service already added to the ESP32 firmware.
 
-This is the official repository for micromouse bots. 
+## What it displays
+- Battery voltage
+- Heading
+- Left encoder ticks
+- Right encoder ticks
 
-- They're all on separate branches. Branches are named as `release/<bot name>`
-    - for example, `release/cheesieee`
+It also sends the existing Nordic UART commands `resetheading` and `resetenc`.
 
-## Branching Conventions
+## Run locally on your Mac
+From this folder:
 
-For whatever issue you're working on, you'll create a branch off of the bot you're working. For example, if you're working on ratatouieee, you'll create a branch off `release/ratatouieee`.
+    python3 -m http.server 8000
 
-The naming convention will be as follows:
+Then open:
 
-```sh
-user/<user-name>/<bot-name>/problem
+    http://localhost:8000
 
-# example, afe123x is starting the implementation of pid rotation 
-user/arfelix/ratatouieee/pid-rotation-implementation
-```
+in a Web Bluetooth-capable desktop browser.
 
+## Important iPhone limitation
+Standard iPhone Safari and Chrome do not expose the standard Web Bluetooth API used by this page. If your goal is specifically "open a normal URL in Safari on my iPhone", the better architecture is to have the ESP32 serve this dashboard over its existing Wi-Fi access point instead of connecting from JavaScript over BLE.
 
-## Making a branch
-
-lets say I'm working on ratatouieee
-
-```sh
-git checkout ratatouieee # checkout the ratatouieee branch
-git branch user/arfelix/ratotouieee/pid-rotation-implementation # create a branch off ratatouieee named user/arfelix/ratotouieee/pid-rotation-implementation
-git checkout user/arfelix/ratotouieee/pid-rotation-implementation
-```
-
-now you can start working on the code.
-
-## Making a PR
-
-- Once you create your changes and tested it, you can make a **pull request**. you can see the instructions [here](https://github.com/RutgersMicromouse/git-workshop)
+The current page is useful for testing the BLE service on browsers/platforms that expose Web Bluetooth.
