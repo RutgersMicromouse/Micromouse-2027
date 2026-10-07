@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 r"""
-Runs the robot's REAL navigation code (src/navigation.cpp) on this PC, through every maze in
-sim/mazes/.
+Runs the robot's REAL navigation code (src/navigation.cpp) on this PC.
 
 Unlike the Python simulators next to it, this compiles the firmware's own Maze, Floodfill,
-Dijkstra, Decomposer and Navigator and drives them with an ideal robot: each MotionCommand the
-navigator sends is carried out exactly, the wall sensors report the true maze, and every
-millimetre of the path is checked against the walls and posts.
+Dijkstra and Navigator and drives them with an ideal robot: each MotionCommand the navigator
+sends is carried out exactly, the wall sensors report the true maze, and every 2 mm of the path
+is checked against the walls and posts.
 
-For each maze it checks that
-  * the search reaches the centre and explores its way back to the start cell,
-  * searching again (keeping the map) eventually proves the best route is fully explored,
+It runs
+  * the ten mazes in sim/mazes/,
+  * hundreds of randomly generated full-size mazes,
+  * hundreds of randomly generated 3x3 practice mazes (the `test3x3` firmware build),
+  * all of the random ones again with the sensors occasionally inventing a wall that is not there,
+and for each one checks that
+  * the search reaches the goal and explores its way back to the start cell,
+  * searching again (keeping the map) proves the best route is fully explored,
   * a search that is cut short can be resumed from the saved map after a "reboot",
-  * all three speed-run strategies reach the centre,
+  * all three speed-run strategies reach the goal,
   * nothing ever comes closer to a wall or post than the robot is wide,
 with the look-ahead sensing both working and returning "not sure" (so the fallback is exercised).
 
 Needs a C++ compiler. The easiest way on any machine:   pip install ziglang
 Run from the repository root:                           python sim/tests/test_firmware_nav.py
+One maze, showing what the firmware prints:             python sim/tests/test_firmware_nav.py classic --verbose
 """
 import glob
 import os
@@ -40,6 +45,7 @@ STUBS = {
 #include <string.h>
 #include <math.h>
 #define PI 3.14159265358979f
+extern int g_maze_size; // On the PC, MAZE_ACTIVE_SIZE is this variable (16, or 3 for the practice maze)
 extern bool g_verbose; // --verbose: show what the firmware prints
 struct SerialStub {
     template <class... A> void printf(const char* fmt, A... args) { if (g_verbose) ::printf(fmt, args...); }
@@ -103,6 +109,7 @@ int xQueueSend(QueueHandle_t queue, const void* item, int wait); // provided by 
 # The ideal robot and the checks
 # ----------------------------------------------------------------------------------------------
 HARNESS = r'''
+#include <stdlib.h>
 #include <deque>
 #include <map>
 #include <string>
@@ -121,6 +128,8 @@ int xQueueSend(QueueHandle_t, const void* item, int) {
 
 // ---------------------------------------------------------------- the true maze
 static bool g_wall[16][16][4]; // [x][y][N,E,S,W]
+int g_maze_size = 16;  // 16 for a real maze, 3 for the practice maze (--size 3)
+#define N g_maze_size
 static const int DX[4] = { 0, 1, 0, -1 };
 static const int DY[4] = { 1, 0, -1, 0 };
 
@@ -129,18 +138,83 @@ static bool loadMaze(const char* path) {
     if (!f) return false;
     int x, y, n, e, s, w, rows = 0;
     while (fscanf(f, "%d %d %d %d %d %d", &x, &y, &n, &e, &s, &w) == 6) {
-        if (x < 0 || x > 15 || y < 0 || y > 15) continue;
+        if (x < 0 || x >= N || y < 0 || y >= N) continue;
         g_wall[x][y][0] = n; g_wall[x][y][1] = e; g_wall[x][y][2] = s; g_wall[x][y][3] = w;
         rows++;
     }
     fclose(f);
-    return rows == 256;
+    return rows == N * N;
 }
 
 static bool trueWall(int x, int y, int dir) {
-    if (x < 0 || x > 15 || y < 0 || y > 15) return true;
+    if (x < 0 || x >= N || y < 0 || y >= N) return true;
     return g_wall[x][y][dir];
 }
+
+// Small repeatable random number generator, so a failing maze can be reproduced from its seed
+static uint32_t g_rng = 1;
+static uint32_t rnd() {
+    g_rng ^= g_rng << 13; g_rng ^= g_rng >> 17; g_rng ^= g_rng << 5;
+    return g_rng;
+}
+
+static void setTrueWall(int x, int y, int dir, bool present) {
+    g_wall[x][y][dir] = present;
+    int nx = x + DX[dir], ny = y + DY[dir];
+    if (nx >= 0 && nx < N && ny >= 0 && ny < N) g_wall[nx][ny][(dir + 2) % 4] = present;
+}
+
+// A random maze the way real ones are built: every cell reachable, the start cell open only to
+// the north, some extra gaps so there are loops and several routes, and an open goal area.
+static void randomMaze(uint32_t seed) {
+    g_rng = seed * 2654435761u + 12345u;
+    if (g_rng == 0) g_rng = 1;
+    for (int x = 0; x < N; x++)
+        for (int y = 0; y < N; y++)
+            for (int d = 0; d < 4; d++) g_wall[x][y][d] = true;
+
+    // Carve passages depth-first from the cell above the start, never entering the start cell
+    static bool seen[16][16];
+    static int stack_x[256], stack_y[256];
+    memset(seen, 0, sizeof(seen));
+    seen[0][0] = true;
+    int depth = 0;
+    stack_x[0] = 0; stack_y[0] = 1; seen[0][1] = true;
+    while (depth >= 0) {
+        int x = stack_x[depth], y = stack_y[depth];
+        int order[4] = { 0, 1, 2, 3 };
+        for (int i = 3; i > 0; i--) { int j = rnd() % (i + 1); int t = order[i]; order[i] = order[j]; order[j] = t; }
+        bool moved = false;
+        for (int i = 0; i < 4 && !moved; i++) {
+            int nx = x + DX[order[i]], ny = y + DY[order[i]];
+            if (nx < 0 || nx >= N || ny < 0 || ny >= N || seen[nx][ny]) continue;
+            setTrueWall(x, y, order[i], false);
+            seen[nx][ny] = true;
+            depth++;
+            stack_x[depth] = nx; stack_y[depth] = ny;
+            moved = true;
+        }
+        if (!moved) depth--;
+    }
+    setTrueWall(0, 0, 0, false); // The start cell opens north
+
+    // Extra gaps make loops, so there is more than one route
+    for (int i = 0; i < N * N / 5; i++) {
+        int x = rnd() % N, y = rnd() % N, d = rnd() % 2; // north or east wall of a random cell
+        if (x == 0 && y == 0) continue;
+        if (x + DX[d] >= N || y + DY[d] >= N) continue;
+        if (x + DX[d] == 0 && y + DY[d] == 0) continue;
+        setTrueWall(x, y, d, false);
+    }
+
+    // The goal area is one open room
+    for (int x = 0; x < N; x++)
+        for (int y = 0; y < N; y++)
+            for (int d = 0; d < 2; d++)
+                if (Maze::isGoalCell(x, y) && Maze::isGoalCell(x + DX[d], y + DY[d])) setTrueWall(x, y, d, false);
+}
+
+static float g_phantom_wall_rate = 0.0f; // Chance that a sensor reports a wall that is not there
 
 // ---------------------------------------------------------------- the ideal robot
 // Position in mm with the start cell centre at (0, 0); heading in degrees clockwise from north.
@@ -234,6 +308,14 @@ static IRReadings senseWalls() {
     float wall_x = cx * 180.0f + DX[dir] * 90.0f, wall_y = cy * 180.0f + DY[dir] * 90.0f;
     float to_wall = fabsf((wall_x - g_robot.x) * DX[dir] + (wall_y - g_robot.y) * DY[dir]);
     ir.wall_front = trueWall(cx, cy, dir) && to_wall < 130.0f;
+
+    // Faulty sensors: now and then one of them sees a wall that is not there
+    if (g_phantom_wall_rate > 0.0f) {
+        const uint32_t threshold = (uint32_t)(g_phantom_wall_rate * 4294967295.0f);
+        if (!ir.wall_left  && rnd() < threshold) ir.wall_left = true;
+        if (!ir.wall_right && rnd() < threshold) ir.wall_right = true;
+        if (!ir.wall_front && to_wall > 130.0f && rnd() < threshold) ir.wall_front = true;
+    }
     return ir;
 }
 
@@ -304,6 +386,8 @@ static void placeAtStart() {
 }
 
 static int g_failures = 0;
+static int g_mazes_run = 0;
+static bool g_quiet = false; // --quiet: only print failures and the totals
 static void check(bool ok, const char* maze, const char* what) {
     if (!ok) {
         printf("    FAIL [%s] %s\n", maze, what);
@@ -311,13 +395,15 @@ static void check(bool ok, const char* maze, const char* what) {
     }
 }
 
-static bool inGoal(int cx, int cy) { return (cx == 7 || cx == 8) && (cy == 7 || cy == 8); }
+static bool inGoal(int cx, int cy) { return Maze::isGoalCell((int8_t)cx, (int8_t)cy); }
 static const float MIN_OK_CLEARANCE = ROBOT_RADIUS_MM + WALL_HALF_MM;
 
-static void testMaze(const char* path, const char* name, bool preview_enabled) {
+static void testMaze(const char* name, bool preview_enabled) {
     g_robot.preview_enabled = preview_enabled;
     g_fake_flash.clear();
-    printf("  %s (look-ahead %s)\n", name, preview_enabled ? "seeing" : "unsure");
+    g_mazes_run++;
+    const bool noisy = g_phantom_wall_rate > 0.0f;
+    if (!g_quiet) printf("  %s (look-ahead %s)\n", name, preview_enabled ? "seeing" : "unsure");
 
     // ---- a search that is cut short, then a "reboot"
     {
@@ -350,11 +436,12 @@ static void testMaze(const char* path, const char* name, bool preview_enabled) {
         check(g_robot.min_clearance >= MIN_OK_CLEARANCE, name, "search path came too close to a wall or post");
         if (nav.getState() != NAV_STATE_PREPARING_SPEED_RUN) break;
         proven = nav.isBestRouteExplored();
-        printf("    search %d: %6.1f m, %3d stops, closest approach %5.1f mm, best route %s\n",
+        if (!g_quiet) printf("    search %d: %6.1f m, %3d stops, closest approach %5.1f mm, best route %s\n",
                passes, g_robot.distance / 1000.0f, g_robot.stops, g_robot.min_clearance,
                proven ? "proven" : "not yet proven");
     }
-    check(proven, name, "best route still not proven after 6 searches");
+    // With sensors inventing walls the route may honestly stay unproven; without, it must not
+    if (!noisy) check(proven, name, "best route still not proven after 6 searches");
 
     // ---- speed runs, each from a fresh "boot" using only the saved map
     const SpeedrunStrategy strategies[3] = { SPEEDRUN_CURVES_ONLY, SPEEDRUN_DIAGONALS_ONLY, SPEEDRUN_HYBRID_AUTO };
@@ -368,29 +455,72 @@ static void testMaze(const char* path, const char* name, bool preview_enabled) {
 
         float cxf = roundf(g_robot.x / 180.0f) * 180.0f, cyf = roundf(g_robot.y / 180.0f) * 180.0f;
         check(nav.getState() == NAV_STATE_FINISHED, name, "speed run did not finish");
-        check(inGoal(cellOf(g_robot.x), cellOf(g_robot.y)), name, "speed run did not end in the centre");
+        check(inGoal(cellOf(g_robot.x), cellOf(g_robot.y)), name, "speed run did not end in the goal");
         check(hypotf(g_robot.x - cxf, g_robot.y - cyf) < 1.0f, name, "speed run did not end on a cell centre");
         check(g_robot.min_clearance >= MIN_OK_CLEARANCE, name, "speed run came too close to a wall or post");
-        printf("    speed run %-9s: %5.2f m, %2d stops, closest approach %5.1f mm\n",
+        if (!g_quiet) printf("    speed run %-9s: %5.2f m, %2d stops, closest approach %5.1f mm\n",
                names[i], g_robot.distance / 1000.0f, g_robot.stops - 1, g_robot.min_clearance);
     }
     (void)search_mm;
 }
 
+// Arguments: maze files, and/or  --random COUNT [--seed FIRST]  for generated mazes;
+//            --size 3 (practice maze), --noise RATE (sensors invent walls), --quiet, --verbose
 int main(int argc, char** argv) {
+    int random_count = 0;
+    uint32_t first_seed = 1;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--verbose") == 0) { g_verbose = true; continue; }
+        if (strcmp(argv[i], "--quiet") == 0)   { g_quiet = true; continue; }
+        if (strcmp(argv[i], "--size") == 0 && i + 1 < argc)   { g_maze_size = atoi(argv[++i]); continue; }
+        if (strcmp(argv[i], "--random") == 0 && i + 1 < argc) { random_count = atoi(argv[++i]); continue; }
+        if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc)   { first_seed = (uint32_t)atoi(argv[++i]); continue; }
+        if (strcmp(argv[i], "--noise") == 0 && i + 1 < argc)  { g_phantom_wall_rate = (float)atof(argv[++i]); continue; }
+
         const char* path = argv[i];
         const char* name = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
         if (strrchr(name, '\\')) name = strrchr(name, '\\') + 1;
         if (!loadMaze(path)) { printf("  could not read %s\n", path); g_failures++; continue; }
-        testMaze(path, name, true);
-        testMaze(path, name, false);
+        testMaze(name, true);
+        testMaze(name, false);
     }
-    printf(g_failures ? "\n%d CHECK(S) FAILED\n" : "\nALL FIRMWARE NAVIGATION CHECKS PASSED\n", g_failures);
+
+    for (int i = 0; i < random_count; i++) {
+        char name[48];
+        snprintf(name, sizeof(name), "random %dx%d maze, seed %u", N, N, (unsigned)(first_seed + i));
+        randomMaze(first_seed + i);
+        testMaze(name, true);
+        randomMaze(first_seed + i); // Same maze again for the other sensing mode
+        testMaze(name, false);
+    }
+
+    printf("  %d maze runs, %d check(s) failed\n", g_mazes_run, g_failures);
     return g_failures ? 1 : 0;
 }
 '''
+
+
+BLOCKED_MESSAGE = """
+Windows refused to run the test program that was just compiled
+("An Application Control policy has blocked this file").
+
+That is Smart App Control or a similar security setting on this PC, which blocks programs it has
+never seen before, and it can come and go between runs. The test itself is fine. Your options:
+  * run it under WSL (Linux on Windows), where the setting does not apply,
+  * run it on another computer,
+  * or allow it in Windows Security > App & browser control, if you are happy to.
+"""
+
+
+def run_test_program(command):
+    """Runs a compiled test program. Returns its exit code, or None if Windows blocked it."""
+    try:
+        return subprocess.call(command)
+    except OSError as error:
+        if getattr(error, 'winerror', None) == 4551:
+            print(BLOCKED_MESSAGE)
+            return None
+        raise
 
 
 def find_compiler():
@@ -406,11 +536,28 @@ def find_compiler():
     return None
 
 
+def build(compiler, work):
+    """Compiles the firmware navigation code plus the harness."""
+    exe = os.path.join(work, 'harness.exe')
+    command = compiler + ['-std=c++17', '-O1', '-D_USE_MATH_DEFINES', '-DMAZE_ACTIVE_SIZE=g_maze_size',
+                          '-I', os.path.join(work, 'stubs'), '-I', os.path.join(ROOT, 'src'),
+                          os.path.join(work, 'harness.cpp'), os.path.join(ROOT, 'src', 'navigation.cpp'), '-o', exe]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout + result.stderr)
+        return None
+    return exe
+
+
 def main():
     compiler = find_compiler()
     if compiler is None:
         print('No C++ compiler found. Install one with:  pip install ziglang')
         return 2
+
+    # Optional arguments: maze names to run just those files, and --verbose
+    wanted = [a for a in sys.argv[1:] if not a.startswith('--')]
+    flags = [a for a in sys.argv[1:] if a.startswith('--')]
 
     work = tempfile.mkdtemp(prefix='mouse_nav_')
     try:
@@ -419,29 +566,41 @@ def main():
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(text)
-        harness = os.path.join(work, 'harness.cpp')
-        with open(harness, 'w', encoding='utf-8') as f:
+        with open(os.path.join(work, 'harness.cpp'), 'w', encoding='utf-8') as f:
             f.write(HARNESS)
 
-        exe = os.path.join(work, 'harness.exe')
-        build = compiler + ['-std=c++17', '-O1', '-D_USE_MATH_DEFINES',
-                            '-I', os.path.join(work, 'stubs'), '-I', os.path.join(ROOT, 'src'),
-                            harness, os.path.join(ROOT, 'src', 'navigation.cpp'), '-o', exe]
         print('Compiling the firmware navigation code for this PC...')
-        result = subprocess.run(build, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(result.stdout + result.stderr)
+        exe = build(compiler, work)
+        if exe is None:
             return 1
+        full_size = [exe]
+        practice = [exe, '--size', '3']
 
-        # Optional arguments: maze names to run (default: all of them), and --verbose
-        wanted = [a for a in sys.argv[1:] if not a.startswith('--')]
-        flags = [a for a in sys.argv[1:] if a.startswith('--')]
         mazes = sorted(glob.glob(os.path.join(ROOT, 'sim', 'mazes', '*.num')))
         if wanted:
             mazes = [m for m in mazes if any(w in os.path.basename(m) for w in wanted)]
-        print(f'Running {len(mazes)} mazes...')
-        sys.stdout.flush()
-        return subprocess.call([exe] + flags + mazes)
+            batches = [('Chosen mazes', full_size + flags + mazes)]
+        else:
+            batches = [
+                ('The ten mazes in sim/mazes',                    full_size + flags + mazes),
+                ('150 random full-size mazes',                    full_size + ['--quiet', '--random', '150']),
+                ('100 random full-size mazes, sensors inventing walls',
+                                                                  full_size + ['--quiet', '--random', '100', '--seed', '1000', '--noise', '0.03']),
+                ('300 random 3x3 practice mazes',                 practice + ['--quiet', '--random', '300']),
+                ('300 random 3x3 practice mazes, sensors inventing walls',
+                                                                  practice + ['--quiet', '--random', '300', '--seed', '1000', '--noise', '0.05']),
+            ]
+
+        failed = 0
+        for title, command in batches:
+            print(f'\n{title}')
+            sys.stdout.flush()
+            code = run_test_program(command)
+            if code is None:
+                return 3
+            failed += code != 0
+        print('\nALL FIRMWARE NAVIGATION CHECKS PASSED' if not failed else f'\n{failed} BATCH(ES) FAILED')
+        return 1 if failed else 0
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

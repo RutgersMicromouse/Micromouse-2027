@@ -6,102 +6,86 @@
 
 #include <Preferences.h>
 
+// Flash storage name. The practice maze keeps its own map so it never mixes with a real one.
+#if MAZE_ACTIVE_SIZE == 16
+static const char* const MAZE_STORAGE = "maze_votes";
+#else
+static const char* const MAZE_STORAGE = "maze_small";
+#endif
+
 Maze::Maze() {
     reset();
 }
 
 void Maze::reset() {
-    memset(cells_, 0, sizeof(cells_));
+    memset(wall_votes_, 0, sizeof(wall_votes_));
+    memset(visited_, 0, sizeof(visited_));
 
-    // Initialize outer boundary walls
-    for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
-        cells_[x][0] |= WALL_SOUTH_BIT;
-        cells_[x][MAZE_HEIGHT - 1] |= WALL_NORTH_BIT;
+    // The start cell has a wall on its right in every standard maze. Held as one ordinary vote,
+    // so a clear reading overrules it if a practice maze is built differently.
+    observeWall(0, 0, DIR_EAST, true);
+}
+
+bool Maze::inMaze(int8_t x, int8_t y) {
+    return x >= 0 && x < MAZE_ACTIVE_SIZE && y >= 0 && y < MAZE_ACTIVE_SIZE;
+}
+
+bool Maze::isGoalCell(int8_t x, int8_t y) {
+    // Even-sized maze: the four cells around the middle. Odd-sized: the one middle cell.
+    const int8_t hi = MAZE_ACTIVE_SIZE / 2;
+    const int8_t lo = (MAZE_ACTIVE_SIZE % 2 == 0) ? (int8_t)(hi - 1) : hi;
+    return x >= lo && x <= hi && y >= lo && y <= hi;
+}
+
+const int8_t* Maze::votesFor(int8_t x, int8_t y, Direction dir) const {
+    if (!inMaze(x, y)) return nullptr;
+    switch (dir) {
+        case DIR_NORTH: return inMaze(x, y + 1) ? &wall_votes_[x][y][0]     : nullptr;
+        case DIR_EAST:  return inMaze(x + 1, y) ? &wall_votes_[x][y][1]     : nullptr;
+        case DIR_SOUTH: return inMaze(x, y - 1) ? &wall_votes_[x][y - 1][0] : nullptr;
+        case DIR_WEST:  return inMaze(x - 1, y) ? &wall_votes_[x - 1][y][1] : nullptr;
+        default:        return nullptr;
     }
-
-    for (int8_t y = 0; y < MAZE_HEIGHT; ++y) {
-        cells_[0][y] |= WALL_WEST_BIT;
-        cells_[MAZE_WIDTH - 1][y] |= WALL_EAST_BIT;
-    }
-
-    // Standard starting cell (0, 0) has an East wall in classical micromouse rules
-    cells_[0][0] |= WALL_EAST_BIT;
-    cells_[1][0] |= WALL_WEST_BIT;
 }
 
 bool Maze::hasWall(int8_t x, int8_t y, Direction dir) const {
-    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) {
-        return true; // Boundaries treated as walls
-    }
-
-    switch (dir) {
-        case DIR_NORTH: return (cells_[x][y] & WALL_NORTH_BIT) != 0;
-        case DIR_EAST:  return (cells_[x][y] & WALL_EAST_BIT)  != 0;
-        case DIR_SOUTH: return (cells_[x][y] & WALL_SOUTH_BIT) != 0;
-        case DIR_WEST:  return (cells_[x][y] & WALL_WEST_BIT)  != 0;
-        default:        return true;
-    }
+    const int8_t* votes = votesFor(x, y, dir);
+    return votes == nullptr || *votes > 0; // Outer walls are always there
 }
 
-void Maze::setWall(int8_t x, int8_t y, Direction dir) {
-    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return;
-
-    switch (dir) {
-        case DIR_NORTH:
-            cells_[x][y] |= WALL_NORTH_BIT;
-            if (y + 1 < MAZE_HEIGHT) cells_[x][y + 1] |= WALL_SOUTH_BIT;
-            break;
-        case DIR_EAST:
-            cells_[x][y] |= WALL_EAST_BIT;
-            if (x + 1 < MAZE_WIDTH) cells_[x + 1][y] |= WALL_WEST_BIT;
-            break;
-        case DIR_SOUTH:
-            cells_[x][y] |= WALL_SOUTH_BIT;
-            if (y - 1 >= 0) cells_[x][y - 1] |= WALL_NORTH_BIT;
-            break;
-        case DIR_WEST:
-            cells_[x][y] |= WALL_WEST_BIT;
-            if (x - 1 >= 0) cells_[x - 1][y] |= WALL_EAST_BIT;
-            break;
-        default:
-            break;
-    }
+bool Maze::isKnownOpen(int8_t x, int8_t y, Direction dir) const {
+    const int8_t* votes = votesFor(x, y, dir);
+    return votes != nullptr && *votes < 0;
 }
 
-void Maze::clearWall(int8_t x, int8_t y, Direction dir) {
-    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return;
+void Maze::observeWall(int8_t x, int8_t y, Direction dir, bool wall_present) {
+    int8_t* votes = const_cast<int8_t*>(votesFor(x, y, dir));
+    if (votes == nullptr) return;
+    if (wall_present  && *votes <  WALL_VOTE_LIMIT) (*votes)++;
+    if (!wall_present && *votes > -WALL_VOTE_LIMIT) (*votes)--;
+}
 
-    switch (dir) {
-        case DIR_NORTH:
-            cells_[x][y] &= ~WALL_NORTH_BIT;
-            if (y + 1 < MAZE_HEIGHT) cells_[x][y + 1] &= ~WALL_SOUTH_BIT;
-            break;
-        case DIR_EAST:
-            cells_[x][y] &= ~WALL_EAST_BIT;
-            if (x + 1 < MAZE_WIDTH) cells_[x + 1][y] &= ~WALL_WEST_BIT;
-            break;
-        case DIR_SOUTH:
-            cells_[x][y] &= ~WALL_SOUTH_BIT;
-            if (y - 1 >= 0) cells_[x][y - 1] &= ~WALL_NORTH_BIT;
-            break;
-        case DIR_WEST:
-            cells_[x][y] &= ~WALL_WEST_BIT;
-            if (x - 1 >= 0) cells_[x - 1][y] &= ~WALL_EAST_BIT;
-            break;
-        default:
-            break;
+void Maze::confirmOpen(int8_t x, int8_t y, Direction dir) {
+    int8_t* votes = const_cast<int8_t*>(votesFor(x, y, dir));
+    if (votes != nullptr) *votes = -WALL_VOTE_LIMIT;
+}
+
+void Maze::forgetWeakWalls() {
+    for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+        for (int8_t y = 0; y < MAZE_HEIGHT; ++y) {
+            for (int8_t side = 0; side < 2; ++side) {
+                if (wall_votes_[x][y][side] == 1) wall_votes_[x][y][side] = 0;
+            }
+        }
     }
 }
 
 bool Maze::isVisited(int8_t x, int8_t y) const {
-    if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return false;
-    return (cells_[x][y] & CELL_VISITED_BIT) != 0;
+    return inMaze(x, y) && visited_[x][y];
 }
 
 void Maze::setVisited(int8_t x, int8_t y) {
-    if (x >= 0 && x < MAZE_WIDTH && y >= 0 && y < MAZE_HEIGHT) {
-        cells_[x][y] |= CELL_VISITED_BIT;
-    }
+    if (inMaze(x, y)) visited_[x][y] = true;
 }
 
 Direction Maze::getAbsoluteDirection(Direction heading, int8_t relative_turn) {
@@ -113,28 +97,23 @@ Direction Maze::getAbsoluteDirection(Direction heading, int8_t relative_turn) {
 
 void Maze::updateCellWalls(int8_t x, int8_t y, Direction heading, bool wall_left, bool wall_front, bool wall_right) {
     setVisited(x, y);
-
-    Direction dir_front = getAbsoluteDirection(heading, 0);
-    Direction dir_right = getAbsoluteDirection(heading, 1);
-    Direction dir_left  = getAbsoluteDirection(heading, -1);
-
-    if (wall_front) setWall(x, y, dir_front);
-    if (wall_right) setWall(x, y, dir_right);
-    if (wall_left)  setWall(x, y, dir_left);
+    observeWall(x, y, getAbsoluteDirection(heading, 0),  wall_front);
+    observeWall(x, y, getAbsoluteDirection(heading, 1),  wall_right);
+    observeWall(x, y, getAbsoluteDirection(heading, -1), wall_left);
 }
 
 void Maze::printMazeToSerial(int8_t current_x, int8_t current_y) const {
     Serial.println("\n--- Current Maze Grid ---");
-    for (int8_t y = MAZE_HEIGHT - 1; y >= 0; --y) {
+    for (int8_t y = MAZE_ACTIVE_SIZE - 1; y >= 0; --y) {
         // Print north walls
-        for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+        for (int8_t x = 0; x < MAZE_ACTIVE_SIZE; ++x) {
             Serial.print("+");
             Serial.print(hasWall(x, y, DIR_NORTH) ? "---" : "   ");
         }
         Serial.println("+");
 
         // Print west/east walls and mouse location
-        for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+        for (int8_t x = 0; x < MAZE_ACTIVE_SIZE; ++x) {
             Serial.print(hasWall(x, y, DIR_WEST) ? "|" : " ");
             if (x == current_x && y == current_y) {
                 Serial.print(" M ");
@@ -144,11 +123,10 @@ void Maze::printMazeToSerial(int8_t current_x, int8_t current_y) const {
                 Serial.print("   ");
             }
         }
-        Serial.println(hasWall(MAZE_WIDTH - 1, y, DIR_EAST) ? "|" : " ");
+        Serial.println("|");
     }
-
     // Bottom south walls
-    for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+    for (int8_t x = 0; x < MAZE_ACTIVE_SIZE; ++x) {
         Serial.print("+---");
     }
     Serial.println("+");
@@ -156,8 +134,9 @@ void Maze::printMazeToSerial(int8_t current_x, int8_t current_y) const {
 
 void Maze::saveToNVS() {
     Preferences prefs;
-    prefs.begin("maze_grid", false);
-    prefs.putBytes("cells", cells_, sizeof(cells_));
+    prefs.begin(MAZE_STORAGE, false);
+    prefs.putBytes("votes", wall_votes_, sizeof(wall_votes_));
+    prefs.putBytes("visited", visited_, sizeof(visited_));
     prefs.putBool("valid", true);
     prefs.end();
     Serial.println("[MAZE] Mapped maze saved to Flash NVS!");
@@ -165,12 +144,13 @@ void Maze::saveToNVS() {
 
 bool Maze::loadFromNVS() {
     Preferences prefs;
-    prefs.begin("maze_grid", true);
+    prefs.begin(MAZE_STORAGE, true);
     if (!prefs.getBool("valid", false)) {
         prefs.end();
         return false;
     }
-    prefs.getBytes("cells", cells_, sizeof(cells_));
+    prefs.getBytes("votes", wall_votes_, sizeof(wall_votes_));
+    prefs.getBytes("visited", visited_, sizeof(visited_));
     prefs.end();
     Serial.println("[MAZE] Mapped maze loaded from Flash NVS!");
     return true;
@@ -178,7 +158,7 @@ bool Maze::loadFromNVS() {
 
 void Maze::clearNVS() {
     Preferences prefs;
-    prefs.begin("maze_grid", false);
+    prefs.begin(MAZE_STORAGE, false);
     prefs.clear();
     prefs.end();
     Serial.println("[MAZE] Flash NVS maze cleared.");
@@ -186,7 +166,7 @@ void Maze::clearNVS() {
 
 bool Maze::hasSavedMaze() const {
     Preferences prefs;
-    prefs.begin("maze_grid", true);
+    prefs.begin(MAZE_STORAGE, true);
     bool valid = prefs.getBool("valid", false);
     prefs.end();
     return valid;
@@ -221,12 +201,11 @@ Floodfill::Floodfill(const Maze& maze) : maze_(maze) {
 }
 
 void Floodfill::setGoalToCenter() {
-    memset(is_goal_, 0, sizeof(is_goal_));
-    // Standard 16x16 center cells
-    is_goal_[7][7] = true;
-    is_goal_[7][8] = true;
-    is_goal_[8][7] = true;
-    is_goal_[8][8] = true;
+    for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+        for (int8_t y = 0; y < MAZE_HEIGHT; ++y) {
+            is_goal_[x][y] = Maze::isGoalCell(x, y);
+        }
+    }
 }
 
 void Floodfill::setGoalToStart() {
@@ -348,7 +327,7 @@ static const int8_t DX[4] = { 0, 1, 0, -1 };
 static const int8_t DY[4] = { 1, 0, -1, 0 };
 
 static bool isCenterGoal(int8_t x, int8_t y) {
-    return (x == 7 || x == 8) && (y == 7 || y == 8);
+    return Maze::isGoalCell(x, y);
 }
 
 static bool isStartGoal(int8_t x, int8_t y) {
@@ -520,7 +499,7 @@ uint8_t Dijkstra::findFastestPath(int8_t start_x, int8_t start_y, Direction star
         for (uint8_t L = 1; L <= 15; ++L) {
             int8_t px = x + dx * (L - 1);
             int8_t py = y + dy * (L - 1);
-            if (maze_.hasWall(px, py, (Direction)h)) break;
+            if (!maze_.isKnownOpen(px, py, (Direction)h)) break;
 
             int8_t nx = x + dx * L;
             int8_t ny = y + dy * L;
@@ -540,7 +519,7 @@ uint8_t Dijkstra::findFastestPath(int8_t start_x, int8_t start_y, Direction star
 
             for (uint8_t m_step = 1; m_step <= 15; ++m_step) {
                 uint8_t s_dir = (m_step % 2 == 1) ? h : d1;
-                if (maze_.hasWall(cur_x, cur_y, (Direction)s_dir)) break;
+                if (!maze_.isKnownOpen(cur_x, cur_y, (Direction)s_dir)) break;
 
                 cur_x += DX[s_dir];
                 cur_y += DY[s_dir];
@@ -571,7 +550,7 @@ uint8_t Dijkstra::findFastestPath(int8_t start_x, int8_t start_y, Direction star
                     s_dir = ((m_idx / 2) % 2 == 0) ? d_c1 : d_c2;
                 }
 
-                if (maze_.hasWall(cur_x, cur_y, (Direction)s_dir)) break;
+                if (!maze_.isKnownOpen(cur_x, cur_y, (Direction)s_dir)) break;
 
                 cur_x += DX[s_dir];
                 cur_y += DY[s_dir];
@@ -694,7 +673,7 @@ Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_que
       current_strategy_(SPEEDRUN_HYBRID_AUTO),
       waiting_for_motion_(false),
       current_search_speed_(0.0f),
-      speed_scale_(1.0f), best_route_explored_(false), maze_changed_(false), map_reset_this_run_(false),
+      speed_scale_(1.0f), best_route_explored_(false), maze_changed_(false), trap_recovery_(0),
       search_phase_(PHASE_AT_CENTRE),
       curve_cell_x_(0), curve_cell_y_(0), curve_entry_dir_(DIR_NORTH), curve_cell_was_known_(false),
       sub_cmd_count_(0),
@@ -723,7 +702,7 @@ void Navigator::begin() {
 void Navigator::startSearchRun() {
     // The map is NOT wiped: everything learned in earlier attempts (including ones that ended in
     // a crash) is kept, so each search starts from what is already known and explores further.
-    map_reset_this_run_ = false;
+    trap_recovery_ = 0;
     maze_.setVisited(0, 0); // Start cell (0,0) is visited
     floodfill_.setGoalToCenter();
     floodfill_.recalculate();
@@ -757,6 +736,7 @@ bool Navigator::checkBestRouteExplored() {
         if (floodfill_.isAtGoal(x, y)) return true;
         Direction next = floodfill_.getNextDirection(x, y, heading);
         if (next == DIR_INVALID) return false;
+        if (!maze_.isKnownOpen(x, y, next)) return false; // The way on has never actually been seen open
         heading = next;
         if (next == DIR_NORTH) y++;
         else if (next == DIR_EAST)  x++;
@@ -1085,14 +1065,20 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         }
 
         if (path_len < 2) {
-            // Walled in. If that happens in the start cell before moving, the remembered map must
-            // be wrong (it came from a run that went badly): forget it once and start afresh.
-            const bool at_start = (pose_.cell_x == 0 && pose_.cell_y == 0);
-            if (at_start && state_ == NAV_STATE_EXPLORING_TO_CENTER && !map_reset_this_run_) {
-                Serial.println("[NAV] Remembered map has no way out of the start cell. Forgetting it and starting afresh.");
-                map_reset_this_run_ = true;
-                maze_.reset();
-                maze_.setVisited(0, 0);
+            // The map says the robot is walled in. Mazes are never built like that, so the map is
+            // wrong: first drop the walls that rest on a single reading, then, if that is not
+            // enough, forget the whole map and carry on exploring from here.
+            if (trap_recovery_ < 2) {
+                trap_recovery_++;
+                if (trap_recovery_ == 1) {
+                    Serial.println("[NAV] Map says walled in. Dropping walls seen only once and looking again.");
+                    maze_.forgetWeakWalls();
+                } else {
+                    Serial.println("[NAV] Still walled in. Forgetting the map and exploring afresh from here.");
+                    maze_.reset();
+                }
+                maze_.setVisited(pose_.cell_x, pose_.cell_y);
+                maze_changed_ = true;
                 floodfill_.recalculate();
                 step(ir, preview);
                 return;
@@ -1101,6 +1087,7 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
             state_ = NAV_STATE_ERROR;
             return;
         }
+        trap_recovery_ = 0;
 
         d0 = directionBetween({ pose_.cell_x, pose_.cell_y }, path[1]);
         diff = ((int8_t)d0 - (int8_t)pose_.current_dir + 4) % 4;
@@ -1155,6 +1142,9 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         if (plan_continues_straight) {
             exit_v = maze_.isVisited(next_cell.x, next_cell.y) ? search_speed : SEARCH_PROBE_SPEED_MM_S;
         }
+
+        // About to drive through the opening ahead, which settles that it is one
+        maze_.confirmOpen(pose_.cell_x, pose_.cell_y, d0);
 
 #if ENABLE_SEARCH_LOOKAHEAD
         // Look-ahead: if the next cell is new, or the plan turns there, drive only as far as its
@@ -1232,17 +1222,22 @@ void Navigator::stepAtCellEdge(const IRReadings& ir, const WallPreview& preview)
         sides_certain = (left_wall || left_open) && (right_wall || right_open);
 
         if (sides_certain) {
-            if (left_wall)  maze_.setWall(x, y, left);
-            if (right_wall) maze_.setWall(x, y, right);
+            maze_.observeWall(x, y, left,  left_wall);
+            maze_.observeWall(x, y, right, right_wall);
             floodfill_.recalculate();
         }
     }
 
     // The front wall is not known yet, so the floodfill treats it as open. If turning is still the
     // best way out of this cell, it is the best way whatever the front wall turns out to be.
-    const Direction best = sides_certain ? floodfill_.getNextDirection(x, y, heading) : DIR_INVALID;
+    Direction best = sides_certain ? floodfill_.getNextDirection(x, y, heading) : DIR_INVALID;
+
+    // Whatever the map says, never curve toward a side where either sensor sees a wall right now
+    if (best == left  && (ir.wall_left  || preview.left_wall))  best = DIR_INVALID;
+    if (best == right && (ir.wall_right || preview.right_wall)) best = DIR_INVALID;
 
     if (best == left || best == right) {
+        maze_.confirmOpen(x, y, best); // About to drive through it
         const float v = current_search_speed_;
         curve_cell_x_ = x;
         curve_cell_y_ = y;
@@ -1270,12 +1265,10 @@ void Navigator::stepAtCellEdge(const IRReadings& ir, const WallPreview& preview)
 // sensor was facing that cell's front wall, which completes what is known about the cell.
 void Navigator::stepAfterCurve(const WallPreview& preview) {
     if (!curve_cell_was_known_) {
-        if (preview.front_wall) {
-            maze_.setWall(curve_cell_x_, curve_cell_y_, curve_entry_dir_);
-        }
         // Only count the cell as explored if the front wall reading was clear either way;
         // otherwise it stays unexplored and the speed run will not be routed through it on trust.
         if (preview.front_wall || preview.front_open) {
+            maze_.observeWall(curve_cell_x_, curve_cell_y_, curve_entry_dir_, preview.front_wall);
             maze_.setVisited(curve_cell_x_, curve_cell_y_);
             maze_changed_ = true;
         }

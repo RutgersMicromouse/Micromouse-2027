@@ -45,6 +45,7 @@ Everything goes through PlatformIO. `pio run` on its own builds only `main`.
 | :--- | :--- |
 | `pio run -e competition -t upload` | **Competition firmware: radios off, hand-wave control only** |
 | `pio run -e main -t upload` | Same firmware plus the Bluetooth / Wi-Fi debug console |
+| `pio run -e test3x3 -t upload` | `main` for the 3x3 practice maze (start in a corner cell, goal = the middle cell) |
 | `pio run -e ota -t upload` | `main`, flashed over the robot's Wi-Fi hotspot |
 | `pio run -e calibration -t upload` | `main` plus motor and dyno calibration commands |
 | `pio run -e motor_test -t upload` | Bench test for one peripheral (also `ir_test`, `imu_test`, `battery_test`, `ble_test`, `wifi_test`) |
@@ -54,7 +55,8 @@ Before flashing after a change:
 
 ```powershell
 pio run -e main -e competition -e calibration
-python sim/tests/test_firmware_nav.py        # runs the real navigation code on every maze (pip install ziglang)
+python sim/tests/test_firmware_nav.py        # the real navigation code on thousands of mazes (pip install ziglang)
+python sim/tests/test_firmware_drive.py      # the real firmware driving a simulated robot
 python sim/tests/test_desktop_suite.py
 python sim/verify_headless.py --mazes 1 --trials 1
 ```

@@ -179,8 +179,20 @@
 // 3. MAZE GEOMETRY
 // ==============================================================================
 
-#define MAZE_WIDTH             16
+#define MAZE_WIDTH             16       // Storage is always sized for a full competition maze
 #define MAZE_HEIGHT            16
+
+// How much of that grid is actually maze. 16 = a full competition maze, goal = the four centre
+// cells. The `test3x3` build sets this to 3: a 3x3 practice maze in the bottom-left corner, start
+// cell (0,0), goal = the centre cell (1,1). Everything outside it is treated as solid wall.
+#ifndef MAZE_ACTIVE_SIZE
+#define MAZE_ACTIVE_SIZE       16
+#endif
+
+// Wall Memory: every sensor reading of a wall is a vote, +1 for "wall" and -1 for "open".
+// A wall is believed while its votes are above zero, so one bad reading is outvoted the next
+// time the robot looks. Speed runs only use openings that have actually been seen open.
+#define WALL_VOTE_LIMIT        3        // Votes stop counting at +/- this, so beliefs can still change
 #define MAZE_CELL_SIZE_MM      180.0f   // Standard micromouse cell dimension (180 mm)
 #define HALF_CELL_SIZE_MM      (MAZE_CELL_SIZE_MM / 2.0f)
 

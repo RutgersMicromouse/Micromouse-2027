@@ -603,10 +603,21 @@ bool IRSensors::calibrateInCell(uint16_t sample_count) {
     Serial.printf("[CALIB] Measured Cell Averages: L90=%d, L45=%d, FL=%d, FR=%d, R45=%d, R90=%d\n",
                   avg_l90, avg_l45, avg_fl, avg_fr, avg_r45, avg_r90);
 
-    // Sanity check: Ensure side walls are present for centering baseline
-    if (avg_l45 < 100 || avg_r45 < 100) {
+    // The 45° sensors point forward as well as sideways, so depending on where they are mounted
+    // they may be looking at the side wall of the NEXT cell, which can have a gap in it. If one
+    // of them sees nothing while the other does, borrow from the good side, scaled by how the two
+    // 90° sensors compare (which both do see this cell's walls).
+    const bool left_ok  = avg_l45 >= 100;
+    const bool right_ok = avg_r45 >= 100;
+    if (!left_ok && !right_ok) {
         Serial.println("[CALIB] ERROR: Side sensor readings too low! Ensure robot is centered between left/right walls.");
         return false;
+    }
+    if (!left_ok || !right_ok) {
+        float left_to_right = (avg_l90 > 100 && avg_r90 > 100) ? (float)avg_r90 / (float)avg_l90 : 1.0f;
+        if (!right_ok) avg_r45 = (uint16_t)((float)avg_l45 * left_to_right);
+        if (!left_ok)  avg_l45 = (uint16_t)((float)avg_r45 / left_to_right);
+        Serial.println("[CALIB] Note: one 45° sensor saw no wall (gap ahead on that side). Estimated it from the other side.");
     }
 
     // Set nominal center values for steering

@@ -141,6 +141,15 @@ The robot has no buttons or switches. Power it on, wait for the LED to turn soli
 2. **Yellow? Wave once more.** The map is kept, so the next search goes straight for the unexplored part. If a search goes wrong (crash, or you lift the robot out), nothing is lost: what it learned is saved, and the next search carries on from there. Six waves wipe the map if you move to a different maze.
 3. **2, 3, or 4 waves: speed run.** The first speed run uses tier 1 (60 % speed). Each one that reaches the centre moves the next up a tier (80 %, then 100 %); one that is aborted moves it back down. The tier is shown as 1, 2, or 3 🔵 blue blinks before the countdown.
 
+### Practising in the 3x3 maze
+Flash the practice build: `pio run -e test3x3 -t upload`. It is the same firmware with the maze size set to 3.
+
+* Put the robot in a **corner cell**, facing along the wall so the rest of the maze is ahead and to its right. That cell is the start, (0,0).
+* The goal is the **middle cell**.
+* Everything works as in a full maze: 5 waves to calibrate, 1 wave to search (out to the middle and back), then 2 to 4 waves for speed runs.
+* It keeps its own saved map, so practising never disturbs a map of a full maze. Six waves clear it when you rebuild the walls.
+* Flash `competition` (or `main`) again before running a full-size maze.
+
 ### What you will see
 1. **Each wave** it counts: one short ⚪ white blink.
 2. **About 1.5 seconds after your last wave**: it blinks the count back to you in the action's color. For a speed run, 1 to 3 blue blinks follow, showing the speed tier.
@@ -336,12 +345,13 @@ The timing, safety, and geometry rules the firmware is built around. Any change 
 Before committing or flashing firmware to physical hardware:
 1. **Compilation Gate**: The robot firmware and every bench test must compile with 0 errors:
    ```powershell
-   pio run -e main -e competition -e ota -e calibration
+   pio run -e main -e competition -e test3x3 -e ota -e calibration
    pio run -e motor_test -e ir_test -e imu_test -e battery_test -e ble_test -e wifi_test
    ```
-2. **Firmware Navigation Test**: the robot's real navigation code must solve every maze on the PC without touching a wall (needs `pip install ziglang` once):
+2. **Firmware Tests on the PC** (need `pip install ziglang` once). The first runs the real navigation code through thousands of mazes; the second drives a simulated robot with the real drivers, motion controller and navigation:
    ```powershell
    python sim/tests/test_firmware_nav.py
+   python sim/tests/test_firmware_drive.py
    ```
 3. **Algorithm Test Suite**: Desktop test suite must pass with 100% green assertions:
    ```powershell
