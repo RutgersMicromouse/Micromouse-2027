@@ -31,6 +31,11 @@ public:
     // Check if Motoron communication is alive
     bool isConnected();
 
+    // Read Motoron status flags for hardware diagnostics.
+    uint16_t getStatusFlags();
+    int16_t getLeftCurrentSpeed();
+    int16_t getRightCurrentSpeed();
+
     // Reset error flags if any
     void clearErrors();
 

@@ -4,7 +4,7 @@
 
 // =============================================================================
 // Ratatouieee Micromouse Configuration Header
-// Target: Teensy 4.0 (ARM Cortex-M7 @ 600MHz)
+// Target: Teensy 3.2 (ARM Cortex-M4 @ 72MHz)
 // Schematic: Schematic_ratatouieee_2026-10-02
 // =============================================================================
 
@@ -36,10 +36,8 @@
 // Status / Debug LED
 #define PIN_STATUS_LED         13  // On-board LED_BUILTIN
 
-// Uncomment to stream IMU heading, gyro, and accelerometer data during motion.
-#define DEBUG_IMU_STREAM
-// Uncomment to stream requested motor commands and measured wheel speeds.
-#define DEBUG_MOTOR_COMMAND_STREAM
+// Define DEBUG_IMU_STREAM or DEBUG_MOTOR_COMMAND_STREAM locally when tuning.
+// Serial output in the 500 Hz control loop is intentionally disabled by default.
 
 // -----------------------------------------------------------------------------
 // 2. I2C DEVICE ADDRESSES
@@ -56,6 +54,14 @@
 #define MOTOR_MAX_SPEED        800   // Max Motoron speed command (-800 to 800)
 #define MOTOR_COMMAND_SCALE    1.0f // PID output is already limited to Motoron's command range
 #define MOTOR_RIGHT_COMPENSATION 1.0f // Keep both motor channels on the same command scale
+// Positive software speed must move both wheels forward.  The left motor uses
+// the original positive channel polarity; the right motor is mirror-mounted.
+// Change only the affected value between +1 and -1 after a lifted-wheel test.
+#define MOTOR_LEFT_DIRECTION   1
+#define MOTOR_RIGHT_DIRECTION  -1
+// During a forward left correction, the right wheel needs extra authority on
+// this chassis.  This is applied only to translating turns, never pivots.
+#define LEFT_TURN_RIGHT_WHEEL_BOOST  1.0f
 
 // -----------------------------------------------------------------------------
 // 3. PHYSICAL ROBOT CONSTANTS
@@ -95,16 +101,17 @@
 #define CONTROL_DT_S           (1.0f / CONTROL_FREQ_HZ) // 0.002 seconds (2 ms)
 
 // Velocity & Acceleration Profiles
-#define SEARCH_SPEED_MM_S      52.0f   // Reduced exploration speed for sensor response
+#define SEARCH_SPEED_MM_S      45.0f   // Slow but high enough to overcome drivetrain friction
 #define FAST_SPEED_MM_S        140.0f  // Reduced speed-run velocity
 #define MAX_SPEED_MM_S         200.0f  // Reduced physical ceiling
 #define MIN_SPEED_MM_S         20.0f
 
-#define SEARCH_ACCEL_MM_S2     240.0f  // Reduced exploration acceleration
+#define SEARCH_ACCEL_MM_S2     120.0f  // Gentle acceleration for wall following
 #define FAST_ACCEL_MM_S2       500.0f  // Reduced speed-run acceleration
 #define DECEL_MM_S2            360.0f  // Controlled deceleration
 
-#define TURN_SPEED_DEG_S       72.0f   // Reduced in-place pivot turn rate
+#define TURN_SPEED_DEG_S       30.0f   // Deliberately slow in-place pivot turn rate
+#define TURN_MAX_MOTOR_COMMAND 100.0f  // Safe pivot-command limit for initial tests
 #define TURN_ACCEL_DEG_S2      400.0f  // Reduced angular acceleration
 
 #define ENABLE_IR_WALL_CENTERING
@@ -120,7 +127,7 @@
 #define SHARP_MIN_DIST_MM      15.0f   // Physical close-range threshold
 #define SHARP_MAX_DIST_MM      160.0f  // Physical far-range threshold
 
-// Raw ADC Thresholds (Teensy 4.0 10-bit ADC, 3.3V reference)
+// Raw ADC Thresholds (Teensy 3.2 10-bit ADC, 3.3V reference)
 #define IR_WALL_DETECT_FRONT   220     // Front wall if raw ADC is at or above this value
 #define IR_WALL_DETECT_SIDE    200     // Side wall if raw ADC is at or above this value
 
@@ -129,3 +136,11 @@
 #define NOMINAL_SIDE_WALL_MM   49.0f   // Distance from side sensor to wall when centered in cell
 #define FRONT_WALL_STOP_MM     60.0f   // Stop with additional clearance from a front wall
 #define IR_FRONT_STOP_DIST     420     // Front raw ADC reading when at front stop distance
+
+// A move is considered complete only after the encoder-measured travel reaches
+// this tolerance.  This compensates for one/two tick quantization error.
+#define MOTION_DISTANCE_TOLERANCE_MM  2.0f
+// Do not classify the expected wall at the end of a cell as a collision.  A
+// front sensor placed forward of the axle normally reads about this close when
+// the axle is centered in a walled cell.
+#define FRONT_WALL_EARLY_STOP_REMAINING_MM  25.0f

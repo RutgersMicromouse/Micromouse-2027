@@ -11,11 +11,15 @@ IRSensorArray::IRSensorArray()
       post_rising_l_(false),
       post_falling_l_(false),
       post_rising_r_(false),
-      post_falling_r_(false) {
+      post_falling_r_(false),
+      filter_initialized_(false) {
     memset(&readings_, 0, sizeof(readings_));
 }
 
 void IRSensorArray::begin() {
+    // Thresholds below are specified for a 10-bit ADC scale.
+    analogReadResolution(10);
+    analogReadAveraging(4);
     pinMode(PIN_IR_FRONT, INPUT);
     pinMode(PIN_IR_FRONT_LEFT, INPUT);
     pinMode(PIN_IR_REAR_LEFT, INPUT);
@@ -56,13 +60,23 @@ void IRSensorArray::update() {
     uint16_t raw_front_right = readAnalogOversampled(PIN_IR_FRONT_RIGHT);
     uint16_t raw_rear_right = readAnalogOversampled(PIN_IR_REAR_RIGHT);
 
-    // 2. Exponential moving average low-pass filter
+    // 2. Exponential moving average low-pass filter.  Seed it from the first
+    // physical sample so the first decision uses a real sensor value.
     const float alpha = 0.5f;
-    readings_.front = (uint16_t)(alpha * raw_front + (1.0f - alpha) * readings_.front);
-    readings_.front_left = (uint16_t)(alpha * raw_front_left + (1.0f - alpha) * readings_.front_left);
-    readings_.rear_left = (uint16_t)(alpha * raw_rear_left + (1.0f - alpha) * readings_.rear_left);
-    readings_.front_right = (uint16_t)(alpha * raw_front_right + (1.0f - alpha) * readings_.front_right);
-    readings_.rear_right = (uint16_t)(alpha * raw_rear_right + (1.0f - alpha) * readings_.rear_right);
+    if (!filter_initialized_) {
+        readings_.front = raw_front;
+        readings_.front_left = raw_front_left;
+        readings_.rear_left = raw_rear_left;
+        readings_.front_right = raw_front_right;
+        readings_.rear_right = raw_rear_right;
+        filter_initialized_ = true;
+    } else {
+        readings_.front = (uint16_t)(alpha * raw_front + (1.0f - alpha) * readings_.front);
+        readings_.front_left = (uint16_t)(alpha * raw_front_left + (1.0f - alpha) * readings_.front_left);
+        readings_.rear_left = (uint16_t)(alpha * raw_rear_left + (1.0f - alpha) * readings_.rear_left);
+        readings_.front_right = (uint16_t)(alpha * raw_front_right + (1.0f - alpha) * readings_.front_right);
+        readings_.rear_right = (uint16_t)(alpha * raw_rear_right + (1.0f - alpha) * readings_.rear_right);
+    }
 
     // 3. Compute physical distances in millimeters via Sharp 0A51SK curve
     readings_.front_mm    = voltageToDistanceMM(adcToVoltage(readings_.front));
@@ -106,11 +120,14 @@ void IRSensorArray::update() {
         : valid_front_right ? readings_.front_right_mm : readings_.rear_right_mm;
 
     if (valid_left_guide && valid_right_guide) {
-        readings_.centering_error = (left_dist - right_dist) / 50.0f;
+        // Positive means the mouse is closer to the left wall and must steer
+        // right; negative means it is closer to the right wall and must steer
+        // left.  This convention is consumed by MotionController.
+        readings_.centering_error = (right_dist - left_dist) / 50.0f;
     } else if (valid_left_guide) {
-        readings_.centering_error = (left_dist - nominal_side_dist_mm_) / 25.0f;
+        readings_.centering_error = (nominal_side_dist_mm_ - left_dist) / 25.0f;
     } else if (valid_right_guide) {
-        readings_.centering_error = (nominal_side_dist_mm_ - right_dist) / 25.0f;
+        readings_.centering_error = (right_dist - nominal_side_dist_mm_) / 25.0f;
     } else {
         readings_.centering_error = 0.0f;
     }

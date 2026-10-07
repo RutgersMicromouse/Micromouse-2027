@@ -80,6 +80,7 @@ private:
     bool post_falling_l_;
     bool post_rising_r_;
     bool post_falling_r_;
+    bool filter_initialized_;
 };
 
 extern IRSensorArray ir_sensors;

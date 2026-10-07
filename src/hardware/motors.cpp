@@ -57,9 +57,8 @@ void MotorController::setSpeeds(int16_t left_speed, int16_t right_speed) {
     left_speed = scaledMotorCommand(left_speed, 1.0f);
     right_speed = scaledMotorCommand(right_speed, MOTOR_RIGHT_COMPENSATION);
 
-    // Right motor is mounted symmetrically opposing left motor, so invert right direction
-    motoron_.setSpeed(MOTOR_LEFT_CHANNEL, left_speed);
-    motoron_.setSpeed(MOTOR_RIGHT_CHANNEL, -right_speed);
+    motoron_.setSpeed(MOTOR_LEFT_CHANNEL, MOTOR_LEFT_DIRECTION * left_speed);
+    motoron_.setSpeed(MOTOR_RIGHT_CHANNEL, MOTOR_RIGHT_DIRECTION * right_speed);
 
     last_command_time_ = millis();
 }
@@ -67,13 +66,13 @@ void MotorController::setSpeeds(int16_t left_speed, int16_t right_speed) {
 void MotorController::setLeftSpeed(int16_t speed) {
     if (!is_initialized_) return;
     speed = scaledMotorCommand(speed, 1.0f);
-    motoron_.setSpeed(MOTOR_LEFT_CHANNEL, speed);
+    motoron_.setSpeed(MOTOR_LEFT_CHANNEL, MOTOR_LEFT_DIRECTION * speed);
 }
 
 void MotorController::setRightSpeed(int16_t speed) {
     if (!is_initialized_) return;
     speed = scaledMotorCommand(speed, MOTOR_RIGHT_COMPENSATION);
-    motoron_.setSpeed(MOTOR_RIGHT_CHANNEL, -speed);
+    motoron_.setSpeed(MOTOR_RIGHT_CHANNEL, MOTOR_RIGHT_DIRECTION * speed);
 }
 
 void MotorController::stop(bool brake) {
@@ -90,6 +89,21 @@ void MotorController::stop(bool brake) {
 
 bool MotorController::isConnected() {
     return is_initialized_;
+}
+
+uint16_t MotorController::getStatusFlags() {
+    if (!is_initialized_) return 0;
+    return motoron_.getStatusFlags();
+}
+
+int16_t MotorController::getLeftCurrentSpeed() {
+    if (!is_initialized_) return 0;
+    return motoron_.getCurrentSpeed(MOTOR_LEFT_CHANNEL);
+}
+
+int16_t MotorController::getRightCurrentSpeed() {
+    if (!is_initialized_) return 0;
+    return motoron_.getCurrentSpeed(MOTOR_RIGHT_CHANNEL);
 }
 
 void MotorController::clearErrors() {

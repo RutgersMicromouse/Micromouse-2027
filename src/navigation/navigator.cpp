@@ -4,9 +4,6 @@
 // current wall map contains no route to the goal.
 #define ENABLE_NO_ROUTE_OPENING_RECOVERY
 
-// Comment this out to let flood-fill choose the direction in every cell.
-#define ENABLE_STRAIGHT_WHEN_NO_SIDE_WALLS
-
 // Comment this out to silence per-step sensor and route-decision diagnostics.
 #define DEBUG_NAV_DECISIONS
 
@@ -95,19 +92,11 @@ Navigator::StepResult Navigator::stepExplore() {
         return StepResult::GoalReached;
     }
 
-    // 4. Prefer straight ahead when all three sensors report an open cell
-    // and neither side has a wall.
+    // 4. Flood-fill already prefers straight movement when it has the lowest
+    // cost.  Do not override it in open cells, or the mouse can drive away
+    // from a shorter branch simply because it happened to enter heading north.
     Direction next_dir = DIR_INVALID;
     const char* decision_source = "flood-fill";
-#ifdef ENABLE_STRAIGHT_WHEN_NO_SIDE_WALLS
-    if (!ir_sensors.hasFrontWall() &&
-        !ir_sensors.hasLeftWall() &&
-        !ir_sensors.hasRightWall()) {
-        next_dir = current_heading_;
-        decision_source = "clear-cell straight preference";
-        Serial.println("[NAV] No front or side walls detected; continuing straight.");
-    }
-#endif
     if (next_dir == DIR_INVALID) {
         next_dir = solver_.getNextDirection(current_pos_.x, current_pos_.y, current_heading_);
     }
@@ -163,13 +152,13 @@ Navigator::StepResult Navigator::stepExplore() {
 
     if (turn_code == 1) {
         // 90° Turn Right
-        motion.turnInPlace(-90.0f, TURN_SPEED_DEG_S);
+        if (!motion.turnInPlace(-90.0f, TURN_SPEED_DEG_S)) return StepResult::MotionFailed;
     } else if (turn_code == 3) {
         // 90° Turn Left
-        motion.turnInPlace(90.0f, TURN_SPEED_DEG_S);
+        if (!motion.turnInPlace(90.0f, TURN_SPEED_DEG_S)) return StepResult::MotionFailed;
     } else if (turn_code == 2) {
         // 180° Turn Around
-        motion.turnInPlace(180.0f, TURN_SPEED_DEG_S);
+        if (!motion.turnInPlace(180.0f, TURN_SPEED_DEG_S)) return StepResult::MotionFailed;
     }
 
     current_heading_ = next_dir;
@@ -247,9 +236,10 @@ bool Navigator::exploreToStart() {
     // Turn to face North in start cell
     if (current_heading_ != DIR_NORTH) {
         int8_t turn_code = (DIR_NORTH - current_heading_ + 4) & 0x03;
-        if (turn_code == 1)      motion.turnInPlace(-90.0f);
-        else if (turn_code == 3) motion.turnInPlace(90.0f);
-        else if (turn_code == 2) motion.turnInPlace(180.0f);
+        bool turned = (turn_code == 1) ? motion.turnInPlace(-90.0f) :
+                      (turn_code == 3) ? motion.turnInPlace(90.0f) :
+                                         motion.turnInPlace(180.0f);
+        if (!turned) return false;
         current_heading_ = DIR_NORTH;
     }
 
@@ -286,11 +276,11 @@ bool Navigator::runFastSpeed() {
                 return false;
             }
         } else if (seg.action == ACTION_TURN_LEFT) {
-            motion.turnInPlace(seg.value, TURN_SPEED_DEG_S);
+            if (!motion.turnInPlace(seg.value, TURN_SPEED_DEG_S)) return false;
         } else if (seg.action == ACTION_TURN_RIGHT) {
-            motion.turnInPlace(seg.value, TURN_SPEED_DEG_S);
+            if (!motion.turnInPlace(seg.value, TURN_SPEED_DEG_S)) return false;
         } else if (seg.action == ACTION_TURN_AROUND) {
-            motion.turnInPlace(seg.value, TURN_SPEED_DEG_S);
+            if (!motion.turnInPlace(seg.value, TURN_SPEED_DEG_S)) return false;
         } else if (seg.action == ACTION_STOP) {
             motion.emergencyStop();
             break;

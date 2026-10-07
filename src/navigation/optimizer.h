@@ -39,6 +39,7 @@ public:
     void printPath() const;
 
 private:
-    PathSegment segments_[TOTAL_CELLS];
+    // A worst-case cell path can alternate a turn and a forward segment.
+    PathSegment segments_[TOTAL_CELLS * 2 + 1];
     uint16_t segment_count_;
 };

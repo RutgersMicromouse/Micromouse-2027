@@ -7,7 +7,7 @@
 // =============================================================================
 // Ratatouieee Micromouse Firmware - Main Entry Point
 // Rutgers Micromouse 2026-2027
-// Target: Teensy 4.0 (NXP i.MX RT1062, ARM Cortex-M7 @ 600MHz)
+// Target: Teensy 3.2 (ARM Cortex-M4 @ 72MHz)
 // =============================================================================
 
 RobotState current_robot_state = STATE_IDLE;
@@ -15,14 +15,14 @@ bool continuous_telemetry = false;
 uint32_t last_telemetry_time = 0;
 
 // #define SENSOR_DISTANCE_DIAGNOSTIC_MODE
-// #define RUN_MOTOR_STARTUP_TEST
+// #define RUN_MOTOR_STARTUP_TEST  // Never enable for normal gesture startup.
 // Uncomment to continuously print IR raw values, distances, and wall decisions.
 // #define DEBUG_IR_SENSOR_STREAM
 
 void printBanner() {
     Serial.println("\n========================================================");
     Serial.println("       RATATOUIEEE - RUTGERS MICROMOUSE 2026-2027       ");
-    Serial.println("  Hardware: Teensy 4.0 | Motoron M2T256 | MinIMU-9 v5   ");
+    Serial.println("  Hardware: Teensy 3.2 | Motoron M2T256 | MinIMU-9 v5   ");
     Serial.println("  Sensors: 5x Analog IR (FIR, L1, L2, R1, R2) | Encoders");
     Serial.println("========================================================");
 }
@@ -50,7 +50,7 @@ void testSingleWheel(bool right) {
         return;
     }
 
-    Serial.printf("[MOTOR TEST] Testing %s wheel for 1 second. Keep the robot lifted.\n",
+    Serial.printf("[MOTOR TEST] Testing %s wheel forward for 1 second. Keep the robot lifted.\n",
                   right ? "right" : "left");
     motors.stop(true);
     delay(100);
@@ -276,15 +276,27 @@ void runMotorStartupTest() {
         return;
     }
 
-    Serial.println("[MOTOR TEST] Both wheels will run forward for 5 seconds.");
-    Serial.println("[MOTOR TEST] Keep the wheels lifted and clear.");
-    delay(1000);
-
-    motors.setSpeeds(200, 200);
+    constexpr int16_t test_speed = 400;
+    constexpr uint32_t test_duration_ms = 3000;
+    Serial.printf("[MOTOR TEST] Both wheels will start in 5 seconds at command %d for %lu ms.\n",
+                  test_speed, static_cast<unsigned long>(test_duration_ms));
+    Serial.println("[MOTOR TEST] Keep the robot securely lifted with wheels clear.");
     delay(5000);
-    motors.stop(true);
 
-    Serial.println("[MOTOR TEST] Complete. Motors stopped.");
+    uint32_t test_start_time = millis();
+    uint32_t last_status_time = test_start_time;
+    while (millis() - test_start_time < test_duration_ms) {
+        motors.setSpeeds(test_speed, test_speed);
+        if (millis() - last_status_time >= 1000) {
+            last_status_time = millis();
+            Serial.printf("[MOTOR TEST] current-speed L=%d R=%d\n",
+                          motors.getLeftCurrentSpeed(),
+                          motors.getRightCurrentSpeed());
+        }
+        delay(100);
+    }
+    motors.stop(false);
+    Serial.println("[MOTOR TEST] Complete; motors set to coast.");
 }
 
 void setup() {

@@ -8,7 +8,7 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 
 | Subsystem | Component | Interface | Pin / Address | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **Microcontroller** | **Teensy 4.0** | ARM Cortex-M7 @ 600MHz | — | 1MB RAM, 2MB Flash, Hardware FPU |
+| **Microcontroller** | **Teensy 3.2** | ARM Cortex-M4 @ 72MHz | — | 64KB RAM, 256KB Flash, Hardware FPU |
 | **Motor Driver** | **Pololu Motoron M2T256** | I2C (`Wire`) | Addr `0x10` (16) | Dual-channel DC driver, 12V motor supply |
 | **Left Motor (LMOT)** | Pololu Micro Metal Gearmotor | Motoron Ch 1 | M1A / M1B | Channel 1 on Motoron |
 | **Right Motor (RMOT)**| Pololu Micro Metal Gearmotor | Motoron Ch 2 | M2A / M2B | Channel 2 on Motoron (direction inverted) |
@@ -29,7 +29,7 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 
 ```
 Micromouse-2027/
-├── platformio.ini               # PlatformIO Teensy 4.0 build configuration
+    ├── platformio.ini               # PlatformIO Teensy 3.2 build configuration
 ├── include/
 │   ├── config.h                 # Global hardware pins, dimensions, rates, and thresholds
 │   ├── maze_constants.h         # Standard 16x16 maze bitmasks and direction utilities

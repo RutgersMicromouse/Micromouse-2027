@@ -18,6 +18,7 @@ public:
 
     // Wall inspection and mutation
     bool hasWall(int8_t x, int8_t y, Direction dir) const;
+    bool isWallKnown(int8_t x, int8_t y, Direction dir) const;
     void setWall(int8_t x, int8_t y, Direction dir, bool present = true);
 
     bool isVisited(int8_t x, int8_t y) const;
@@ -33,4 +34,8 @@ public:
 
 private:
     uint8_t cells_[MAZE_WIDTH][MAZE_HEIGHT];
+    uint8_t known_west_[MAZE_WIDTH][MAZE_HEIGHT];
+
+    static uint8_t knownBitFromDir(Direction dir);
+    void setWallKnown(int8_t x, int8_t y, Direction dir);
 };

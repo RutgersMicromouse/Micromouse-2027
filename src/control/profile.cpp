@@ -96,6 +96,29 @@ void TrapezoidalProfile::update(float dt_seconds) {
     }
 }
 
+void TrapezoidalProfile::updateWithFeedback(float dt_seconds, float measured_distance) {
+    if (is_finished_ || dt_seconds <= 0.0f) return;
+
+    current_pos_ = constrain(fabsf(measured_distance), 0.0f, total_distance_);
+    const float remaining = total_distance_ - current_pos_;
+    if (remaining <= 0.001f) {
+        current_pos_ = total_distance_;
+        current_vel_ = end_speed_;
+        is_finished_ = true;
+        return;
+    }
+
+    // Highest speed from which we can still reach the requested end speed over
+    // the remaining encoder-measured distance (v^2 = u^2 + 2as).
+    const float braking_speed = sqrtf(end_speed_ * end_speed_ + 2.0f * decel_ * remaining);
+    const float target_speed = min(max_speed_, braking_speed);
+    if (current_vel_ < target_speed) {
+        current_vel_ = min(target_speed, current_vel_ + accel_ * dt_seconds);
+    } else {
+        current_vel_ = max(target_speed, current_vel_ - decel_ * dt_seconds);
+    }
+}
+
 void TrapezoidalProfile::stopNow() {
     is_finished_ = true;
     current_vel_ = 0.0f;
