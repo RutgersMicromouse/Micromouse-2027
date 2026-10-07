@@ -2,6 +2,7 @@
 #include <Wire.h>
 
 #include "config.h"
+
 #include "hardware/ble_debug.h"
 #include "hardware/battery.h"
 #include "hardware/imu.h"
@@ -11,10 +12,11 @@
 // =============================================================
 // BLE TELEMETRY TEST
 //
-// Battery
-// Heading
-// Left Encoder
-// Right Encoder
+// Sends:
+//   Battery
+//   Heading
+//   Left Encoder
+//   Right Encoder
 // =============================================================
 
 
@@ -27,9 +29,9 @@ BatteryMonitor battery(
     BATTERY_DIVIDER_RATIO
 );
 
-
-IMU imu;
-
+// Do not name this "imu" because the Adafruit BNO055 library
+// already defines a namespace called "imu".
+IMU robotImu;
 
 Encoders encoders;
 
@@ -40,13 +42,10 @@ Encoders encoders;
 
 bool was_connected = false;
 
-
 unsigned long last_update_us = 0;
-
 
 // Update BLE characteristic values every 100 ms
 unsigned long last_telemetry_update_ms = 0;
-
 
 const unsigned long TELEMETRY_UPDATE_MS = 100;
 
@@ -61,11 +60,9 @@ void setup() {
         115200
     );
 
-
     delay(
         2000
     );
-
 
     Serial.println();
 
@@ -98,7 +95,6 @@ void setup() {
         PIN_I2C_SCL
     );
 
-
     Wire.setClock(
         I2C_CLOCK_SPEED
     );
@@ -112,12 +108,10 @@ void setup() {
         "Starting IMU..."
     );
 
-
-    imu.begin();
-
+    robotImu.begin();
 
     if (
-        imu.isHardwareConnected()
+        robotImu.isHardwareConnected()
     ) {
 
         Serial.println(
@@ -133,15 +127,24 @@ void setup() {
 
 
     // =========================================================
-    // ENCODERS
-    // =========================================================
+// ENCODERS
+// =========================================================
 
     Serial.println(
         "Starting encoders..."
     );
 
+    // Enable board power required by encoder hardware
+    pinMode(PIN_MOTOR_BAT_CTRL, OUTPUT);
+    digitalWrite(PIN_MOTOR_BAT_CTRL, HIGH);
+
+    delay(300);
 
     encoders.begin();
+
+    Serial.println(
+        "Encoders initialized."
+    );
 
 
     // =========================================================
@@ -152,12 +155,10 @@ void setup() {
         BLE_DEVICE_NAME
     );
 
-
     Serial.printf(
         "Advertising as '%s'\n",
         BLE_DEVICE_NAME
     );
-
 
     Serial.println(
         "Waiting for phone..."
@@ -186,7 +187,6 @@ void loop() {
     unsigned long now_us =
         micros();
 
-
     float dt =
         (
             now_us
@@ -196,7 +196,6 @@ void loop() {
         /
         1000000.0f;
 
-
     last_update_us =
         now_us;
 
@@ -205,47 +204,23 @@ void loop() {
     // UPDATE ENCODERS
     // =========================================================
 
+    // All encoder reading/calculation logic happens in
+    // hardware/encoders.cpp.
     encoders.update(
         dt
     );
 
-
+    // Pull the already-computed encoder state.
     EncoderState enc =
         encoders.getState();
-
-
-    // =========================================================
-    // CALCULATE ENCODER YAW RATE
-    // =========================================================
-
-    float encoder_yaw_rate_rad_s =
-        (
-            enc.right_speed_mm_s
-            -
-            enc.left_speed_mm_s
-        )
-        /
-        WHEEL_BASE_MM;
-
-
-    float encoder_yaw_rate_deg_s =
-        encoder_yaw_rate_rad_s
-        *
-        (
-            180.0f
-            /
-            PI
-        );
 
 
     // =========================================================
     // UPDATE IMU
     // =========================================================
 
-    imu.update(
-        dt,
-        encoder_yaw_rate_deg_s,
-        enc.linear_speed_mm_s
+    robotImu.update(
+        dt
     );
 
 
@@ -256,7 +231,6 @@ void loop() {
     bool connected =
         BLEDebug::isConnected();
 
-
     if (
         connected
         !=
@@ -265,7 +239,6 @@ void loop() {
 
         was_connected =
             connected;
-
 
         if (
             connected
@@ -300,18 +273,19 @@ void loop() {
             millis();
 
 
+        // -----------------------------------------------------
+        // GET CURRENT HARDWARE VALUES
+        // -----------------------------------------------------
+
         float voltage =
             battery.readVoltage();
 
-
         float heading =
-            imu.getHeadingDeg();
-
+            robotImu.getHeadingDeg();
 
         long left_ticks =
             (long)
             enc.left_ticks_total;
-
 
         long right_ticks =
             (long)
@@ -319,9 +293,7 @@ void loop() {
 
 
         // -----------------------------------------------------
-        // Update the CURRENT value of each BLE characteristic.
-        //
-        // This does NOT send UART notifications.
+        // UPDATE BLE CHARACTERISTICS
         // -----------------------------------------------------
 
         BLEDebug::updateTelemetry(
@@ -332,7 +304,10 @@ void loop() {
         );
 
 
-        // USB serial is still useful while connected to laptop
+        // -----------------------------------------------------
+        // USB SERIAL DEBUG
+        // -----------------------------------------------------
+
         Serial.printf(
             "B:%.2fV H:%.1f L:%ld R:%ld\n",
             voltage,
@@ -356,7 +331,7 @@ void loop() {
 
 
         // -----------------------------------------------------
-        // Reset Encoders
+        // RESET ENCODERS
         // -----------------------------------------------------
 
         if (
@@ -367,7 +342,6 @@ void loop() {
 
             encoders.reset();
 
-
             BLEDebug::println(
                 "Encoders reset"
             );
@@ -375,7 +349,7 @@ void loop() {
 
 
         // -----------------------------------------------------
-        // Reset Heading
+        // RESET HEADING
         // -----------------------------------------------------
 
         else if (
@@ -384,10 +358,9 @@ void loop() {
             )
         ) {
 
-            imu.resetHeading(
+            robotImu.resetHeading(
                 0.0f
             );
-
 
             BLEDebug::println(
                 "Heading reset"
@@ -396,7 +369,7 @@ void loop() {
 
 
         // -----------------------------------------------------
-        // Reset Everything
+        // RESET EVERYTHING
         // -----------------------------------------------------
 
         else if (
@@ -407,11 +380,9 @@ void loop() {
 
             encoders.reset();
 
-
-            imu.resetHeading(
+            robotImu.resetHeading(
                 0.0f
             );
-
 
             BLEDebug::println(
                 "Heading + encoders reset"
@@ -420,7 +391,7 @@ void loop() {
 
 
         // -----------------------------------------------------
-        // Help
+        // HELP
         // -----------------------------------------------------
 
         else if (
@@ -436,7 +407,7 @@ void loop() {
 
 
         // -----------------------------------------------------
-        // Unknown
+        // UNKNOWN COMMAND
         // -----------------------------------------------------
 
         else {
@@ -448,6 +419,8 @@ void loop() {
         }
     }
 
+
+    // Small delay so this test does not spin unnecessarily fast.
 
     delay(
         2

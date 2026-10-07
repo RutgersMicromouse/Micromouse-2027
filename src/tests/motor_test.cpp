@@ -1,324 +1,310 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <Motoron.h>
-#include "driver/pcnt.h"
 
-// =============================================================
-// MOTOR SETTINGS
-// =============================================================
-
-const int POWER_ENABLE   = 13;
-const int SDA_PIN        = 21;
-const int SCL_PIN        = 20;
-
-const int RIGHT_MOTOR_CH = 1;
-const int LEFT_MOTOR_CH  = 2;
-
-MotoronI2C mc;
+#include "config.h"
+#include "hardware/motors.h"
+#include "hardware/encoders.h"
 
 
 // =============================================================
-// BALANCED MOTOR SPEEDS
-// =============================================================
-
-// Right motor is our reference motor.
+// MOTOR + ENCODER HARDWARE CLASS TEST
 //
-// From previous testing:
-// Forward:
-//   Right = +200
-//   Left  = +205
+// This test uses the REAL production classes:
 //
-// Reverse:
-//   Right = -200
-//   Left  = -204
-
-const int RIGHT_FORWARD_SPEED = 200;
-const int LEFT_FORWARD_SPEED  = 205;
-
-const int RIGHT_REVERSE_SPEED = -200;
-const int LEFT_REVERSE_SPEED  = -204;
+//     motor_test.cpp
+//          |
+//          +----> Motors ----> physical motors
+//          |
+//          +----> Encoders --> physical encoders
+//
+// There is NO separate Motoron or PCNT implementation here.
+// =============================================================
 
 
 // =============================================================
-// ENCODER SETTINGS
+// HARDWARE OBJECTS
 // =============================================================
 
-// Right motor encoder
-const int PIN_ENC_R_A = 4;
-const int PIN_ENC_R_B = 5;
-
-// Left motor encoder
-const int PIN_ENC_L_A = 6;
-const int PIN_ENC_L_B = 7;
+Motors motors;
+Encoders encoders;
 
 
 // =============================================================
 // TEST SETTINGS
 // =============================================================
 
-const int SAMPLE_INTERVAL_MS = 100;
-const int TEST_DURATION_MS   = 3000;
+// Equivalent to roughly the old Motoron speed of ~200 / 800.
+const float TEST_EFFORT = 0.25f;
+
+const unsigned long SAMPLE_INTERVAL_MS = 100;
+const unsigned long TEST_DURATION_MS   = 3000;
 
 const int NUM_SAMPLES =
     TEST_DURATION_MS / SAMPLE_INTERVAL_MS;
 
 
 // =============================================================
-// MOTORON ERROR CHECK
+// PRINT CURRENT ENCODER STATE
 // =============================================================
 
-void checkMotoronErrors() {
-
-    uint16_t statusFlags = mc.getStatusFlags();
-
-    if (statusFlags) {
-        Serial.print("[WARNING] Motoron Status Flags: 0x");
-        Serial.println(statusFlags, HEX);
-    }
-}
-
-
-// =============================================================
-// ENCODER INITIALIZATION
-// =============================================================
-
-void initEncoder(pcnt_unit_t unit, int pinA, int pinB) {
-
-    pinMode(pinA, INPUT_PULLUP);
-    pinMode(pinB, INPUT_PULLUP);
-
-
-    // ---------------------------------------------------------
-    // Encoder Channel A
-    // ---------------------------------------------------------
-
-    pcnt_config_t configA = {};
-
-    configA.pulse_gpio_num = pinA;
-    configA.ctrl_gpio_num  = pinB;
-
-    configA.lctrl_mode = PCNT_MODE_KEEP;
-    configA.hctrl_mode = PCNT_MODE_REVERSE;
-
-    configA.pos_mode = PCNT_COUNT_INC;
-    configA.neg_mode = PCNT_COUNT_DEC;
-
-    configA.counter_h_lim = 32767;
-    configA.counter_l_lim = -32768;
-
-    configA.unit    = unit;
-    configA.channel = PCNT_CHANNEL_0;
-
-    pcnt_unit_config(&configA);
-
-
-    // ---------------------------------------------------------
-    // Encoder Channel B
-    // ---------------------------------------------------------
-
-    pcnt_config_t configB = {};
-
-    configB.pulse_gpio_num = pinB;
-    configB.ctrl_gpio_num  = pinA;
-
-    configB.lctrl_mode = PCNT_MODE_REVERSE;
-    configB.hctrl_mode = PCNT_MODE_KEEP;
-
-    configB.pos_mode = PCNT_COUNT_INC;
-    configB.neg_mode = PCNT_COUNT_DEC;
-
-    configB.counter_h_lim = 32767;
-    configB.counter_l_lim = -32768;
-
-    configB.unit    = unit;
-    configB.channel = PCNT_CHANNEL_1;
-
-    pcnt_unit_config(&configB);
-
-
-    // Filter very short/noisy pulses
-    pcnt_set_filter_value(unit, 100);
-    pcnt_filter_enable(unit);
-
-
-    // Reset and start encoder
-    pcnt_counter_pause(unit);
-    pcnt_counter_clear(unit);
-    pcnt_counter_resume(unit);
-}
-
-
-// =============================================================
-// READ ENCODERS FOR 3 SECONDS
-// =============================================================
-
-void readEncodersFor3Seconds(
-    int leftCommand,
-    int rightCommand
+void printEncoderState(
+    unsigned long elapsed_ms,
+    float left_effort,
+    float right_effort
 ) {
 
-    pcnt_counter_clear(PCNT_UNIT_0);
-    pcnt_counter_clear(PCNT_UNIT_1);
+    EncoderState enc =
+        encoders.getState();
 
 
-    int16_t previousLeftTicks  = 0;
-    int16_t previousRightTicks = 0;
+    Serial.print(elapsed_ms);
+    Serial.print(" ms");
 
+
+    // ---------------------------------------------------------
+    // MOTOR COMMANDS
+    // ---------------------------------------------------------
+
+    Serial.print(" | L effort: ");
+    Serial.print(left_effort, 2);
+
+    Serial.print(" | R effort: ");
+    Serial.print(right_effort, 2);
+
+
+    // ---------------------------------------------------------
+    // ENCODER TOTALS
+    // ---------------------------------------------------------
+
+    Serial.print(" | L ticks: ");
+    Serial.print(enc.left_ticks_total);
+
+    Serial.print(" | R ticks: ");
+    Serial.print(enc.right_ticks_total);
+
+
+    // ---------------------------------------------------------
+    // ENCODER DELTAS
+    // ---------------------------------------------------------
+
+    Serial.print(" | L delta: ");
+    Serial.print(enc.left_delta_ticks);
+
+    Serial.print(" | R delta: ");
+    Serial.print(enc.right_delta_ticks);
+
+
+    // ---------------------------------------------------------
+    // WHEEL SPEEDS
+    // ---------------------------------------------------------
+
+    Serial.print(" | L speed: ");
+    Serial.print(enc.left_speed_mm_s, 1);
+
+    Serial.print(" mm/s");
+
+    Serial.print(" | R speed: ");
+    Serial.print(enc.right_speed_mm_s, 1);
+
+    Serial.print(" mm/s");
+
+
+    // ---------------------------------------------------------
+    // SPEED DIFFERENCE
+    // ---------------------------------------------------------
+
+    float speed_difference =
+        fabsf(enc.left_speed_mm_s)
+        -
+        fabsf(enc.right_speed_mm_s);
+
+    Serial.print(" | Diff: ");
+    Serial.print(speed_difference, 1);
+
+    Serial.println(" mm/s");
+}
+
+
+// =============================================================
+// RUN MOTOR TEST
+// =============================================================
+
+void runMotorTest(
+    const char* name,
+    float left_effort,
+    float right_effort
+) {
 
     Serial.println();
-    Serial.println(
-        "Time | Left Cmd | Right Cmd | Left Ticks | Right Ticks | Left ticks/ms | Right ticks/ms | Difference"
+    Serial.println("=============================================");
+    Serial.print("[TEST] ");
+    Serial.println(name);
+    Serial.println("=============================================");
+
+
+    // ---------------------------------------------------------
+    // RESET ENCODERS
+    // ---------------------------------------------------------
+
+    encoders.reset();
+
+
+    // ---------------------------------------------------------
+    // START MOTORS
+    // ---------------------------------------------------------
+
+    motors.setRawEffort(
+        left_effort,
+        right_effort
     );
 
-    Serial.println(
-        "---------------------------------------------------------------------------------------------------"
-    );
+
+    // ---------------------------------------------------------
+    // READ ENCODERS WHILE MOTORS RUN
+    // ---------------------------------------------------------
+
+    unsigned long last_sample_ms =
+        millis();
+
+    unsigned long test_start_ms =
+        millis();
 
 
     for (int i = 0; i < NUM_SAMPLES; i++) {
 
-        delay(SAMPLE_INTERVAL_MS);
+        // Wait until 100 ms has elapsed.
+        while (
+            millis() - last_sample_ms
+            <
+            SAMPLE_INTERVAL_MS
+        ) {
+            delay(1);
+        }
+
+
+        unsigned long now_ms =
+            millis();
+
+        float dt =
+            (
+                now_ms
+                -
+                last_sample_ms
+            )
+            /
+            1000.0f;
+
+        last_sample_ms =
+            now_ms;
 
 
         // -----------------------------------------------------
-        // Read cumulative encoder counts
+        // UPDATE THE REAL ENCODER CLASS
         // -----------------------------------------------------
 
-        int16_t leftTicks  = 0;
-        int16_t rightTicks = 0;
-
-        pcnt_get_counter_value(
-            PCNT_UNIT_0,
-            &leftTicks
+        encoders.update(
+            dt
         );
 
-        pcnt_get_counter_value(
-            PCNT_UNIT_1,
-            &rightTicks
-        );
-
 
         // -----------------------------------------------------
-        // Calculate ticks during THIS 100 ms interval
+        // KEEP MOTOR COMMAND ACTIVE
         // -----------------------------------------------------
-
-        int leftDelta =
-            leftTicks - previousLeftTicks;
-
-        int rightDelta =
-            rightTicks - previousRightTicks;
-
-
-        previousLeftTicks  = leftTicks;
-        previousRightTicks = rightTicks;
-
-
-        // -----------------------------------------------------
-        // Convert to ticks per millisecond
-        // -----------------------------------------------------
-
-        float leftTicksPerMs =
-            abs(leftDelta) /
-            (float)SAMPLE_INTERVAL_MS;
-
-        float rightTicksPerMs =
-            abs(rightDelta) /
-            (float)SAMPLE_INTERVAL_MS;
-
-
-        // Positive difference:
-        // left wheel is faster
         //
-        // Negative difference:
-        // right wheel is faster
+        // motors.cpp sends a periodic command every 100 ms.
+        // Calling this here also exercises that production logic.
+        // -----------------------------------------------------
 
-        float difference =
-            leftTicksPerMs - rightTicksPerMs;
+        motors.setRawEffort(
+            left_effort,
+            right_effort
+        );
 
 
         // -----------------------------------------------------
-        // Print results
+        // PRINT
         // -----------------------------------------------------
 
-        Serial.print((i + 1) * SAMPLE_INTERVAL_MS);
-        Serial.print(" ms");
-
-        Serial.print(" | Lcmd: ");
-        Serial.print(leftCommand);
-
-        Serial.print(" | Rcmd: ");
-        Serial.print(rightCommand);
-
-        Serial.print(" | L: ");
-        Serial.print(leftTicks);
-
-        Serial.print(" | R: ");
-        Serial.print(rightTicks);
-
-        Serial.print(" | L rate: ");
-        Serial.print(leftTicksPerMs, 3);
-
-        Serial.print(" ticks/ms");
-
-        Serial.print(" | R rate: ");
-        Serial.print(rightTicksPerMs, 3);
-
-        Serial.print(" ticks/ms");
-
-        Serial.print(" | Diff: ");
-        Serial.print(difference, 3);
-
-        Serial.println(" ticks/ms");
+        printEncoderState(
+            now_ms - test_start_ms,
+            left_effort,
+            right_effort
+        );
     }
 
 
-    // =========================================================
-    // FINAL AVERAGE
-    // =========================================================
+    // ---------------------------------------------------------
+    // STOP
+    // ---------------------------------------------------------
 
-    int16_t finalLeftTicks  = 0;
-    int16_t finalRightTicks = 0;
+    motors.coast();
 
-    pcnt_get_counter_value(
-        PCNT_UNIT_0,
-        &finalLeftTicks
-    );
 
-    pcnt_get_counter_value(
-        PCNT_UNIT_1,
-        &finalRightTicks
+    // Capture any final encoder movement.
+    delay(100);
+
+    encoders.update(
+        0.1f
     );
 
 
-    float averageLeftRate =
-        abs(finalLeftTicks) /
-        (float)TEST_DURATION_MS;
+    // ---------------------------------------------------------
+    // FINAL RESULTS
+    // ---------------------------------------------------------
 
-    float averageRightRate =
-        abs(finalRightTicks) /
-        (float)TEST_DURATION_MS;
+    EncoderState finalState =
+        encoders.getState();
 
 
     Serial.println();
-    Serial.println("============== AVERAGE ==============");
+    Serial.println("============== FINAL ===============");
 
-    Serial.print("Left:  ");
-    Serial.print(averageLeftRate, 3);
-    Serial.println(" ticks/ms");
+    Serial.print("Left total ticks:  ");
+    Serial.println(
+        finalState.left_ticks_total
+    );
 
-    Serial.print("Right: ");
-    Serial.print(averageRightRate, 3);
-    Serial.println(" ticks/ms");
+    Serial.print("Right total ticks: ");
+    Serial.println(
+        finalState.right_ticks_total
+    );
 
-    Serial.print("Difference: ");
+    Serial.print("Left distance:      ");
     Serial.print(
-        averageLeftRate - averageRightRate,
-        3
+        finalState.left_dist_mm,
+        2
     );
-    Serial.println(" ticks/ms");
+    Serial.println(" mm");
 
-    Serial.println("=====================================");
-    Serial.println();
+    Serial.print("Right distance:     ");
+    Serial.print(
+        finalState.right_dist_mm,
+        2
+    );
+    Serial.println(" mm");
+
+
+    // ---------------------------------------------------------
+    // COMPARE ABSOLUTE TICK COUNTS
+    // ---------------------------------------------------------
+
+    long left_abs =
+        labs(
+            (long)finalState.left_ticks_total
+        );
+
+    long right_abs =
+        labs(
+            (long)finalState.right_ticks_total
+        );
+
+    Serial.print("Absolute tick difference: ");
+
+    Serial.println(
+        left_abs - right_abs
+    );
+
+    Serial.println("====================================");
 }
 
 
@@ -328,107 +314,133 @@ void readEncodersFor3Seconds(
 
 void setup() {
 
-    Serial.begin(115200);
-    delay(3000);
+    Serial.begin(
+        115200
+    );
+
+    delay(
+        3000
+    );
+
 
     Serial.println();
     Serial.println("=============================================");
-    Serial.println(" MOTOR + ENCODER BALANCE TEST");
+    Serial.println(" MOTOR + ENCODER HARDWARE CLASS TEST");
     Serial.println("=============================================");
 
 
-    // ---------------------------------------------------------
-    // Enable motor power
-    // ---------------------------------------------------------
+    // =========================================================
+    // ENABLE SHARED ROBOT POWER
+    // =========================================================
 
-    pinMode(POWER_ENABLE, OUTPUT);
-    digitalWrite(POWER_ENABLE, HIGH);
+    pinMode(
+        13,
+        OUTPUT
+    );
 
-    delay(300);
+    digitalWrite(
+        13,
+        HIGH
+    );
 
-
-    // ---------------------------------------------------------
-    // Initialize Motoron
-    // ---------------------------------------------------------
-
-    Wire.begin(SDA_PIN, SCL_PIN);
-
-    mc.reinitialize();
-    mc.clearResetFlag();
-
-    mc.disableCommandTimeout();
-
-    mc.setErrorResponse(
-        MOTORON_ERROR_RESPONSE_COAST
+    delay(
+        300
     );
 
 
-    // ---------------------------------------------------------
-    // Motor acceleration/deceleration
-    // ---------------------------------------------------------
+    // =========================================================
+    // I2C
+    // =========================================================
 
-    mc.setMaxAcceleration(
-        RIGHT_MOTOR_CH,
-        100
+    Wire.begin(
+        PIN_I2C_SDA,
+        PIN_I2C_SCL
     );
 
-    mc.setMaxDeceleration(
-        RIGHT_MOTOR_CH,
-        100
+    Wire.setClock(
+        I2C_CLOCK_SPEED
     );
 
-    mc.setMaxAcceleration(
-        LEFT_MOTOR_CH,
-        100
-    );
-
-    mc.setMaxDeceleration(
-        LEFT_MOTOR_CH,
-        100
+    Serial.println(
+        "[TEST] I2C started."
     );
 
 
-    // ---------------------------------------------------------
-    // Initialize encoders
-    // ---------------------------------------------------------
+    // =========================================================
+    // MOTORS
+    // =========================================================
 
-    // PCNT Unit 0 = Left
-    initEncoder(
-        PCNT_UNIT_0,
-        PIN_ENC_L_A,
-        PIN_ENC_L_B
+    Serial.println(
+        "[TEST] Starting Motors class..."
+    );
+
+    motors.begin();
+
+    Serial.println(
+        "[TEST] Motors initialized."
     );
 
 
-    // PCNT Unit 1 = Right
-    initEncoder(
-        PCNT_UNIT_1,
-        PIN_ENC_R_A,
-        PIN_ENC_R_B
+    // =========================================================
+    // ENCODERS
+    // =========================================================
+
+    Serial.println(
+        "[TEST] Starting Encoders class..."
+    );
+
+    encoders.begin();
+
+    Serial.println(
+        "[TEST] Encoders initialized."
     );
 
 
-    Serial.println("Motoron initialized.");
-    Serial.println("Encoders initialized.");
+    // =========================================================
+    // SHOW CURRENT CONFIGURATION
+    // =========================================================
+
+    bool motor_left_inverted;
+    bool motor_right_inverted;
+
+    motors.getInverted(
+        motor_left_inverted,
+        motor_right_inverted
+    );
+
+
+    bool encoder_left_inverted;
+    bool encoder_right_inverted;
+
+    encoders.getInverted(
+        encoder_left_inverted,
+        encoder_right_inverted
+    );
+
 
     Serial.println();
 
-    Serial.println("Current calibration:");
+    Serial.printf(
+        "Motor inversion:   L=%s R=%s\n",
+        motor_left_inverted ? "true" : "false",
+        motor_right_inverted ? "true" : "false"
+    );
 
-    Serial.print("Forward: L=");
-    Serial.print(LEFT_FORWARD_SPEED);
+    Serial.printf(
+        "Encoder inversion: L=%s R=%s\n",
+        encoder_left_inverted ? "true" : "false",
+        encoder_right_inverted ? "true" : "false"
+    );
 
-    Serial.print(" R=");
-    Serial.println(RIGHT_FORWARD_SPEED);
-
-
-    Serial.print("Reverse: L=");
-    Serial.print(LEFT_REVERSE_SPEED);
-
-    Serial.print(" R=");
-    Serial.println(RIGHT_REVERSE_SPEED);
 
     Serial.println();
+    Serial.println(
+        "Starting test in 2 seconds..."
+    );
+
+    delay(
+        2000
+    );
 }
 
 
@@ -438,35 +450,14 @@ void setup() {
 
 void loop() {
 
-    mc.clearResetFlag();
-
-
     // =========================================================
-    // FORWARD TEST
+    // FORWARD
     // =========================================================
 
-    Serial.println();
-    Serial.println("=============================================");
-    Serial.println("[TEST] FORWARD");
-    Serial.println("=============================================");
-
-    mc.setSpeed(
-        RIGHT_MOTOR_CH,
-        RIGHT_FORWARD_SPEED
-    );
-
-    mc.setSpeed(
-        LEFT_MOTOR_CH,
-        LEFT_FORWARD_SPEED
-    );
-
-
-    checkMotoronErrors();
-
-
-    readEncodersFor3Seconds(
-        LEFT_FORWARD_SPEED,
-        RIGHT_FORWARD_SPEED
+    runMotorTest(
+        "FORWARD",
+        TEST_EFFORT,
+        TEST_EFFORT
     );
 
 
@@ -474,40 +465,26 @@ void loop() {
     // STOP
     // =========================================================
 
-    Serial.println("[TEST] STOP");
-
-    mc.setSpeed(RIGHT_MOTOR_CH, 0);
-    mc.setSpeed(LEFT_MOTOR_CH, 0);
-
-    delay(1500);
-
-
-    // =========================================================
-    // REVERSE TEST
-    // =========================================================
-
     Serial.println();
-    Serial.println("=============================================");
-    Serial.println("[TEST] REVERSE");
-    Serial.println("=============================================");
-
-    mc.setSpeed(
-        RIGHT_MOTOR_CH,
-        RIGHT_REVERSE_SPEED
+    Serial.println(
+        "[TEST] STOP"
     );
 
-    mc.setSpeed(
-        LEFT_MOTOR_CH,
-        LEFT_REVERSE_SPEED
+    motors.coast();
+
+    delay(
+        1500
     );
 
 
-    checkMotoronErrors();
+    // =========================================================
+    // REVERSE
+    // =========================================================
 
-
-    readEncodersFor3Seconds(
-        LEFT_REVERSE_SPEED,
-        RIGHT_REVERSE_SPEED
+    runMotorTest(
+        "REVERSE",
+        -TEST_EFFORT,
+        -TEST_EFFORT
     );
 
 
@@ -515,10 +492,14 @@ void loop() {
     // STOP
     // =========================================================
 
-    Serial.println("[TEST] STOP");
+    Serial.println();
+    Serial.println(
+        "[TEST] STOP"
+    );
 
-    mc.setSpeed(RIGHT_MOTOR_CH, 0);
-    mc.setSpeed(LEFT_MOTOR_CH, 0);
+    motors.coast();
 
-    delay(2000);
+    delay(
+        2000
+    );
 }

@@ -1,71 +1,158 @@
-
-
-
 #include <Arduino.h>
 #include <Wire.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BNO055.h>
 
-// Pin Definitions based on PCB layout
-const int POWER_ENABLE = 13; // Enables board power rails
-const int SDA_PIN      = 21; // SDA Pin
-const int SCL_PIN      = 20; // SCL Pin
+#include "config.h"
+#include "hardware/imu.h"
 
-// BNO055 Instance (ID: 55, Address: 0x28 default; try 0x29 if 0x28 fails)
-Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
+// =============================================================
+// IMU HARDWARE CLASS TEST
+// =============================================================
 
-void setup() {
+// Do NOT name this variable "imu".
+// The Adafruit library already defines a namespace called "imu".
+IMU testImu;
+
+// =============================================================
+// TIMING
+// =============================================================
+
+unsigned long last_update_us = 0;
+unsigned long last_print_ms = 0;
+
+const unsigned long PRINT_INTERVAL_MS = 100;
+
+// =============================================================
+// SETUP
+// =============================================================
+
+void setup()
+{
+
   Serial.begin(115200);
-  delay(3000); // Allow USB CDC connection time
 
-  Serial.println("\n=========================================");
-  Serial.println("  ESP32-S3 BNO055 IMU Diagnostic Test    ");
-  Serial.println("=========================================");
+  delay(3000);
 
-  // 1. Enable Power Rails
-  pinMode(POWER_ENABLE, OUTPUT);
-  digitalWrite(POWER_ENABLE, HIGH);
-  delay(500); // Power stabilization delay
+  Serial.println();
+  Serial.println("================================");
+  Serial.println("IMU HARDWARE CLASS TEST");
+  Serial.println("================================");
 
-  // 2. Initialize I2C Bus
-  Wire.begin(SDA_PIN, SCL_PIN);
+  // ---------------------------------------------------------
+  // ENABLE ROBOT POWER
+  // ---------------------------------------------------------
 
-  // 3. Initialize BNO055
-  if (!bno.begin()) {
-    Serial.println("ERROR: BNO055 not detected at address 0x28!");
-    Serial.println("Checking address 0x29...");
+  pinMode(13, OUTPUT);
+  digitalWrite(13, HIGH);
 
-    // Retry with alternate address 0x29 (if ADR pin is high)
-    bno = Adafruit_BNO055(55, 0x29, &Wire);
-    if (!bno.begin()) {
-      Serial.println("ERROR: BNO055 not detected at 0x29 either. Check power and I2C lines.");
-      while (1) { delay(100); }
-    }
+  delay(100);
+
+  // ---------------------------------------------------------
+  // START I2C
+  // ---------------------------------------------------------
+
+  Wire.begin(
+      PIN_I2C_SDA,
+      PIN_I2C_SCL);
+
+  Wire.setClock(400000);
+
+  Serial.println("[TEST] I2C started.");
+
+  // ---------------------------------------------------------
+  // START IMU
+  // ---------------------------------------------------------
+
+  testImu.begin();
+
+  // ---------------------------------------------------------
+  // CHECK CONNECTION
+  // ---------------------------------------------------------
+
+  if (testImu.isHardwareConnected())
+  {
+
+    Serial.println(
+        "[TEST] BNO055 connected successfully.");
   }
 
-  Serial.println("SUCCESS: BNO055 connected successfully!");
-  
-  // Use external crystal for higher precision if present on module
-  bno.setExtCrystalUse(true);
+  else
+  {
 
-  delay(1000);
+    Serial.println(
+        "[TEST] ERROR: BNO055 not detected.");
+  }
+
+  // ---------------------------------------------------------
+  // START TIMER
+  // ---------------------------------------------------------
+
+  last_update_us = micros();
+
+  Serial.println();
+  Serial.println("Move the mouse and watch the heading:");
+  Serial.println("LEFT  -> positive");
+  Serial.println("RIGHT -> negative");
+  Serial.println();
 }
 
-void loop() {
-  // 1. Get Orientation Event (Euler Angles: Heading, Pitch, Roll)
-  sensors_event_t orientationData;
-  bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
+// =============================================================
+// LOOP
+// =============================================================
 
-  // 2. Read Calibration Status (0 = Uncalibrated, 3 = Fully Calibrated)
-  uint8_t system, gyro, accel, mag = 0;
-  bno.getCalibration(&system, &gyro, &accel, &mag);
+void loop()
+{
 
-  // 3. Print Data
-  Serial.printf("Heading: %6.2f° | Pitch: %6.2f° | Roll: %6.2f°  ||  Calib -> Sys:%d G:%d A:%d M:%d\n",
-                orientationData.orientation.x,  // Yaw / Heading
-                orientationData.orientation.y,  // Pitch
-                orientationData.orientation.z,  // Roll
-                system, gyro, accel, mag);
+  // ---------------------------------------------------------
+  // CALCULATE DT
+  // ---------------------------------------------------------
 
-  delay(100); // 10 Hz refresh rate
+  unsigned long now_us = micros();
+
+  float dt =
+      (now_us - last_update_us) /
+      1000000.0f;
+
+  last_update_us = now_us;
+
+  // ---------------------------------------------------------
+  // UPDATE REAL IMU CLASS
+  // ---------------------------------------------------------
+
+  testImu.update(
+      dt,
+      0.0f,
+      0.0f);
+
+  // ---------------------------------------------------------
+  // PRINT AT 10 Hz
+  // ---------------------------------------------------------
+
+  unsigned long now_ms = millis();
+
+  if (
+      now_ms - last_print_ms >=
+      PRINT_INTERVAL_MS)
+  {
+
+    last_print_ms = now_ms;
+
+    // -----------------------------------------------------
+    // GET VALUES FROM hardware/imu.cpp
+    // -----------------------------------------------------
+
+    float heading =
+        testImu.getHeadingDeg();
+
+    float gyro_z =
+        testImu.getGyroZ();
+
+    // -----------------------------------------------------
+    // PRINT VALUES
+    // -----------------------------------------------------
+
+    Serial.printf(
+        "Heading: %7.2f deg | Gyro Z: %7.2f deg/s\n",
+        heading,
+        gyro_z);
+  }
 }
