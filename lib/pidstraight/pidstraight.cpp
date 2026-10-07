@@ -66,8 +66,8 @@ void pidForward(double distance, bool isEncoder = false) {
     goal_angle = identity_diag[closest_index];
 
 
-    // Serial.print("  goal_angle:           "); Serial.println(goal_angle);
-    // Serial.print("  current angle:        "); Serial.println(angle());
+    // Serial1.print("  goal_angle:           "); Serial1.println(goal_angle);
+    // Serial1.print("  current angle:        "); Serial1.println(angle());
 
 
     // Angle PID state
@@ -99,7 +99,7 @@ void pidForward(double distance, bool isEncoder = false) {
                 if (state != 3) {
                     state++;
                 } else {
-                    Serial.print("Start: "); Serial.println(front());
+                    Serial1.print("Start: "); Serial1.println(front());
                     
 
                     int unnormalized_goal_front_distance = front() - distance;
@@ -108,7 +108,7 @@ void pidForward(double distance, bool isEncoder = false) {
 
                     goal_front_distance = distance_cells * 180 + 48;
 
-                    Serial.print("Stop: "); Serial.println(goal_front_distance);
+                    Serial1.print("Stop: "); Serial1.println(goal_front_distance);
                 }
             } else {
                 state = 0;
@@ -133,38 +133,38 @@ void pidForward(double distance, bool isEncoder = false) {
         //     //     digitalWrite(LED_BUILTIN, LOW); delay(200);
         //     // }
         //     // delay(1000);
-        //     // Serial.println("STOP: encoder cutoff");
-        //     // Serial.print("  avg_enc:    "); Serial.println(avg_enc);
-        //     // Serial.print("  overshoot:  "); Serial.println(avg_enc - goal_distance);
-        //     // Serial.print("  loops:      "); Serial.println(loopCount);
+        //     // Serial1.println("STOP: encoder cutoff");
+        //     // Serial1.print("  avg_enc:    "); Serial1.println(avg_enc);
+        //     // Serial1.print("  overshoot:  "); Serial1.println(avg_enc - goal_distance);
+        //     // Serial1.print("  loops:      "); Serial1.println(loopCount);
         //     setLeftPWM(-80); setRightPWM(-80);
         //     delay(25);
         //     setLeftPWM(0);   setRightPWM(0);
-        //     Serial.println("Arrived");
+        //     Serial1.println("Arrived");
         //     return;
         // }
 
 
         // ── Stop condition ─────────────────────────────────────────────────
         if (avg_enc <= goal_front_distance || abs(error_dist) < 5) {
-            // Serial.println("STOP: target reached");
-            // Serial.print("  avg_enc:    "); Serial.println(avg_enc);
-            // Serial.print("  error_dist: "); Serial.println(error_dist);
-            // Serial.print("  loops:      "); Serial.println(loopCount);
+            // Serial1.println("STOP: target reached");
+            // Serial1.print("  avg_enc:    "); Serial1.println(avg_enc);
+            // Serial1.print("  error_dist: "); Serial1.println(error_dist);
+            // Serial1.print("  loops:      "); Serial1.println(loopCount);
             setLeftPWM(-80); setRightPWM(-80);
             delay(25);
             setLeftPWM(0);   setRightPWM(0);
-            Serial.print("Arrived"); Serial.println(front());
+            Serial1.print("Arrived"); Serial1.println(front());
             return;
         }
 
 
         // ── Guard: wall too close ──────────────────────────────────────────
         if (front() > 0 && front() < 50 && t_now > t_old + 100000UL) { // only checks after .1 seconds
-            Serial.println("STOP: front wall guard triggered");
-            Serial.print("  front():    "); Serial.println(front());
-            Serial.print("  avg_enc:    "); Serial.println(avg_enc);
-            Serial.print("  error_dist: "); Serial.println(error_dist);
+            Serial1.println("STOP: front wall guard triggered");
+            Serial1.print("  front():    "); Serial1.println(front());
+            Serial1.print("  avg_enc:    "); Serial1.println(avg_enc);
+            Serial1.print("  error_dist: "); Serial1.println(error_dist);
             digitalWrite(LED_BUILTIN, HIGH);  delay(25);
             digitalWrite(LED_BUILTIN, LOW); delay(25);
             setLeftPWM(0); setRightPWM(0);
@@ -174,12 +174,12 @@ void pidForward(double distance, bool isEncoder = false) {
 
         // ── Guard: stall detection ─────────────────────────────────────────
         /*if (t_now > t_old + 5000000UL) {
-            Serial.println(t_now);
-            Serial.println(t_old + 5000000UL);
+            Serial1.println(t_now);
+            Serial1.println(t_old + 5000000UL);
             double dR = abs(encRight.read() - sampleRight);
             double dL = abs(encLeft.read()  - sampleLeft);
-            Serial.print("  [stall check] dL="); Serial.print(dL);
-            Serial.print(" dR=");               Serial.println(dR);
+            Serial1.print("  [stall check] dL="); Serial1.print(dL);
+            Serial1.print(" dR=");               Serial1.println(dR);
             if (dL < 20 && dR < 20) {
                 delay(1000);
                 for (int i = 0; i < 6; i++) {
@@ -187,7 +187,7 @@ void pidForward(double distance, bool isEncoder = false) {
                     digitalWrite(LED_BUILTIN, LOW); delay(200);
                 }
                 delay(1000);
-                Serial.println("STOP: stall detected");
+                Serial1.println("STOP: stall detected");
                 setLeftPWM(0); setRightPWM(0);
                 return;
             }
@@ -278,65 +278,65 @@ void pidForward(double distance, bool isEncoder = false) {
 
         // ── Print abs(error_dist) every 50ms ──────────────────────────────
         if (micros() - lastErrorPrint > 100000) {
-            // Serial.print("Speed: "); Serial.print(leftPWM); Serial.print(" | "); Serial.print(rightPWM);
-            // Serial.print("  abs(error_dist): "); Serial.print(abs(error_dist));
-            // Serial.print("  avg_enc: ");         Serial.println(avg_enc);
+            // Serial1.print("Speed: "); Serial1.print(leftPWM); Serial1.print(" | "); Serial1.print(rightPWM);
+            // Serial1.print("  abs(error_dist): "); Serial1.print(abs(error_dist));
+            // Serial1.print("  avg_enc: ");         Serial1.println(avg_enc);
             
-            // Serial.print("front=");
-            // Serial.print(front());
+            // Serial1.print("front=");
+            // Serial1.print(front());
 
-            // Serial.print(" goal=");
-            // Serial.print(goal_front_distance);
+            // Serial1.print(" goal=");
+            // Serial1.print(goal_front_distance);
 
-            // Serial.print(" errDist=");
-            // Serial.print(error_dist);
+            // Serial1.print(" errDist=");
+            // Serial1.print(error_dist);
 
-            // Serial.print(" distOut=");
-            // Serial.print(distOut);
+            // Serial1.print(" distOut=");
+            // Serial1.print(distOut);
 
-            // Serial.print(" base=");
-            // Serial.print(basePWM);
+            // Serial1.print(" base=");
+            // Serial1.print(basePWM);
 
-            // Serial.print(" latErr=");
-            // Serial.print(lateral_error);
+            // Serial1.print(" latErr=");
+            // Serial1.print(lateral_error);
 
-            // Serial.print(" latOut=");
-            // Serial.print(lateralOut);
+            // Serial1.print(" latOut=");
+            // Serial1.print(lateralOut);
 
-            // Serial.print(" angle=");
-            // Serial.print(angle());
+            // Serial1.print(" angle=");
+            // Serial1.print(angle());
 
-            // Serial.print(" goalAngle=");
-            // Serial.print(goal_angle);
+            // Serial1.print(" goalAngle=");
+            // Serial1.print(goal_angle);
 
-            // Serial.print(" errAngle=");
-            // Serial.print(error_angle);
+            // Serial1.print(" errAngle=");
+            // Serial1.print(error_angle);
 
-            // Serial.print(" angleOut=");
-            // Serial.print(angleOut);
+            // Serial1.print(" angleOut=");
+            // Serial1.print(angleOut);
 
-            // Serial.print(" L=");
-            // Serial.print(leftPWM);
+            // Serial1.print(" L=");
+            // Serial1.print(leftPWM);
 
-            // Serial.print(" R=");
-            // Serial.println(rightPWM);
+            // Serial1.print(" R=");
+            // Serial1.println(rightPWM);
 
             lastErrorPrint = micros();
         }
 
         // ── Throttled full debug every 500 loops ───────────────────────────
         if (loopCount % 500 == 0) {
-            Serial.println("--- loop ---");
-            Serial.print("  loop#:       "); Serial.println(loopCount);
-            Serial.print("  avg_enc:     "); Serial.println(avg_enc);
-            Serial.print("  error_dist:  "); Serial.println(error_dist);
-            Serial.print("  distOut:     "); Serial.println(distOut);
-            Serial.print("  basePWM:     "); Serial.println(basePWM);
-            Serial.print("  error_angle: "); Serial.println(error_angle);
-            Serial.print("  angleOut:    "); Serial.println(angleOut);
-            Serial.print("  leftPWM:     "); Serial.println(leftPWM);
-            Serial.print("  rightPWM:    "); Serial.println(rightPWM);
-            Serial.print("  front():     "); Serial.println(front());
+            Serial1.println("--- loop ---");
+            Serial1.print("  loop#:       "); Serial1.println(loopCount);
+            Serial1.print("  avg_enc:     "); Serial1.println(avg_enc);
+            Serial1.print("  error_dist:  "); Serial1.println(error_dist);
+            Serial1.print("  distOut:     "); Serial1.println(distOut);
+            Serial1.print("  basePWM:     "); Serial1.println(basePWM);
+            Serial1.print("  error_angle: "); Serial1.println(error_angle);
+            Serial1.print("  angleOut:    "); Serial1.println(angleOut);
+            Serial1.print("  leftPWM:     "); Serial1.println(leftPWM);
+            Serial1.print("  rightPWM:    "); Serial1.println(rightPWM);
+            Serial1.print("  front():     "); Serial1.println(front());
         }
 
 
@@ -349,7 +349,7 @@ void pidForward(double distance, bool isEncoder = false) {
 
 
 void pidForwardLeftWallFollow() {
-    Serial.println("=== pidForwardLeftWallFollow START ===");
+    Serial1.println("=== pidForwardLeftWallFollow START ===");
 
 
     double goal_angle;
@@ -366,8 +366,8 @@ void pidForwardLeftWallFollow() {
     goal_angle = identity_diag[closest_index];
 
 
-    Serial.print("  goal_angle:    "); Serial.println(goal_angle);
-    Serial.print("  current angle: "); Serial.println(angle());
+    Serial1.print("  goal_angle:    "); Serial1.println(goal_angle);
+    Serial1.print("  current angle: "); Serial1.println(angle());
 
 
     double t_old             = micros();
@@ -395,16 +395,16 @@ void pidForwardLeftWallFollow() {
 
         // ── Print every 50ms ───────────────────────────────────────────────
         if (micros() - lastErrorPrint > 50000) {
-            Serial.print("  [wallfollow] front(): "); Serial.print(front());
-            Serial.print("  leftWall(): ");          Serial.print(leftWall());
-            Serial.print("  angle(): ");             Serial.println(angle());
+            Serial1.print("  [wallfollow] front(): "); Serial1.print(front());
+            Serial1.print("  leftWall(): ");          Serial1.print(leftWall());
+            Serial1.print("  angle(): ");             Serial1.println(angle());
             lastErrorPrint = micros();
         }
 
 
         if (!leftWall()) {
-            Serial.println("STOP: left wall gone");
-            Serial.print("  loops="); Serial.println(loopCount);
+            Serial1.println("STOP: left wall gone");
+            Serial1.print("  loops="); Serial1.println(loopCount);
             delay(10);
             setLeftPWM(0); setRightPWM(0);
             return;
@@ -414,10 +414,10 @@ void pidForwardLeftWallFollow() {
         if (micros() > sampleTime + 100000UL) {
             double dR = abs(encRight.read() - sampleRight);
             double dL = abs(encLeft.read()  - sampleLeft);
-            Serial.print("  [stall check] dL="); Serial.print(dL);
-            Serial.print(" dR=");               Serial.println(dR);
+            Serial1.print("  [stall check] dL="); Serial1.print(dL);
+            Serial1.print(" dR=");               Serial1.println(dR);
             if (dL < 2 || dR < 2) {
-                Serial.println("STOP: stall detected");
+                Serial1.println("STOP: stall detected");
                 setLeftPWM(0); setRightPWM(0);
                 return;
             }
@@ -428,8 +428,8 @@ void pidForwardLeftWallFollow() {
 
 
         if (front() > 0 && front() < 60) {
-            Serial.println("STOP: front wall");
-            Serial.print("  front()="); Serial.println(front());
+            Serial1.println("STOP: front wall");
+            Serial1.print("  front()="); Serial1.println(front());
             setLeftPWM(0); setRightPWM(0);
             return;
         }

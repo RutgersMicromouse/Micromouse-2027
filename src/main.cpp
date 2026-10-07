@@ -31,15 +31,17 @@ void setup() {
 
     pinMode(LED_BUILTIN, OUTPUT);
     Serial.begin(115200);
+    Serial1.begin(9600); // 9600 works
     delay(2000);
-    Serial.println("BOOT OK");
+
+    Serial1.println("BOOT OK");
 
     for (int i = 0; i < 5; i++) {
         digitalWrite(LED_BUILTIN, LOW);  delay(200);
         digitalWrite(LED_BUILTIN, HIGH); delay(200);
     }
     digitalWrite(LED_BUILTIN, LOW);
-    Serial.println("LED TEST DONE");
+    Serial1.println("LED TEST DONE");
 
     Wire.begin();
     Wire.setClock(400000);
@@ -61,7 +63,7 @@ void setup() {
         if(front_dist < maxHandDistance && front_dist > 0 && t_current > t_buffer + 300000UL) {
             t_buffer = micros();
             handState = front_dist / (maxHandDistance / maxHandStates) + 1;
-            Serial.print("Hand Found: "); Serial.println(handState);
+            Serial1.print("Hand Found: "); Serial1.println(handState);
         }
 
         if ((front_dist > maxHandDistance * 1.5) && handState > 0) {
@@ -69,6 +71,10 @@ void setup() {
 
             delay (250);
             if (handState == maxHandStates) {
+                // Serial.println("Checking HC-05...");
+                // Serial1.print("AT+UART=9600,0,0\r\n");
+                // delay(5000);
+                // Serial1.print("AT+UART?\r\n");
                 return;
             } else if (handState == 2) {
                 explorer.isEncoder = true;
@@ -99,30 +105,45 @@ void setup() {
     
     // print the graph so you can verify it over Serial
     for (auto& [id, node] : graph.nodes) {
-        Serial.print("Node "); Serial.println(id);
+        Serial1.print("Node "); Serial.println(id);
         for (auto& edge : node.edges) {
-            Serial.print("  -> Node "); Serial.print(edge.to_node_id);
-            Serial.print(" cost: "); Serial.println(edge.cost);
+            Serial1.print("  -> Node "); Serial.print(edge.to_node_id);
+            Serial1.print(" cost: "); Serial.println(edge.cost);
         }
     }
 }
 
-int numbers[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-int check = 0; 
+
+long bauds[] = {9600, 38400, 115200, 57600};
+int idx = 0;
 
 void loop() {
-    int sum = 0;
-
-    for (int i = 0; i < 10; ++i) {
-        sum += numbers[i];
+    long b = bauds[idx];
+    Serial1.begin(b);
+    for (int i = 0; i < 5; i++) {
+        Serial1.print("Hello at ");
+        Serial1.println(b);
+        delay(500);
     }
+    Serial1.end();
+    Serial.print("tried "); Serial.println(b);
+    idx = (idx + 1) % 4;
 
+    
 
+    // Serial1.println("Something Different");
+    // Serial.println("Hi!");
+    // delay(1000);
 
-    Serial.print("Left: "); Serial.print(left()); Serial.print(" | Front: "); Serial.print(sum / 10); Serial.print(" | Right: "); Serial.println(right()); 
-    numbers[check] = front();
-    check++;
-    if (check > 9) {
-        check = 0;
-    }
+    //Send message out of TX1 (Pin 1)
+    // Serial1.println("Loopback Test String");
+
+    // // Read back what comes into RX1 (Pin 0)
+    // while (Serial1.available()) {
+    //     char c = Serial1.read();
+    //     Serial.print("SUCCESS RECEIVED: ");
+    //     Serial.print(c);
+    // }
+
+    // delay(1000);
 }
