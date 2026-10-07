@@ -321,7 +321,8 @@ The timing, safety, and geometry rules the firmware is built around. Any change 
   * A smooth turn of angle $A$ over path length $L$ follows $\theta(u) = A\,(3u^2 - 2u^3)$ with $u = s/L$, so yaw rate is zero at both ends. Its end point is $L\,(F_{fwd}, F_{lat})$ with $F = 0.60514$ both ways for $90^\circ$, and $F_{fwd} = 0.88961$, $F_{lat} = 0.36849$ for $45^\circ$.
   * $90^\circ$ turn, cell edge to cell edge: $L = 90 / 0.60514 = 148.73\text{ mm}$. Stays $90\text{ mm}$ from every post centre.
   * $45^\circ$ turn onto a diagonal: $L = 70\text{ mm}$, begun $53.52\text{ mm}$ past the cell centre, joining the diagonal $36.48\text{ mm}$ beyond the cell-edge midpoint. The diagonal then passes $63.6\text{ mm}$ from the posts on both sides, the most the maze allows.
-  * `CURVE_90_LENGTH_MM`, `CURVE_45_LENGTH_MM`, `DIAG_LEAD_MM`, and `DIAG_TRIM_MM` in `src/config.h` are one consistent set; changing one alone moves the robot off the grid.
+  * $90^\circ$ "V" turn from one diagonal onto the next, around a cell-edge midpoint: $L = 99.15\text{ mm}$, taking $60\text{ mm}$ off each diagonal. It stays at least $63.6\text{ mm}$ from every post.
+  * `CURVE_90_LENGTH_MM`, `CURVE_45_LENGTH_MM`, `CURVE_V90_LENGTH_MM`, `DIAG_LEAD_MM`, `DIAG_TRIM_MM`, and `V90_TRIM_MM` in `src/config.h` are one consistent set; changing one alone moves the robot off the grid.
 * **Search Look-Ahead**:
   * A smooth turn during the search is taken only when two different sensors agree the side is open: the $45^\circ$ sensor sampled between $30$ and $80\text{ mm}$ after the previous cell centre, and the $90^\circ$ sensor at the cell edge. Any doubt falls back to stopping at the cell centre.
   * A cell that was curved through is marked explored only if its front wall was read clearly (wall or open) by the outer $45^\circ$ sensor mid-curve.

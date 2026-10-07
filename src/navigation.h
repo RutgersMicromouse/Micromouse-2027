@@ -4,7 +4,6 @@
 //   Maze       - the wall map (saved to flash)
 //   Floodfill  - search-run solver (explore towards the centre)
 //   Dijkstra   - speed-run solver (fastest known path)
-//   Decomposer - turns a cell path into straights / diagonals / slaloms
 //   Navigator  - the state machine that feeds MotionCommands to the motion controller
 
 #include "config.h"
@@ -125,27 +124,8 @@ private:
     const Maze& maze_;
 };
 
-// ==============================================================================
-// PATH DECOMPOSER
-// ==============================================================================
-
-#include <stdint.h>
-
-class Decomposer {
-public:
-    // Decomposes a continuous sequence of cells into optimal execution primitives:
-    // - SEG_SLALOM: Multi-wave up-and-down / left-and-right continuous zigzags
-    // - SEG_DIAGONAL: Diagonal staircases and 45° corner cuts
-    // - SEG_STRAIGHT: Multi-cell straight corridor sprints
-    static uint8_t decompose(const Coordinate* path, uint8_t path_len,
-                             PathSegment* out_segments, uint8_t max_segments,
-                             bool allow_diagonals = true);
-
-    static Direction getDirection(Coordinate from, Coordinate to);
-
-private:
-    static uint8_t findSlalomLength(const Direction* dirs, uint8_t start_idx, uint8_t n);
-};
+// Which way one cell is from its neighbour
+Direction directionBetween(Coordinate from, Coordinate to);
 
 // ==============================================================================
 // NAVIGATOR
@@ -193,10 +173,11 @@ private:
                            bool stop_at_front_wall = false);
 
     // Segment & Subcommand Execution Pipeline
-    void queueSegment(const PathSegment& seg, float cruise_speed, float accel);
+    // Turns a cell path into the whole list of moves for a speed run (in sub_cmd_queue_).
+    // Returns the time the run should take, or a negative number if it does not fit.
+    float planSpeedRun(const Coordinate* path, uint8_t path_len, bool use_diagonals);
     void pushSubCommand(MotionAction action, float param, float max_speed, float accel,
                         bool wall_centering, float entry_speed = 0.0f, float exit_speed = 0.0f);
-    void pushPivot(Direction target, float turn_speed, float turn_accel);
     void processSubcommandQueue();
 
     QueueHandle_t motion_cmd_queue_;
@@ -236,19 +217,12 @@ private:
     void stepAfterCurve(const WallPreview& preview);
     void driveToCellCentre();
 
-    // Subcommand queue for multi-phase motions (diagonals & slaloms)
-    static constexpr uint8_t MAX_SUB_CMDS = 32;
+    // Moves waiting to be sent to the motion controller, one each time the previous one finishes.
+    // A speed run is planned in full up front, so this has to hold a whole run.
+    static constexpr uint16_t MAX_SUB_CMDS = 520;
     MotionCommand sub_cmd_queue_[MAX_SUB_CMDS];
-    uint8_t sub_cmd_count_;
-    uint8_t sub_cmd_idx_;
+    uint16_t sub_cmd_count_;
+    uint16_t sub_cmd_idx_;
+    bool sub_cmd_overflow_;
 
-    // Segment queue for multi-segment routes (return & speedrun)
-    static constexpr uint8_t MAX_SEGMENTS = 255;
-    PathSegment segment_queue_[MAX_SEGMENTS];
-    uint8_t segment_count_;
-    uint8_t segment_idx_;
-
-    // Carried from one segment to the next so the robot does not stop in between
-    float carry_speed_;   // Speed the previous segment ends at (0 = it stops)
-    bool curve_in_;       // Previous segment ended with a smooth 90° curve into this one
 };

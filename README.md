@@ -13,7 +13,7 @@ Each bot in this repository lives on its own branch, named `release/<bot name>` 
 | [`src/main.cpp`](src/main.cpp) | Start-up and the three tasks (500 Hz motion on core 1; navigation and telemetry on core 0). |
 | [`src/hardware.cpp`](src/hardware.cpp) | Drivers: encoders, motors, IR sensors, IMU. |
 | [`src/control.cpp`](src/control.cpp) | PID loops, speed profiles, and the motion controller (straights, smooth curves, diagonals). |
-| [`src/navigation.cpp`](src/navigation.cpp) | Maze map, floodfill search, Dijkstra speed-run solver, path decomposer, navigator. |
+| [`src/navigation.cpp`](src/navigation.cpp) | Maze map, floodfill search, Dijkstra speed-run solver, and the navigator (search stepping and speed-run planner). |
 | [`src/ui.cpp`](src/ui.cpp) | Status LED, hand-wave controls, and the debug console. |
 | [`src/wireless.cpp`](src/wireless.cpp) | Bluetooth and Wi-Fi, for debugging only. |
 | [`bench/`](bench/) | Bench tests (one file per peripheral, proven on the real robot) and the calibration commands. |

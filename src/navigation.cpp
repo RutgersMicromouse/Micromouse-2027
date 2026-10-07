@@ -670,159 +670,15 @@ uint8_t Dijkstra::findFastestPath(int8_t start_x, int8_t start_y, Direction star
 }
 
 // ==============================================================================
-// PATH DECOMPOSER
+// PATH HELPERS
 // ==============================================================================
 
-Direction Decomposer::getDirection(Coordinate from, Coordinate to) {
-    int8_t dx = to.x - from.x;
-    int8_t dy = to.y - from.y;
-    if (dx == 0 && dy == 1)  return DIR_NORTH;
-    if (dx == 1 && dy == 0)  return DIR_EAST;
-    if (dx == 0 && dy == -1) return DIR_SOUTH;
-    if (dx == -1 && dy == 0) return DIR_WEST;
+Direction directionBetween(Coordinate from, Coordinate to) {
+    if (to.y > from.y) return DIR_NORTH;
+    if (to.x > from.x) return DIR_EAST;
+    if (to.y < from.y) return DIR_SOUTH;
+    if (to.x < from.x) return DIR_WEST;
     return DIR_INVALID;
-}
-
-uint8_t Decomposer::findSlalomLength(const Direction* dirs, uint8_t start_idx, uint8_t n) {
-    if (start_idx + 4 >= n) return 0;
-
-    Direction d_prog = dirs[start_idx];
-    Direction d_c1 = dirs[start_idx + 1];
-    int8_t p_diff = ((int8_t)d_c1 - (int8_t)d_prog + 4) % 4;
-    if (p_diff != 1 && p_diff != 3) return 0; // Must be perpendicular
-
-    Direction d_c2 = (Direction)(((int8_t)d_c1 + 2) % 4);
-    uint8_t length = 2;
-
-    while (start_idx + length < n) {
-        uint8_t rel = length;
-        if (rel % 2 == 0) {
-            if (dirs[start_idx + length] != d_prog) break;
-        } else {
-            Direction exp_c = ((rel / 2) % 2 == 0) ? d_c1 : d_c2;
-            if (dirs[start_idx + length] != exp_c) break;
-        }
-        length++;
-    }
-
-    // Must be an odd length >= 5 so entrance & exit align with d_prog
-    while (length >= 5 && length % 2 == 0) {
-        length--;
-    }
-
-    return (length >= 5) ? length : 0;
-}
-
-uint8_t Decomposer::decompose(const Coordinate* path, uint8_t path_len,
-                              PathSegment* out_segments, uint8_t max_segments,
-                              bool allow_diagonals) {
-    if (!path || path_len < 2 || !out_segments || max_segments == 0) return 0;
-
-    static Direction dirs[256];
-    uint8_t n = path_len - 1;
-    for (uint8_t i = 0; i < n; ++i) {
-        dirs[i] = getDirection(path[i], path[i + 1]);
-    }
-
-    uint8_t seg_count = 0;
-    uint8_t i = 0;
-
-    while (i < n && seg_count < max_segments) {
-        if (allow_diagonals) {
-            // 1. Up-and-Down Slalom Zigzag
-            uint8_t slen = findSlalomLength(dirs, i, n);
-            if (slen >= 5) {
-                out_segments[seg_count++] = {
-                    SEG_SLALOM,
-                    dirs[i],             // Progression direction
-                    dirs[i + 1],         // First wave direction
-                    dirs[i],             // Exit direction aligns with prog
-                    slen,
-                    path[i].x, path[i].y,
-                    path[i + slen].x, path[i + slen].y
-                };
-                i += slen;
-                continue;
-            }
-
-            // Avoid bundling dirs[i] into a 2-step diagonal if the NEXT step starts a slalom
-            if (i + 1 < n && findSlalomLength(dirs, i + 1, n) >= 5) {
-                out_segments[seg_count++] = {
-                    SEG_STRAIGHT,
-                    dirs[i],
-                    DIR_INVALID,
-                    dirs[i],
-                    1,
-                    path[i].x, path[i].y,
-                    path[i + 1].x, path[i + 1].y
-                };
-                i += 1;
-                continue;
-            }
-
-            // 2. Big Diagonal Staircase (M >= 2)
-            uint8_t diag_len = 0;
-            if (i + 1 < n) {
-                Direction d_a = dirs[i];
-                Direction d_b = dirs[i + 1];
-                int8_t diff = ((int8_t)d_b - (int8_t)d_a + 4) % 4;
-                if (diff == 1 || diff == 3) {
-                    uint8_t k = 2;
-                    while (i + k < n) {
-                        Direction exp = (k % 2 == 0) ? d_a : d_b;
-                        if (dirs[i + k] == exp) {
-                            k++;
-                        } else {
-                            break;
-                        }
-                    }
-                    diag_len = k;
-                }
-            }
-
-            if (diag_len >= 2) {
-                out_segments[seg_count++] = {
-                    SEG_DIAGONAL,
-                    dirs[i],             // Entry direction d1
-                    dirs[i + 1],         // Secondary cross direction d2
-                    dirs[i + diag_len - 1], // Exit direction d_last
-                    diag_len,
-                    path[i].x, path[i].y,
-                    path[i + diag_len].x, path[i + diag_len].y
-                };
-                i += diag_len;
-                continue;
-            }
-        }
-
-        // 3. Straight Sprint
-        Direction d = dirs[i];
-        uint8_t cnt = 1;
-        while (i + cnt < n && dirs[i + cnt] == d) {
-            if (allow_diagonals) {
-                if (findSlalomLength(dirs, i + cnt, n) >= 5) break;
-                if (i + cnt + 1 < n && findSlalomLength(dirs, i + cnt + 1, n) >= 5) break;
-                if (i + cnt + 1 < n) {
-                    int8_t p_diff = ((int8_t)dirs[i + cnt + 1] - (int8_t)d + 4) % 4;
-                    if (p_diff == 1 || p_diff == 3) break;
-                }
-            }
-            cnt++;
-        }
-
-        out_segments[seg_count++] = {
-            SEG_STRAIGHT,
-            d,
-            DIR_INVALID,
-            d,
-            cnt,
-            path[i].x, path[i].y,
-            path[i + cnt].x, path[i + cnt].y
-        };
-        i += cnt;
-    }
-
-    return seg_count;
 }
 
 // ==============================================================================
@@ -843,10 +699,7 @@ Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_que
       curve_cell_x_(0), curve_cell_y_(0), curve_entry_dir_(DIR_NORTH), curve_cell_was_known_(false),
       sub_cmd_count_(0),
       sub_cmd_idx_(0),
-      segment_count_(0),
-      segment_idx_(0),
-      carry_speed_(0.0f),
-      curve_in_(false) {
+      sub_cmd_overflow_(false) {
     memset(&pose_, 0, sizeof(pose_));
     pose_.cell_x = 0;
     pose_.cell_y = 0;
@@ -865,8 +718,6 @@ void Navigator::begin() {
     current_search_speed_ = 0.0f;
     sub_cmd_count_ = 0;
     sub_cmd_idx_ = 0;
-    segment_count_ = 0;
-    segment_idx_ = 0;
 }
 
 void Navigator::startSearchRun() {
@@ -885,8 +736,6 @@ void Navigator::startSearchRun() {
     current_search_speed_ = 0.0f;
     sub_cmd_count_ = 0;
     sub_cmd_idx_ = 0;
-    segment_count_ = 0;
-    segment_idx_ = 0;
     Serial.println("[NAV] Starting search run to the maze centre (keeping the known map).");
 }
 
@@ -917,109 +766,203 @@ bool Navigator::checkBestRouteExplored() {
     return false;
 }
 
-// How many times the robot has to stop and turn on the spot along a list of segments
-// (same joining rules as queueSegment: it keeps rolling into a segment with the same heading,
-// and between two straights at right angles, and stops everywhere else).
-static uint8_t countStops(const PathSegment* segs, uint8_t count) {
-    uint8_t stops = 0;
-    for (uint8_t i = 0; i + 1 < count; ++i) {
-        const PathSegment& seg = segs[i];
-        const PathSegment& next = segs[i + 1];
-        const Direction end_dir = (seg.type == SEG_STRAIGHT) ? seg.dir : seg.last_dir;
-        const int8_t turn = ((int8_t)next.dir - (int8_t)end_dir + 4) % 4;
-        const bool curves = seg.type == SEG_STRAIGHT && next.type == SEG_STRAIGHT && (turn == 1 || turn == 3);
-        const bool rolls  = turn == 0 && seg.type != SEG_SLALOM;
-        if (!curves && !rolls) stops++;
+// Time a straight of `dist` mm takes when entered at v0 and left at v1, never faster than v_max
+static float moveTime(float dist, float v_max, float accel, float v0, float v1) {
+    if (dist <= 0.0f) return 0.0f;
+    float d_up   = (v_max * v_max - v0 * v0) / (2.0f * accel);
+    float d_down = (v_max * v_max - v1 * v1) / (2.0f * accel);
+    if (d_up + d_down > dist) {
+        // Too short to reach v_max: accelerate to a lower peak, then brake
+        float v_peak = sqrtf((2.0f * accel * dist + v0 * v0 + v1 * v1) * 0.5f);
+        v_peak = fmaxf(v_peak, fmaxf(v0, v1));
+        return (v_peak - v0) / accel + (v_peak - v1) / accel;
     }
-    return stops;
+    return (v_max - v0) / accel + (v_max - v1) / accel + (dist - d_up - d_down) / v_max;
+}
+
+// Plans a whole speed run: turns the cell path into one unbroken chain of moves.
+//
+// The path is read as a list of turns, one per cell the path bends in:
+//   a turn on its own                 -> smooth 90° curve, cell edge to cell edge
+//   turns that alternate (L R L R..)  -> one diagonal, entered and left with smooth 45° curves
+//   two turns the same way in a row   -> the diagonal doubles back: a smooth 90° "V" turn from
+//       inside a diagonal                one diagonal onto the next
+// The robot never stops between the start cell and the centre (unless the path reverses on
+// itself, which a shortest path does not do).
+//
+// Distances: `pending` is straight-line distance still to be driven before the next turn. Every
+// cell step adds 180 mm; each turn takes over part of the steps either side of it.
+float Navigator::planSpeedRun(const Coordinate* path, uint8_t path_len, bool use_diagonals) {
+    sub_cmd_count_ = 0;
+    sub_cmd_idx_ = 0;
+    sub_cmd_overflow_ = false;
+
+    const float cruise     = SPEEDRUN_CRUISE_SPEED_MM_S * speed_scale_;
+    const float accel      = SPEEDRUN_ACCEL_MM_S2       * speed_scale_;
+    const float diag_speed = SPEEDRUN_DIAG_SPEED_MM_S   * speed_scale_;
+    const float turn_speed = SPEEDRUN_CURVE_SPEED_MM_S  * speed_scale_;
+    const float v_speed    = turn_speed * V90_SPEED_RATIO;
+    const float spin_speed = SPEEDRUN_TURN_SPEED_DEG_S  * speed_scale_;
+    const float spin_accel = SPEEDRUN_TURN_ACCEL_DEG_S2 * speed_scale_;
+
+    // Every run begins in the start cell facing into the maze
+    pose_.cell_x = path[0].x;
+    pose_.cell_y = path[0].y;
+    pose_.current_dir = DIR_NORTH;
+
+    static Direction dirs[256];
+    const uint8_t steps = path_len - 1;
+    for (uint8_t i = 0; i < steps; ++i) {
+        dirs[i] = directionBetween(path[i], path[i + 1]);
+    }
+    // The turn made in cell i: 0 = straight on, 1 = right, 3 = left, 2 = back the way it came
+    auto turnAt = [&](uint8_t i) -> int8_t { return (int8_t)(((int8_t)dirs[i] - (int8_t)dirs[i - 1] + 4) % 4); };
+
+    float time_s  = 0.0f;
+    float pending = 0.0f; // Straight distance not yet turned into a move
+    float speed   = 0.0f; // Speed of the robot at the point reached so far
+
+    // Emits the pending straight, ending at `exit_speed`
+    auto driveStraight = [&](float exit_speed) {
+        if (pending > 1.0f) {
+            pushSubCommand(ACTION_MOVE_DISTANCE, pending, cruise, accel, true, speed, exit_speed);
+            time_s += moveTime(pending, cruise, accel, speed, exit_speed);
+        }
+        pending = 0.0f;
+        speed = exit_speed;
+    };
+    auto driveCurve = [&](MotionAction action, float length, float v) {
+        pushSubCommand(action, length, v, accel, false, v, v);
+        time_s += length / v;
+        speed = v;
+    };
+    auto spinOnSpot = [&](MotionAction action, float degrees) {
+        pushSubCommand(action, degrees, spin_speed, spin_accel, false);
+        time_s += degrees / spin_speed + spin_speed / spin_accel;
+    };
+
+    // Face the first step (normally it already does)
+    int8_t first_turn = ((int8_t)dirs[0] - (int8_t)pose_.current_dir + 4) % 4;
+    if (first_turn == 1) spinOnSpot(ACTION_TURN_RIGHT_90, 90.0f);
+    if (first_turn == 3) spinOnSpot(ACTION_TURN_LEFT_90, 90.0f);
+    if (first_turn == 2) spinOnSpot(ACTION_TURN_AROUND_180, 180.0f);
+
+    pending = MAZE_CELL_SIZE_MM; // The first step, start cell centre to the next cell centre
+    uint8_t i = 1;
+    while (i < steps) {
+        const int8_t turn = turnAt(i);
+
+        if (turn == 0) { // Straight on through cell i
+            pending += MAZE_CELL_SIZE_MM;
+            i++;
+            continue;
+        }
+        if (turn == 2) { // The path reverses: stop at the cell centre and turn around
+            driveStraight(0.0f);
+            spinOnSpot(ACTION_TURN_AROUND_180, 180.0f);
+            pending = MAZE_CELL_SIZE_MM;
+            i++;
+            continue;
+        }
+
+        // Cells i..j: a run of left / right turns with no straight cell in between
+        uint8_t j = i;
+        bool alternates = false;
+        while (j + 1 < steps && (turnAt(j + 1) == 1 || turnAt(j + 1) == 3)) {
+            if (turnAt(j + 1) != turnAt(j)) alternates = true;
+            j++;
+        }
+
+        if (!use_diagonals || !alternates) {
+            // Smooth 90° curves, one per cell, each from the cell's entry edge to its exit edge
+            for (uint8_t k = i; k <= j; ++k) {
+                pending -= HALF_CELL_SIZE_MM;
+                driveStraight(turn_speed);
+                driveCurve(turnAt(k) == 1 ? ACTION_CURVE_RIGHT_90 : ACTION_CURVE_LEFT_90, CURVE_90_LENGTH_MM, turn_speed);
+                pending = HALF_CELL_SIZE_MM; // From the exit edge to the next cell centre
+            }
+            i = j + 1;
+            continue;
+        }
+
+        // Diagonal: leave the cell centreline with a 45° curve...
+        pending += DIAG_LEAD_MM - MAZE_CELL_SIZE_MM;
+        driveStraight(turn_speed);
+        driveCurve(turnAt(i) == 1 ? ACTION_CURVE_RIGHT_45 : ACTION_CURVE_LEFT_45, CURVE_45_LENGTH_MM, turn_speed);
+
+        // ...then one diagonal straight per stretch of alternating turns, with a V turn wherever
+        // two turns in a row go the same way...
+        float trim_in = DIAG_TRIM_MM;
+        uint8_t k = i;
+        while (k <= j) {
+            uint8_t m = k;
+            while (m < j && turnAt(m + 1) != turnAt(m)) m++;
+
+            const bool last_stretch = (m == j);
+            const float trim_out   = last_stretch ? DIAG_TRIM_MM : V90_TRIM_MM;
+            const float exit_speed = last_stretch ? turn_speed : v_speed;
+            const float length     = (float)(m - k + 1) * DIAG_HALF_STEP_MM - trim_in - trim_out;
+
+            pushSubCommand(ACTION_MOVE_DIAGONAL_HALF, length / DIAG_HALF_STEP_MM, diag_speed, accel, false, speed, exit_speed);
+            time_s += moveTime(length, diag_speed, accel, speed, exit_speed);
+            speed = exit_speed;
+
+            if (!last_stretch) {
+                driveCurve(turnAt(m) == 1 ? ACTION_CURVE_RIGHT_90 : ACTION_CURVE_LEFT_90, CURVE_V90_LENGTH_MM, v_speed);
+                trim_in = V90_TRIM_MM;
+            }
+            k = m + 1;
+        }
+
+        // ...and back onto a cell centreline with another 45° curve
+        driveCurve(turnAt(j) == 1 ? ACTION_CURVE_RIGHT_45 : ACTION_CURVE_LEFT_45, CURVE_45_LENGTH_MM, turn_speed);
+        pending = DIAG_LEAD_MM; // From the end of that curve to the next cell centre
+        i = j + 1;
+    }
+
+    driveStraight(0.0f); // Into the last cell, and stop
+
+    pose_.cell_x = path[steps].x;
+    pose_.cell_y = path[steps].y;
+    pose_.current_dir = dirs[steps - 1];
+
+    return sub_cmd_overflow_ ? -1.0f : time_s;
 }
 
 void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
-    // Every run begins with the robot placed in the start cell facing into the maze
-    pose_.cell_x = 0;
-    pose_.cell_y = 0;
-    pose_.current_dir = DIR_NORTH;
     current_strategy_ = strategy;
     state_ = NAV_STATE_SPEED_RUNNING;
     waiting_for_motion_ = false;
-    carry_speed_ = 0.0f;
-    curve_in_ = false;
-    sub_cmd_count_ = 0;
-    sub_cmd_idx_ = 0;
 
     static Coordinate path[256];
-    uint8_t path_len = dijkstra_.findFastestPathToCenter(pose_.cell_x, pose_.cell_y, pose_.current_dir, path, 255);
-
+    uint8_t path_len = dijkstra_.findFastestPathToCenter(0, 0, DIR_NORTH, path, 255);
     if (path_len < 2) {
         Serial.println("[NAV] Error: No speedrun path found!");
         state_ = NAV_STATE_ERROR;
         return;
     }
 
+    bool use_diagonals = (strategy != SPEEDRUN_CURVES_ONLY);
     if (strategy == SPEEDRUN_HYBRID_AUTO) {
-        Serial.println("\n[NAV-OPTIMIZER] ⚡ Benchmarking Continuous Curves vs Diagonal Sprints...");
-        static PathSegment segs_curves[MAX_SEGMENTS];
-        static PathSegment segs_diags[MAX_SEGMENTS];
-
-        uint8_t count_curves = Decomposer::decompose(path, path_len, segs_curves, MAX_SEGMENTS, false);
-        uint8_t count_diags  = Decomposer::decompose(path, path_len, segs_diags, MAX_SEGMENTS, true);
-
-        // Estimate total traversal time for Curves
-        float t_curves = 0.0f;
-        for (uint8_t i = 0; i < count_curves; ++i) {
-            float dist = segs_curves[i].count * 180.0f;
-            t_curves += (dist / SPEEDRUN_CRUISE_SPEED_MM_S) + 0.18f; // straight cruise + 90 deg curve
-        }
-
-        // Estimate total traversal time for Diagonals
-        float t_diags = 0.0f;
-        for (uint8_t i = 0; i < count_diags; ++i) {
-            if (segs_diags[i].type == SEG_DIAGONAL) {
-                float dist = 180.0f + (segs_diags[i].count - 1) * 127.28f;
-                t_diags += (dist / SPEEDRUN_DIAG_SPEED_MM_S) + 0.22f; // diagonal sprint + 45 deg curves
-            } else if (segs_diags[i].type == SEG_SLALOM) {
-                float dist = 180.0f + segs_diags[i].count * 127.28f;
-                t_diags += (dist / (SPEEDRUN_DIAG_SPEED_MM_S * 0.9f)) + 0.35f;
-            } else {
-                float dist = segs_diags[i].count * 180.0f;
-                t_diags += (dist / SPEEDRUN_CRUISE_SPEED_MM_S) + 0.18f;
-            }
-        }
-
-        // Stopping to turn on the spot costs far more than the distance it saves
-        t_curves += countStops(segs_curves, count_curves) * SPEEDRUN_STOP_PENALTY_S;
-        t_diags  += countStops(segs_diags,  count_diags)  * SPEEDRUN_STOP_PENALTY_S;
-
-        Serial.printf("  • Continuous Curves Estimate: %5.2fs (%d segments)\n", t_curves, count_curves);
-        Serial.printf("  • Diagonal Sprints Estimate:  %5.2fs (%d segments)\n", t_diags, count_diags);
-
-        if (t_diags < t_curves) {
-            Serial.printf("  ⚡ AUTO-SELECTED: DIAGONALS (saves %5.2fs, %.1f%% faster)!\n",
-                          t_curves - t_diags, (t_curves - t_diags) / t_curves * 100.0f);
-            segment_count_ = count_diags;
-            for (uint8_t i = 0; i < count_diags; ++i) segment_queue_[i] = segs_diags[i];
-        } else {
-            Serial.printf("  ⚡ AUTO-SELECTED: CONTINUOUS CURVES (saves %5.2fs)!\n", t_diags - t_curves);
-            segment_count_ = count_curves;
-            for (uint8_t i = 0; i < count_curves; ++i) segment_queue_[i] = segs_curves[i];
-        }
-
-    } else if (strategy == SPEEDRUN_DIAGONALS_ONLY) {
-        Serial.println("\n[NAV] 📐 Launching PURE DIAGONAL SPECIALIST Speedrun (Max Sprint Speed)!");
-        segment_count_ = Decomposer::decompose(path, path_len, segment_queue_, MAX_SEGMENTS, true);
-    } else { // SPEEDRUN_CURVES_ONLY
-        Serial.println("\n[NAV] 🏎 Launching PURE CONTINUOUS CURVES Speedrun (Zero Diagonals)!");
-        segment_count_ = Decomposer::decompose(path, path_len, segment_queue_, MAX_SEGMENTS, false);
+        // Plan it both ways and keep whichever is quicker
+        float t_curves = planSpeedRun(path, path_len, false);
+        float t_diags  = planSpeedRun(path, path_len, true);
+        use_diagonals = (t_diags >= 0.0f) && (t_curves < 0.0f || t_diags < t_curves);
+        Serial.printf("[NAV] Hybrid: curves %.2f s, diagonals %.2f s -> %s\n",
+                      t_curves, t_diags, use_diagonals ? "diagonals" : "curves");
     }
 
-    segment_idx_ = 0;
-    Serial.printf("[NAV] Championship Path: %d cells, %d high-speed segments.\n",
-                  path_len, segment_count_);
-
-    if (segment_count_ > 0) {
-        queueSegment(segment_queue_[segment_idx_++], SPEEDRUN_CRUISE_SPEED_MM_S * speed_scale_,
-                     SPEEDRUN_ACCEL_MM_S2 * speed_scale_);
+    float run_time = planSpeedRun(path, path_len, use_diagonals);
+    if (run_time < 0.0f) {
+        Serial.println("[NAV] Error: speed run has too many moves to plan!");
+        sub_cmd_count_ = 0;
+        state_ = NAV_STATE_ERROR;
+        return;
     }
+    Serial.printf("[NAV] Speed run planned: %d cells, %d moves, about %.2f s.\n",
+                  (int)path_len, (int)sub_cmd_count_, run_time);
+
+    processSubcommandQueue();
 }
 
 void Navigator::stop() {
@@ -1029,12 +972,8 @@ void Navigator::stop() {
     }
     state_ = NAV_STATE_IDLE;
     search_phase_ = PHASE_AT_CENTRE;
-    carry_speed_ = 0.0f;
-    curve_in_ = false;
     sub_cmd_count_ = 0;
     sub_cmd_idx_ = 0;
-    segment_count_ = 0;
-    segment_idx_ = 0;
     sendMotionCommand(ACTION_EMERGENCY_STOP, 0.0f, 0.0f, 0.0f);
 }
 
@@ -1070,13 +1009,7 @@ void Navigator::processSubcommandQueue() {
         return;
     }
 
-    // Current segment finished! Check if more segments are queued (speed runs only)
-    if (segment_idx_ < segment_count_) {
-        queueSegment(segment_queue_[segment_idx_++], SPEEDRUN_CRUISE_SPEED_MM_S * speed_scale_,
-                     SPEEDRUN_ACCEL_MM_S2 * speed_scale_);
-        return;
-    }
-
+    // Nothing left to send: a speed run ends here (the search carries on in step())
     if (state_ == NAV_STATE_SPEED_RUNNING) {
         Serial.println("[NAV] Speed run complete: centre reached.");
         state_ = NAV_STATE_FINISHED;
@@ -1085,135 +1018,11 @@ void Navigator::processSubcommandQueue() {
 
 void Navigator::pushSubCommand(MotionAction action, float param, float max_speed, float accel,
                                bool wall_centering, float entry_speed, float exit_speed) {
-    if (sub_cmd_count_ >= MAX_SUB_CMDS) return;
+    if (sub_cmd_count_ >= MAX_SUB_CMDS) {
+        sub_cmd_overflow_ = true;
+        return;
+    }
     sub_cmd_queue_[sub_cmd_count_++] = { action, param, max_speed, accel, wall_centering, entry_speed, exit_speed, 0.0f, false };
-}
-
-void Navigator::pushPivot(Direction target, float turn_speed, float turn_accel) {
-    // Turn on the spot to face `target`. Only ever queued while the robot is standing still.
-    int8_t diff = ((int8_t)target - (int8_t)pose_.current_dir + 4) % 4;
-    if (diff == 1) {
-        pushSubCommand(ACTION_TURN_RIGHT_90, 90.0f, turn_speed, turn_accel, false);
-    } else if (diff == 3) {
-        pushSubCommand(ACTION_TURN_LEFT_90, 90.0f, turn_speed, turn_accel, false);
-    } else if (diff == 2) {
-        pushSubCommand(ACTION_TURN_AROUND_180, 180.0f, turn_speed, turn_accel, false);
-    }
-    pose_.current_dir = target;
-}
-
-// Turns one path segment into motion commands for the return run and speed runs.
-//
-// The robot keeps moving wherever the path allows it:
-//   straight -> straight at a right angle : smooth 90° curve through the corner cell
-//   straight -> diagonal (same heading)   : rolls straight into the diagonal's 45° curve
-//   anything -> same heading              : no stop in between
-// It only stops to turn on the spot where the path doubles back or a diagonal starts sideways.
-//
-// Every segment starts and ends on a cell centre, except across a smooth 90° curve, which runs
-// from the edge of the corner cell to its next edge (so the straights either side lose 90 mm).
-void Navigator::queueSegment(const PathSegment& seg, float cruise_speed, float accel) {
-    sub_cmd_count_ = 0;
-    sub_cmd_idx_ = 0;
-
-    const bool speed_run     = (state_ == NAV_STATE_SPEED_RUNNING);
-    const float turn_speed   = speed_run ? SPEEDRUN_TURN_SPEED_DEG_S  * speed_scale_ : SEARCH_TURN_SPEED_DEG_S;
-    const float turn_accel   = speed_run ? SPEEDRUN_TURN_ACCEL_DEG_S2 * speed_scale_ : SEARCH_TURN_ACCEL_DEG_S2;
-    const float diag_speed   = speed_run ? SPEEDRUN_DIAG_SPEED_MM_S   * speed_scale_ : cruise_speed;
-    const float curve_speed  = speed_run ? SPEEDRUN_CURVE_SPEED_MM_S  * speed_scale_ : SEARCH_CURVE_SPEED_MM_S;
-
-    // How this segment begins: left over from the previous one
-    const float entry_speed = carry_speed_;
-    const bool  curve_in    = curve_in_;
-
-    // How this segment must end: decided by the one that follows it
-    const PathSegment* next = (segment_idx_ < segment_count_) ? &segment_queue_[segment_idx_] : nullptr;
-    const Direction end_dir = (seg.type == SEG_STRAIGHT) ? seg.dir : seg.last_dir;
-    const int8_t next_turn  = next ? (int8_t)(((int8_t)next->dir - (int8_t)end_dir + 4) % 4) : (int8_t)-1;
-
-    const bool curve_out = next && seg.type == SEG_STRAIGHT && next->type == SEG_STRAIGHT &&
-                           (next_turn == 1 || next_turn == 3);
-    const bool roll_out  = next && next_turn == 0 && seg.type != SEG_SLALOM;
-    const float exit_speed = (curve_out || roll_out) ? curve_speed : 0.0f;
-
-    if (pose_.current_dir != seg.dir) {
-        pushPivot(seg.dir, turn_speed, turn_accel);
-    }
-
-    if (seg.type == SEG_STRAIGHT) {
-        float length = (float)seg.count * MAZE_CELL_SIZE_MM;
-        if (curve_in)  length -= HALF_CELL_SIZE_MM; // The curve before already carried us to the cell edge
-        if (curve_out) length -= HALF_CELL_SIZE_MM; // The curve after starts at the corner cell's edge
-
-        if (length > 1.0f) {
-            pushSubCommand(ACTION_MOVE_DISTANCE, length, cruise_speed, accel, true, entry_speed, exit_speed);
-            // After a curve the straight begins on a cell edge, not a centre (for post-edge correction)
-            if (curve_in) sub_cmd_queue_[sub_cmd_count_ - 1].start_offset_mm = HALF_CELL_SIZE_MM;
-        }
-        if (curve_out) {
-            pushSubCommand((next_turn == 1) ? ACTION_CURVE_RIGHT_90 : ACTION_CURVE_LEFT_90,
-                           CURVE_90_LENGTH_MM, curve_speed, accel, false, curve_speed, curve_speed);
-        }
-
-    } else if (seg.type == SEG_DIAGONAL) {
-        // Path: cell centre -> short straight -> 45° curve -> diagonal -> 45° curve -> short
-        // straight -> cell centre. The curve lengths and trims in config.h make the diagonal pass
-        // exactly through the cell-edge midpoints, 63.6 mm from the posts on either side.
-        const int8_t turn_in_diff  = ((int8_t)seg.secondary_dir - (int8_t)seg.dir + 4) % 4;
-        const Direction d_prev     = (seg.count % 2 == 1) ? seg.secondary_dir : seg.dir;
-        const int8_t turn_out_diff = ((int8_t)seg.last_dir - (int8_t)d_prev + 4) % 4;
-
-        const float diagonal_mm = (float)(seg.count - 1) * DIAG_HALF_STEP_MM - 2.0f * DIAG_TRIM_MM;
-
-        pushSubCommand(ACTION_MOVE_DISTANCE, DIAG_LEAD_MM, cruise_speed, accel, true, entry_speed, curve_speed);
-        pushSubCommand((turn_in_diff == 1) ? ACTION_CURVE_RIGHT_45 : ACTION_CURVE_LEFT_45,
-                       CURVE_45_LENGTH_MM, curve_speed, accel, false, curve_speed, curve_speed);
-        pushSubCommand(ACTION_MOVE_DIAGONAL_HALF, diagonal_mm / DIAG_HALF_STEP_MM, diag_speed, accel, false,
-                       curve_speed, curve_speed);
-        pushSubCommand((turn_out_diff == 1) ? ACTION_CURVE_RIGHT_45 : ACTION_CURVE_LEFT_45,
-                       CURVE_45_LENGTH_MM, curve_speed, accel, false, curve_speed, curve_speed);
-        pushSubCommand(ACTION_MOVE_DISTANCE, DIAG_LEAD_MM, cruise_speed, accel, true, curve_speed, exit_speed);
-
-    } else if (seg.type == SEG_SLALOM) {
-        // Zigzag of short diagonals. Turns on the spot at each reversal (stops between waves).
-        const int8_t t_in_diff = ((int8_t)seg.secondary_dir - (int8_t)seg.dir + 4) % 4;
-        const uint8_t num_waves = (seg.count - 1) / 2;
-
-        // 1. Approach entrance edge
-        pushSubCommand(ACTION_MOVE_HALF_CELL, 1.0f, cruise_speed, accel, true, entry_speed, 0.0f);
-
-        // 2. Turn 45° into first wave
-        pushSubCommand((t_in_diff == 1) ? ACTION_TURN_RIGHT_45 : ACTION_TURN_LEFT_45,
-                       45.0f, turn_speed, turn_accel, false);
-
-        // 3. Weave through all waves
-        for (uint8_t w = 0; w < num_waves; ++w) {
-            pushSubCommand(ACTION_MOVE_DIAGONAL_HALF, 2.0f, diag_speed, accel, false);
-            if (w < num_waves - 1) {
-                bool turn_left = (t_in_diff == 1 && w % 2 == 0) || (t_in_diff == 3 && w % 2 == 1);
-                pushSubCommand(turn_left ? ACTION_TURN_LEFT_90 : ACTION_TURN_RIGHT_90,
-                               90.0f, turn_speed, turn_accel, false);
-            }
-        }
-
-        // 4. Align with exit heading
-        bool exit_left = (t_in_diff == 1 && (num_waves - 1) % 2 == 0) || (t_in_diff == 3 && (num_waves - 1) % 2 == 1);
-        pushSubCommand(exit_left ? ACTION_TURN_LEFT_45 : ACTION_TURN_RIGHT_45,
-                       45.0f, turn_speed, turn_accel, false);
-
-        // 5. Enter destination cell center
-        pushSubCommand(ACTION_MOVE_HALF_CELL, 1.0f, cruise_speed, accel, true);
-    }
-
-    // Where the robot is (or will be) when this segment's commands have run
-    pose_.cell_x = seg.end_x;
-    pose_.cell_y = seg.end_y;
-    pose_.current_dir = curve_out ? next->dir : end_dir;
-    carry_speed_ = exit_speed;
-    curve_in_ = curve_out;
-
-    // Launch first sub-command in queue
-    processSubcommandQueue();
 }
 
 // Search run: one decision per cell, taken at the cell centre where the wall sensors are reliable.
@@ -1293,7 +1102,7 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
             return;
         }
 
-        d0 = Decomposer::getDirection({ pose_.cell_x, pose_.cell_y }, path[1]);
+        d0 = directionBetween({ pose_.cell_x, pose_.cell_y }, path[1]);
         diff = ((int8_t)d0 - (int8_t)pose_.current_dir + 4) % 4;
     }
 
@@ -1341,7 +1150,7 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         Coordinate next_cell = path[1];
         float exit_v = 0.0f;
         bool plan_continues_straight = path_len >= 3 &&
-                                       Decomposer::getDirection(path[1], path[2]) == d0 &&
+                                       directionBetween(path[1], path[2]) == d0 &&
                                        !floodfill_.isAtGoal(next_cell.x, next_cell.y);
         if (plan_continues_straight) {
             exit_v = maze_.isVisited(next_cell.x, next_cell.y) ? search_speed : SEARCH_PROBE_SPEED_MM_S;

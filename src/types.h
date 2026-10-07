@@ -19,30 +19,11 @@ enum Direction : uint8_t {
     DIR_INVALID = 255
 };
 
-// Navigation Execution Primitives (Straight Sprints, Diagonal Staircases, Slalom Waves)
-enum SegmentType : uint8_t {
-    SEG_STRAIGHT,
-    SEG_DIAGONAL,
-    SEG_SLALOM
-};
-
-struct PathSegment {
-    SegmentType type;
-    Direction dir;            // Primary direction (sprint dir, diagonal entry dir, or slalom prog dir)
-    Direction secondary_dir;  // Cross direction for diagonal/slalom
-    Direction last_dir;       // Exit direction for diagonal
-    uint8_t count;            // Sprint count (cells), diagonal length, or slalom length
-    int8_t start_x;
-    int8_t start_y;
-    int8_t end_x;
-    int8_t end_y;
-};
-
 // Speedrun Strategy Execution Modes
 enum SpeedrunStrategy : uint8_t {
-    SPEEDRUN_HYBRID_AUTO    = 0, // Auto-optimizer: benchmarks Curves vs Diagonals and executes the fastest
-    SPEEDRUN_DIAGONALS_ONLY = 1, // Pure Diagonal Specialist: prioritizes 45° diagonal sprints across all staircases
-    SPEEDRUN_CURVES_ONLY    = 2  // Pure Continuous Curves: continuous 90° tangent circular arcs
+    SPEEDRUN_HYBRID_AUTO    = 0, // Plans the run both ways below and drives whichever is quicker
+    SPEEDRUN_DIAGONALS_ONLY = 1, // Staircases are driven as diagonals
+    SPEEDRUN_CURVES_ONLY    = 2  // Every corner is a smooth 90° curve, no diagonals
 };
 
 // High-level Actions the Navigator can issue to the Motion Controller

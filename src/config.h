@@ -121,6 +121,9 @@
 #define DIAG_LEAD_MM           53.52f   // Straight from a cell centre before the 45° turn onto a diagonal
 #define DIAG_TRIM_MM           36.48f   // Diagonal distance each 45° turn takes off the diagonal straight
 #define DIAG_HALF_STEP_MM      127.279f // One diagonal half-step: edge midpoint to edge midpoint (90 * sqrt 2)
+#define CURVE_V90_LENGTH_MM    99.15f   // 90° turn from one diagonal onto the next (a "V"), around a cell-edge midpoint
+#define V90_TRIM_MM            60.0f    // Diagonal distance that turn takes off each of the two diagonals (99.15 * 0.60514)
+#define V90_SPEED_RATIO        0.8f     // The V turn is tighter than the others, so it is taken this much slower
 
 #define SEARCH_PROBE_SPEED_MM_S 120.0f  // Search speed when rolling into a cell it has never seen (may have to stop)
 
@@ -171,7 +174,6 @@
 #define SPEED_TIER_2_SCALE     0.80f
 #define SPEED_TIER_3_SCALE     1.00f
 
-#define SPEEDRUN_STOP_PENALTY_S        0.45f    // Time a stop-and-turn costs, when the hybrid mode compares routes
 
 // ==============================================================================
 // 3. MAZE GEOMETRY
