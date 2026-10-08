@@ -18,6 +18,9 @@ public:
     // Update profile state by dt seconds
     void update(float dt_seconds);
 
+    // Use measured travel to close the position loop around a velocity profile.
+    void updateWithFeedback(float dt_seconds, float measured_distance);
+
     // Queries
     float getCurrentPosition() const { return current_pos_; }
     float getCurrentVelocity() const { return current_vel_; }

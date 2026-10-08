@@ -8,7 +8,7 @@ PathOptimizer::PathOptimizer()
 bool PathOptimizer::generatePath(const Maze& maze, Floodfill& solver, Coordinate start_pos, Direction start_heading) {
     segment_count_ = 0;
     solver.setGoalToCenter();
-    solver.recalculate();
+    solver.recalculate(true);
 
     Coordinate cur = start_pos;
     Direction heading = start_heading;

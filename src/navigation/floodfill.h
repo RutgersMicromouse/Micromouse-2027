@@ -20,7 +20,9 @@ public:
     void setCustomGoal(int8_t x, int8_t y);
 
     // Recalculate distance matrix across all 256 cells
-    void recalculate();
+    // Exploration may treat unknown edges as passable; speed runs must use
+    // only edges that have been explicitly observed open.
+    void recalculate(bool known_edges_only = false);
 
     // Query distance metric
     uint16_t getDistance(int8_t x, int8_t y) const;
@@ -33,4 +35,5 @@ private:
     const Maze& maze_;
     uint16_t distance_[MAZE_WIDTH][MAZE_HEIGHT];
     bool is_goal_[MAZE_WIDTH][MAZE_HEIGHT];
+    bool known_edges_only_;
 };

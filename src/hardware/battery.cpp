@@ -31,7 +31,7 @@ void BatteryMonitor::update() {
     if (isCritical()) {
         warning_counter_++;
         if (warning_counter_ % 50 == 0) {
-            Serial.printf("[BATTERY] CRITICAL BATTERY ALERT: %4.2f V! Motors will be disabled!\n", filtered_voltage_);
+            Serial.printf("[BATTERY] CRITICAL BATTERY ALERT: %4.2f V!\n", filtered_voltage_);
         }
     }
 }

@@ -6,20 +6,40 @@ Maze::Maze() {
 
 void Maze::reset() {
     memset(cells_, 0, sizeof(cells_));
+    memset(known_west_, 0, sizeof(known_west_));
 
     // Install outer boundary perimeter walls
     for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
         cells_[x][0]               |= WALL_SOUTH;
         cells_[x][MAZE_HEIGHT - 1] |= WALL_NORTH;
+        setWallKnown(x, 0, DIR_SOUTH);
+        setWallKnown(x, MAZE_HEIGHT - 1, DIR_NORTH);
     }
     for (int8_t y = 0; y < MAZE_HEIGHT; ++y) {
         cells_[0][y]              |= WALL_WEST;
         cells_[MAZE_WIDTH - 1][y] |= WALL_EAST;
+        setWallKnown(0, y, DIR_WEST);
+        setWallKnown(MAZE_WIDTH - 1, y, DIR_EAST);
     }
 
-    // Standard micromouse start cell (0, 0) has East wall
-    cells_[0][0] |= WALL_EAST;
-    cells_[1][0] |= WALL_WEST;
+}
+
+uint8_t Maze::knownBitFromDir(Direction dir) {
+    switch (dir) {
+        case DIR_NORTH: return KNOWN_NORTH;
+        case DIR_EAST:  return KNOWN_EAST;
+        case DIR_SOUTH: return KNOWN_SOUTH;
+        default:        return 0;
+    }
+}
+
+void Maze::setWallKnown(int8_t x, int8_t y, Direction dir) {
+    if (!isValidCoordinate(x, y) || dir == DIR_INVALID) return;
+    if (dir == DIR_WEST) {
+        known_west_[x][y] = 1;
+    } else {
+        cells_[x][y] |= knownBitFromDir(dir);
+    }
 }
 
 bool Maze::isValidCoordinate(int8_t x, int8_t y) {
@@ -32,8 +52,19 @@ bool Maze::hasWall(int8_t x, int8_t y, Direction dir) const {
     return (cells_[x][y] & mask) != 0;
 }
 
+bool Maze::isWallKnown(int8_t x, int8_t y, Direction dir) const {
+    if (!isValidCoordinate(x, y) || dir == DIR_INVALID) return true;
+    if (dir == DIR_WEST) return known_west_[x][y] != 0;
+    return (cells_[x][y] & knownBitFromDir(dir)) != 0;
+}
+
 void Maze::setWall(int8_t x, int8_t y, Direction dir, bool present) {
     if (!isValidCoordinate(x, y) || dir == DIR_INVALID) return;
+
+    // The physical perimeter is immutable even if a sensor misses it.
+    int8_t nx = x + dxFromDir(dir);
+    int8_t ny = y + dyFromDir(dir);
+    if (!isValidCoordinate(nx, ny)) present = true;
 
     uint8_t mask = wallBitFromDir(dir);
     if (present) {
@@ -42,9 +73,9 @@ void Maze::setWall(int8_t x, int8_t y, Direction dir, bool present) {
         cells_[x][y] &= ~mask;
     }
 
-    // Set corresponding reciprocal wall in adjacent neighbor cell
-    int8_t nx = x + dxFromDir(dir);
-    int8_t ny = y + dyFromDir(dir);
+    setWallKnown(x, y, dir);
+
+    // Set corresponding reciprocal wall and observation in adjacent neighbor.
     if (isValidCoordinate(nx, ny)) {
         uint8_t opp_mask = wallBitFromDir(oppositeDirection(dir));
         if (present) {
@@ -52,6 +83,7 @@ void Maze::setWall(int8_t x, int8_t y, Direction dir, bool present) {
         } else {
             cells_[nx][ny] &= ~opp_mask;
         }
+        setWallKnown(nx, ny, oppositeDirection(dir));
     }
 }
 

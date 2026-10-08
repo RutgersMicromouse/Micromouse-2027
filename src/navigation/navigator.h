@@ -21,6 +21,9 @@ public:
     // Exploration to Center (7,7)-(8,8)
     bool exploreToCenter();
 
+    // Perform at most one exploration cell step, then return to the caller.
+    bool exploreOneCell();
+
     // Exploration return journey back to Start (0,0)
     bool exploreToStart();
 
@@ -37,8 +40,15 @@ public:
     Maze& getMaze() { return maze_; }
 
 private:
+    enum class StepResult : uint8_t {
+        Continue,
+        GoalReached,
+        NoRoute,
+        MotionFailed
+    };
+
     // Move 1 cell in current or new direction
-    bool stepExplore();
+    StepResult stepExplore();
 
     Maze maze_;
     Floodfill solver_;

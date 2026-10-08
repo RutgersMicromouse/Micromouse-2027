@@ -8,7 +8,7 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 
 | Subsystem | Component | Interface | Pin / Address | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **Microcontroller** | **Teensy 4.0** | ARM Cortex-M7 @ 600MHz | — | 1MB RAM, 2MB Flash, Hardware FPU |
+| **Microcontroller** | **Teensy 3.2** | ARM Cortex-M4 @ 72MHz | — | 64KB RAM, 256KB Flash, Hardware FPU |
 | **Motor Driver** | **Pololu Motoron M2T256** | I2C (`Wire`) | Addr `0x10` (16) | Dual-channel DC driver, 12V motor supply |
 | **Left Motor (LMOT)** | Pololu Micro Metal Gearmotor | Motoron Ch 1 | M1A / M1B | Channel 1 on Motoron |
 | **Right Motor (RMOT)**| Pololu Micro Metal Gearmotor | Motoron Ch 2 | M2A / M2B | Channel 2 on Motoron (direction inverted) |
@@ -16,10 +16,10 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 | **Right Encoder** | Magnetic Quadrature | Pin Interrupts | Pin 4 (`RMOTChanA`), Pin 5 (`RMOTChanB`) | Quadrature counting |
 | **IMU** | **Pololu MinIMU-9 v5** | I2C (`Wire`) | Addr `0x6B` (LSM6DS33) | 3-axis gyro (±1000 dps) + 3-axis accel (±2g) |
 | **Front IR Sensor** | Analog Distance (`FIR`) | ADC (Analog) | Pin 17 (`A3`) | Front wall detection & squaring |
-| **Left 45° IR Sensor**| Analog Distance (`L1IR`) | ADC (Analog) | Pin 16 (`A2`) | Diagonal approach wall guide |
-| **Left 90° IR Sensor**| Analog Distance (`L2IR`) | ADC (Analog) | Pin 15 (`A1`) | Left side wall parallel centering |
-| **Right 45° IR Sensor**| Analog Distance (`R1IR`) | ADC (Analog) | Pin 14 (`A0`) | Diagonal approach wall guide |
-| **Right 90° IR Sensor**| Analog Distance (`R2IR`) | ADC (Analog) | Pin 20 (`A6`) | Right side wall parallel centering |
+| **Front-left side IR Sensor**| Analog Distance | ADC (Analog) | Pin 16 (`A2`) | Parallel left-side wall sensing |
+| **Rear-left side IR Sensor**| Analog Distance | ADC (Analog) | Pin 15 (`A1`) | Parallel left-side wall and heading alignment |
+| **Front-right side IR Sensor**| Analog Distance | ADC (Analog) | Pin 14 (`A0`) | Parallel right-side wall sensing |
+| **Rear-right side IR Sensor**| Analog Distance | ADC (Analog) | Pin 20 (`A6`) | Parallel right-side wall and heading alignment |
 | **Battery Sense** | Resistor Divider (100k/33k) | ADC (Analog) | Pin 21 (`A7`) | Ratio: 4.0303x, Critical cutoff: 6.4V |
 | **Status LED** | On-Board LED | GPIO Output | Pin 13 (`LED_BUILTIN`) | Startup diagnostics, mode select, blink feedback |
 
@@ -29,7 +29,7 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 
 ```
 Micromouse-2027/
-├── platformio.ini               # PlatformIO Teensy 4.0 build configuration
+    ├── platformio.ini               # PlatformIO Teensy 3.2 build configuration
 ├── include/
 │   ├── config.h                 # Global hardware pins, dimensions, rates, and thresholds
 │   ├── maze_constants.h         # Standard 16x16 maze bitmasks and direction utilities

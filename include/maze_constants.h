@@ -17,6 +17,9 @@
 #define WALL_SOUTH             0x04
 #define WALL_WEST              0x08
 #define CELL_VISITED           0x10
+#define KNOWN_NORTH             0x20
+#define KNOWN_EAST              0x40
+#define KNOWN_SOUTH             0x80
 #define WALL_MASK              0x0F
 
 enum Direction : int8_t {

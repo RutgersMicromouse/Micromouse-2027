@@ -46,8 +46,8 @@ public:
     void setPolarity(bool invert_left, bool invert_right);
 
 private:
-    Encoder enc_left_;
-    Encoder enc_right_;
+    mutable Encoder enc_left_;
+    mutable Encoder enc_right_;
 
     bool invert_left_;
     bool invert_right_;

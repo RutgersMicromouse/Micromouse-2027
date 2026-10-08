@@ -20,7 +20,8 @@ struct CellQueue {
 };
 
 Floodfill::Floodfill(const Maze& maze)
-    : maze_(maze) {
+    : maze_(maze),
+      known_edges_only_(false) {
     setGoalToCenter();
     recalculate();
 }
@@ -55,7 +56,8 @@ uint16_t Floodfill::getDistance(int8_t x, int8_t y) const {
     return distance_[x][y];
 }
 
-void Floodfill::recalculate() {
+void Floodfill::recalculate(bool known_edges_only) {
+    known_edges_only_ = known_edges_only;
     // Reset all distances to infinity
     for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
         for (int8_t y = 0; y < MAZE_HEIGHT; ++y) {
@@ -84,7 +86,8 @@ void Floodfill::recalculate() {
         const Direction dirs[4] = {DIR_NORTH, DIR_EAST, DIR_SOUTH, DIR_WEST};
         for (int i = 0; i < 4; ++i) {
             Direction d = dirs[i];
-            if (!maze_.hasWall(curr.x, curr.y, d)) {
+            if (!maze_.hasWall(curr.x, curr.y, d) &&
+                (!known_edges_only_ || maze_.isWallKnown(curr.x, curr.y, d))) {
                 int8_t nx = curr.x + dxFromDir(d);
                 int8_t ny = curr.y + dyFromDir(d);
                 if (Maze::isValidCoordinate(nx, ny) && distance_[nx][ny] > next_dist) {
@@ -107,7 +110,8 @@ Direction Floodfill::getNextDirection(int8_t current_x, int8_t current_y, Direct
     for (int i = 0; i < 4; ++i) {
         Direction candidate_dir = relativeToAbsolute(current_heading, turn_preference[i]);
 
-        if (!maze_.hasWall(current_x, current_y, candidate_dir)) {
+        if (!maze_.hasWall(current_x, current_y, candidate_dir) &&
+            (!known_edges_only_ || maze_.isWallKnown(current_x, current_y, candidate_dir))) {
             int8_t nx = current_x + dxFromDir(candidate_dir);
             int8_t ny = current_y + dyFromDir(candidate_dir);
 

@@ -58,6 +58,7 @@ private:
     float target_heading_deg_;
     float start_distance_mm_;
     bool centering_enabled_;
+    bool linear_motion_active_;
 
     uint32_t last_tick_micros_;
 };
