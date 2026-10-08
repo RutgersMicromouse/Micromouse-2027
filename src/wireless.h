@@ -82,6 +82,7 @@ public:
     // Incoming wireless commands from Telnet or from the phone app
     static bool hasCommand();
     static String readCommand();
+    static void commandDone();   // Call when that command has been carried out (the app shows its button as finished)
 
     // The phone app (http://192.168.4.1). `provider` returns the robot's live numbers as a JSON
     // object; appendWebLog feeds it the same text the serial monitor shows.

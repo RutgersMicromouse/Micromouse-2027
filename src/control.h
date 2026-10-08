@@ -161,6 +161,23 @@ public:
     // What the 45° sensors saw of the cell ahead during the move that just finished
     WallPreview getWallPreview() const;
 
+    // Times a move that should have been followed at speed was not followed in time, so the
+    // robot braked instead of rolling on (a run that should be continuous but looks stop-and-go)
+    uint16_t getLateHandovers() const { return late_handovers_; }
+
+    // How far the heading is from where the current (or last) move was meant to end, in degrees
+    float getHeadingErrorDeg() const { return start_heading_deg_ + target_relative_angle_deg_ - accumulated_heading_deg_; }
+
+    // True once per straight, at the moment its look-ahead window closes: that is when the 45°
+    // sensors have made up their minds about the next cell's side walls. The navigation task
+    // then prints the verdict (printPreviewReport) so it can be watched on the phone app.
+    bool consumePreviewReady() {
+        bool ready = preview_ready_;
+        preview_ready_ = false;
+        return ready;
+    }
+    void printPreviewReport() const;
+
     // Recording of the most recent driving (only written while a move is running)
     const RunLog& getRunLog() const { return run_log_; }
     void clearRunLog() { run_log_.clear(); }
@@ -184,7 +201,17 @@ public:
     void getLinearVelGains(float& kp, float& ki, float& kd) const { pid_linear_vel_.getGains(kp, ki, kd); }
 
     // Flash NVS persistence for controller tuning
-    void saveToNVS();
+    // Live tuning: the gains that the phone app's Tuning card and the `tune` console command can
+    // change while the robot is switched on. The list itself is kTune in control.cpp.
+    static const int TUNE_COUNT = 10;
+    static const char* tuneName(int index);        // Short name; also the key it is saved under
+    static const char* tuneDescription(int index);
+    static float tuneDefault(int index);           // The value in the code
+    float getTune(int index) const;
+    bool setTune(int index, float value);          // false = outside the allowed range, not changed
+    void forgetSavedTuning();                      // Back to the values in the code, and wipe the saved set
+
+    void saveToNVS();                              // Keeps the current tuning through power-off
     bool loadFromNVS();
 
 private:
@@ -243,6 +270,8 @@ private:
     void samplePreview(float dist_in_move_mm);
     uint16_t preview_min_l_, preview_max_l_, preview_min_r_, preview_max_r_;
     uint16_t preview_samples_;
+    bool preview_reported_;        // This move's look-ahead verdict has already been announced
+    volatile bool preview_ready_;  // Set by the control task, taken by the navigation task
     uint16_t front_min_, front_max_, front_samples_;
     bool front_uses_left_sensor_;
 
@@ -252,6 +281,7 @@ private:
 
     // Settling at the end of a move that stops, and how long the robot has been idle since
     uint16_t settle_ticks_;
+    uint16_t settle_good_ticks_;       // Ticks in a row the robot has been on target and still
     uint16_t idle_ticks_;
 
     // Feedforward & logging
@@ -262,5 +292,6 @@ private:
     bool wall_centering_enabled_;
     volatile bool calibrating_motors_;
     volatile bool safety_stop_;
+    volatile uint16_t late_handovers_;
     float k_wheel_sync_;
 };

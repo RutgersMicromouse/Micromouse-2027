@@ -209,11 +209,12 @@ MotionController::MotionController(Encoders& encoders, Motors& motors, IRSensors
       curve_active_(false), curve_length_mm_(0.0f),
       chain_valid_(false), chain_end_distance_mm_(0.0f),
       preview_min_l_(0), preview_max_l_(0), preview_min_r_(0), preview_max_r_(0), preview_samples_(0),
+      preview_reported_(false), preview_ready_(false),
       front_min_(0), front_max_(0), front_samples_(0), front_uses_left_sensor_(false),
       diag_peak_left_(0.0f), diag_peak_right_(0.0f),
-      settle_ticks_(0), idle_ticks_(0),
+      settle_ticks_(0), settle_good_ticks_(0), idle_ticks_(0),
       prev_target_speed_mm_s_(0.0f), log_tick_(0),
-      wall_centering_enabled_(true), calibrating_motors_(false), safety_stop_(false),
+      wall_centering_enabled_(true), calibrating_motors_(false), safety_stop_(false), late_handovers_(0),
       k_wheel_sync_(0.0004f) {
 
     // PID Gains (Default baseline tuning for micromouse kinematics; adjust as needed)
@@ -222,13 +223,13 @@ MotionController::MotionController(Encoders& encoders, Motors& motors, IRSensors
     pid_linear_dist_.setOutputLimits(SPEEDRUN_DIAG_SPEED_MM_S, 200.0f);
 
     // Linear Velocity PID: outputs motor duty cycle (-1.0 to 1.0)
-    pid_linear_vel_.setGains(0.0025f, 0.0005f, 0.00005f);
     pid_linear_vel_.setOutputLimits(1.0f, 0.3f);
 
     // Angular Heading PID: outputs rotational effort (-1.0 to 1.0)
-    // Ki = 0.025 neutralizes motor/gearbox mechanical friction asymmetry within 150ms
-    pid_angular_heading_.setGains(0.045f, 0.025f, 0.0012f);
     pid_angular_heading_.setOutputLimits(0.6f, 0.12f);
+
+    // The speed-loop, heading-loop and wheel-sync gains come from the tuning table (kTune)
+    for (int i = 0; i < TUNE_COUNT; ++i) setTune(i, tuneDefault(i));
 
     // Wall Centering PD: injects angle offset (degrees) based on IR centering error
     pid_wall_centering_.setGains(35.0f, 0.0f, 3.5f);
@@ -309,8 +310,10 @@ void MotionController::executeCommand(const MotionCommand& cmd) {
     curve_active_ = false;
     prev_target_speed_mm_s_ = cmd.entry_speed_mm_s;
     settle_ticks_ = 0;
+    settle_good_ticks_ = 0;
     idle_ticks_ = 0;
     preview_samples_ = 0;
+    preview_reported_ = false;
     front_samples_ = 0;
     diag_peak_left_ = 0.0f;
     diag_peak_right_ = 0.0f;
@@ -322,7 +325,8 @@ void MotionController::executeCommand(const MotionCommand& cmd) {
                              cmd.action == ACTION_MOVE_HALF_CELL);
     bool is_grid_move = (cmd.action == ACTION_MOVE_DIAGONAL_HALF ||
                          cmd.action == ACTION_CURVE_LEFT_90 || cmd.action == ACTION_CURVE_RIGHT_90 ||
-                         cmd.action == ACTION_CURVE_LEFT_45 || cmd.action == ACTION_CURVE_RIGHT_45);
+                         cmd.action == ACTION_CURVE_LEFT_45 || cmd.action == ACTION_CURVE_RIGHT_45 ||
+                         cmd.action == ACTION_TURN_LEFT_45  || cmd.action == ACTION_TURN_RIGHT_45);
     start_heading_deg_ = accumulated_heading_deg_;
     if (is_cardinal_move) {
         float nearest_cardinal = roundf(accumulated_heading_deg_ / 90.0f) * 90.0f;
@@ -487,6 +491,21 @@ void MotionController::samplePreview(float dist_in_move_mm) {
         if (preview_samples_ == 0 || ir.right_45 > preview_max_r_) preview_max_r_ = ir.right_45;
         preview_samples_++;
     }
+    if (is_straight && dist_in_move_mm > SEARCH_LOOKAHEAD_END_MM && preview_samples_ > 0 && !preview_reported_) {
+        preview_reported_ = true;
+        preview_ready_ = true; // The window has closed: the verdict is final for this move
+    }
+}
+
+void MotionController::printPreviewReport() const {
+    const WallPreview preview = getWallPreview();
+    const char* left  = preview.left_wall  ? "WALL" : (preview.left_open  ? "open" : "not sure");
+    const char* right = preview.right_wall ? "WALL" : (preview.right_open ? "open" : "not sure");
+    Serial.printf("[LOOK] 45° sensors decided %d-%d mm past the cell centre. Next cell: left %s (read %u-%u, wall above %u), right %s (read %u-%u, wall above %u)%s\n",
+                  (int)SEARCH_LOOKAHEAD_START_MM, (int)SEARCH_LOOKAHEAD_END_MM,
+                  left,  (unsigned)preview_min_l_, (unsigned)preview_max_l_, (unsigned)ir_.getThresholdL45(),
+                  right, (unsigned)preview_min_r_, (unsigned)preview_max_r_, (unsigned)ir_.getThresholdR45(),
+                  (preview.left_wall && preview.right_wall) ? " -> walls on BOTH sides" : "");
 }
 
 WallPreview MotionController::getWallPreview() const {
@@ -552,6 +571,7 @@ void MotionController::update(float dt_seconds) {
         // A move that was meant to be followed at speed, but nothing followed: the robot is no
         // longer where that move aimed to end. Likewise if it has simply been standing a while.
         if (active_cmd_.exit_speed_mm_s > 10.0f || idle_ticks_ > CHAIN_TIMEOUT_TICKS) {
+            if (chain_valid_ && active_cmd_.exit_speed_mm_s > 10.0f) late_handovers_ = late_handovers_ + 1;
             chain_valid_ = false;
         } else {
             idle_ticks_++;
@@ -882,8 +902,17 @@ void MotionController::update(float dt_seconds) {
         if (stopping) {
             const bool arrived = fabsf(dist_err) < SETTLE_DISTANCE_MM &&
                                  fabsf(heading_err) < SETTLE_HEADING_DEG &&
-                                 fabsf(enc.linear_speed_mm_s) < SETTLE_SPEED_MM_S;
-            if (!arrived && settle_ticks_ < SETTLE_TIMEOUT_TICKS) {
+                                 fabsf(enc.linear_speed_mm_s) < SETTLE_SPEED_MM_S &&
+                                 fabsf(imu_.getGyroZ()) < SETTLE_YAW_RATE_DEG_S;
+            // ...and has STAYED there for a moment. One good reading is not enough: if the
+            // heading reading runs behind the real turn, or the robot is still swinging, the
+            // error shows up a few ticks later and must be steered out before the motors brake.
+            settle_good_ticks_ = arrived ? settle_good_ticks_ + 1 : 0;
+            const bool turn_on_spot = (active_cmd_.action == ACTION_TURN_LEFT_90 || active_cmd_.action == ACTION_TURN_RIGHT_90 ||
+                                       active_cmd_.action == ACTION_TURN_LEFT_45 || active_cmd_.action == ACTION_TURN_RIGHT_45 ||
+                                       active_cmd_.action == ACTION_TURN_AROUND_180);
+            const uint16_t patience = turn_on_spot ? SETTLE_TIMEOUT_TURN_TICKS : SETTLE_TIMEOUT_TICKS;
+            if (settle_good_ticks_ < SETTLE_DWELL_TICKS && settle_ticks_ < patience) {
                 settle_ticks_++;
                 return; // Keep holding the target
             }
@@ -926,19 +955,79 @@ void MotionController::setWallCenteringEnabled(bool enabled) {
     wall_centering_enabled_ = enabled;
 }
 
+// ---------------------------------------------------------------- Live tuning
+// Every gain that can be changed from the phone app, with the value it has in the code and the
+// range a typed value must fall inside (a slipped decimal point should not reach the motors).
+// To change a default for good, edit `value` here (or the config.h constant it names).
+struct TuneItem {
+    const char* name;         // Typed in the `tune` command; also the key it is saved under
+    const char* description;
+    float value;
+    float min, max;
+};
+static const TuneItem kTune[MotionController::TUNE_COUNT] = {
+    { "v_kp",   "Speed loop P",                         0.0025f,  0.0f,  0.02f  },
+    { "v_ki",   "Speed loop I",                         0.0005f,  0.0f,  0.01f  },
+    { "v_kd",   "Speed loop D",                         0.00005f, 0.0f,  0.001f },
+    // Heading I = 0.025 neutralizes motor/gearbox friction asymmetry within 150 ms
+    { "h_kp",   "Heading loop P",                       0.045f,   0.0f,  0.5f   },
+    { "h_ki",   "Heading loop I",                       0.025f,   0.0f,  0.3f   },
+    { "h_kd",   "Heading loop D",                       0.0012f,  0.0f,  0.02f  },
+    { "k_sync", "Wheel sync (holds both wheels equal)", 0.0004f,  0.0f,  0.005f },
+    { "enc_a",  "Wheel-speed smoothing (1 = none)",     ENCODER_SPEED_FILTER_ALPHA, 0.02f, 1.0f },
+    { "imu_a",  "Heading smoothing (1 = none)",         IMU_FILTER_ALPHA,           0.1f,  1.0f },
+    // New value = old value x 180 / the distance the robot really drove for one cell
+    { "dist_k", "Distance scale (raise if it stops short)", 1.0f,                     0.5f,  2.0f },
+};
+
+const char* MotionController::tuneName(int index)        { return kTune[index].name; }
+const char* MotionController::tuneDescription(int index) { return kTune[index].description; }
+float MotionController::tuneDefault(int index)           { return kTune[index].value; }
+
+float MotionController::getTune(int index) const {
+    float v[3] = {}, h[3] = {};
+    pid_linear_vel_.getGains(v[0], v[1], v[2]);
+    pid_angular_heading_.getGains(h[0], h[1], h[2]);
+    if (index < 3) return v[index];
+    if (index < 6) return h[index - 3];
+    if (index == 6) return k_wheel_sync_;
+    if (index == 7) return encoders_.getSpeedFilterAlpha();
+    if (index == 8) return imu_.getFilterAlpha();
+    return encoders_.getDistanceScale();
+}
+
+bool MotionController::setTune(int index, float value) {
+    if (index < 0 || index >= TUNE_COUNT) return false;
+    if (!(value >= kTune[index].min && value <= kTune[index].max)) return false; // Also rejects NaN
+
+    float v[3] = {}, h[3] = {};
+    pid_linear_vel_.getGains(v[0], v[1], v[2]);
+    pid_angular_heading_.getGains(h[0], h[1], h[2]);
+    if (index < 3)       { v[index] = value;     pid_linear_vel_.setGains(v[0], v[1], v[2]); }
+    else if (index < 6)  { h[index - 3] = value; pid_angular_heading_.setGains(h[0], h[1], h[2]); }
+    else if (index == 6) { k_wheel_sync_ = value; }
+    else if (index == 7) { encoders_.setSpeedFilterAlpha(value); }
+    else if (index == 8) { imu_.setFilterAlpha(value); }
+    else                 { encoders_.setDistanceScale(value); }
+    return true;
+}
+
+void MotionController::forgetSavedTuning() {
+    Preferences prefs;
+    prefs.begin("motion_cal", false);
+    prefs.clear();
+    prefs.end();
+    for (int i = 0; i < TUNE_COUNT; ++i) setTune(i, tuneDefault(i));
+    Serial.println("[MOTION] Saved tuning wiped: back to the values in the code.");
+}
+
 void MotionController::saveToNVS() {
     Preferences prefs;
     prefs.begin("motion_cal", false);
-    prefs.putFloat("k_sync", k_wheel_sync_);
-    float kp = 0.0f, ki = 0.0f, kd = 0.0f;
-    pid_linear_vel_.getGains(kp, ki, kd);
-    prefs.putFloat("v_kp", kp);
-    prefs.putFloat("v_ki", ki);
-    prefs.putFloat("v_kd", kd);
+    for (int i = 0; i < TUNE_COUNT; ++i) prefs.putFloat(kTune[i].name, getTune(i));
     prefs.putBool("valid", true);
     prefs.end();
-    Serial.printf("[MOTION] Calibration saved to NVS: Sync=%.6f, VelPID=[%.5f, %.5f, %.6f]\n",
-                  k_wheel_sync_, kp, ki, kd);
+    Serial.println("[MOTION] Tuning saved: it will be used again after power-off.");
 }
 
 bool MotionController::loadFromNVS() {
@@ -946,16 +1035,11 @@ bool MotionController::loadFromNVS() {
     prefs.begin("motion_cal", true);
     if (!prefs.getBool("valid", false)) {
         prefs.end();
-        k_wheel_sync_ = 0.0004f;
         return false;
     }
-    k_wheel_sync_ = prefs.getFloat("k_sync", 0.0004f);
-    float kp = prefs.getFloat("v_kp", 0.0025f);
-    float ki = prefs.getFloat("v_ki", 0.0005f);
-    float kd = prefs.getFloat("v_kd", 0.00005f);
-    pid_linear_vel_.setGains(kp, ki, kd);
+    // A value that was never saved, or is out of range, keeps the value in the code
+    for (int i = 0; i < TUNE_COUNT; ++i) setTune(i, prefs.getFloat(kTune[i].name, getTune(i)));
     prefs.end();
-    Serial.printf("[MOTION] Calibration loaded from NVS: Sync=%.6f, VelPID=[%.5f, %.5f, %.6f]\n",
-                  k_wheel_sync_, kp, ki, kd);
+    Serial.println("[MOTION] Using the tuning SAVED ON THE ROBOT, not the values in the code ('tune' lists it, 'tune reset' wipes it).");
     return true;
 }

@@ -71,6 +71,9 @@ void prepareForNewRun() {
     }
 }
 
+// The latest verdict of the 45° sensors on the next cell's side walls, in words, for the phone app
+static char s_look_text[40] = "nothing yet";
+
 #if ENABLE_WIFI_OTA
 // The robot's live numbers for the phone app, as one JSON object
 static String buildAppStatus() {
@@ -87,22 +90,36 @@ static String buildAppStatus() {
         }
     }
 
-    char buf[620];
+    // The live-tuning values, in the order of MotionController's tuning table
+    char tune[170] = "";
+    for (int i = 0, used = 0; i < MotionController::TUNE_COUNT && used < (int)sizeof(tune) - 16; ++i) {
+        used += snprintf(tune + used, sizeof(tune) - used, i ? ",%.6g" : "%.6g", g_motion_controller.getTune(i));
+    }
+
+    // IMU state, with how many of its reads have failed since power-on
+    char imu_text[48];
+    snprintf(imu_text, sizeof(imu_text), "%s, %lu failed reads",
+             !g_imu.isHardwareConnected() ? "MISSING" : (g_imu.isUsingFallback() ? "FAULT" : "OK"),
+             (unsigned long)g_imu.getBadReadCount());
+
+    char buf[1080];
     snprintf(buf, sizeof(buf),
-             "{\"state\":\"%s\",\"mode\":\"%s\",\"tier\":%d,\"cell\":\"(%d, %d) facing %s\",\"visited\":%d,"
+             "{\"state\":\"%s\",\"mode\":\"%s\",\"tier\":%d,\"cell\":\"(%d, %d) facing %s\",\"visited\":%d,\"look\":\"%s\",\"why\":\"%s\",\"late\":%u,"
              "\"ir\":[%d,%d,%d,%d,%d,%d],\"walls\":\"%c%c%c\","
              "\"heading\":%.1f,\"vbat\":%.2f,\"encL\":\"%ld (%.0f mm)\",\"encR\":\"%ld (%.0f mm)\","
-             "\"motor\":\"%s\",\"imu\":\"%s\",\"supply\":%.1f,\"loop\":%u}",
+             "\"motor\":\"%s\",\"imu\":\"%s\",\"supply\":%.1f,\"loop\":%u,\"busy\":%d,\"tune\":[%s]}",
              Actions::stateDescription(), Actions::modeName(Actions::getSelectedMode()), (int)Actions::getSpeedTier(),
-             (int)pose.cell_x, (int)pose.cell_y, kCompass[pose.current_dir % 4], cells_seen,
+             (int)pose.cell_x, (int)pose.cell_y, kCompass[pose.current_dir % 4], cells_seen, s_look_text,
+             g_navigator->getEdgeNote(), (unsigned int)g_motion_controller.getLateHandovers(),
              t.ir.left_90, t.ir.left_45, t.ir.front_left, t.ir.front_right, t.ir.right_45, t.ir.right_90,
              t.ir.wall_left ? 'L' : '.', t.ir.wall_front ? 'F' : '.', t.ir.wall_right ? 'R' : '.',
              t.imu.heading_deg, t.vbat_volts,
              (long)t.encoders.left_ticks_total, t.encoders.left_dist_mm,
              (long)t.encoders.right_ticks_total, t.encoders.right_dist_mm,
              g_motors.isConnected() ? "OK" : "NOT RESPONDING",
-             !g_imu.isHardwareConnected() ? "MISSING" : (g_imu.isUsingFallback() ? "FAULT" : "OK"),
-             g_motors.getSupplyVolts(), (unsigned int)t.timing.loop_time_us);
+             imu_text,
+             g_motors.getSupplyVolts(), (unsigned int)t.timing.loop_time_us,
+             (int)((Actions::isRunActive() && !g_navigator->isWaitingForNextMove()) || !g_motion_controller.isCommandFinished()), tune);
     return String(buf);
 }
 #endif
@@ -205,6 +222,9 @@ void navigationTask(void* pvParameters) {
     static RobotTelemetry telemetry = {}; // Kept between loops so a missed snapshot reuses the last one
     bool was_running = false;
     bool run_aborted = false;
+    uint32_t test_report_due_ms = 0;       // When to print the follow-up report on a test move (0 = none due)
+    float test_heading_at_finish = 0.0f, test_error_at_finish = 0.0f;
+    uint32_t test_bad_reads_seen = 0;
     NavState last_state = NAV_STATE_ERROR; // Anything but the real one, so the first state is announced
 
     Actions::showSelectedMode();
@@ -226,8 +246,45 @@ void navigationTask(void* pvParameters) {
 
         // 3. Advance the navigator strictly when a physical motion completes
         if (xSemaphoreTake(g_motion_done_sem, 0) == pdTRUE) {
+            // A test move (turn test) rather than a run: report how it ended, and look again
+            // half a second later to see whether the robot went on turning after it "stopped"
+            if (!Actions::isRunActive()) {
+                test_heading_at_finish = g_imu.getHeadingDeg();
+                test_error_at_finish = g_motion_controller.getHeadingErrorDeg();
+                test_report_due_ms = millis() + 500;
+                if (test_report_due_ms == 0) test_report_due_ms = 1;
+            }
             g_navigator->notifyMotionComplete();
             g_navigator->step(telemetry.ir, g_motion_controller.getWallPreview());
+        }
+
+        if (test_report_due_ms != 0 && (int32_t)(millis() - test_report_due_ms) >= 0) {
+            test_report_due_ms = 0;
+            const float heading_now = g_imu.getHeadingDeg();
+            const float moved_after = normalizeAngle180(heading_now - test_heading_at_finish);
+            const uint32_t bad_reads = g_imu.getBadReadCount();
+            Serial.printf("[MOVE] Stopped at heading %.1f, %.1f deg from the target. Half a second later: %.1f (moved %.1f more). "
+                          "IMU %s, %lu failed reads since the last test. Tuning imu_a=%.3g h_kp=%.3g h_ki=%.3g h_kd=%.3g\n",
+                          test_heading_at_finish, test_error_at_finish, heading_now, moved_after,
+                          !g_imu.isHardwareConnected() ? "MISSING" : (g_imu.isUsingFallback() ? "FAULT" : "OK"),
+                          (unsigned long)(bad_reads - test_bad_reads_seen),
+                          g_motion_controller.getTune(8), g_motion_controller.getTune(3),
+                          g_motion_controller.getTune(4), g_motion_controller.getTune(5));
+            test_bad_reads_seen = bad_reads;
+            Serial.println(fabsf(moved_after) > 3.0f
+                ? "[MOVE] -> The robot kept turning after the controller thought it had stopped: the heading reading is behind the real turn, or it coasts."
+                : fabsf(test_error_at_finish) > 3.0f
+                    ? "[MOVE] -> The controller knew it was off target and ran out of settling time."
+                    : "[MOVE] -> Landed within tolerance.");
+        }
+
+        // Say what the 45° sensors made of the next cell, the moment they have decided
+        if (g_motion_controller.consumePreviewReady()) {
+            g_motion_controller.printPreviewReport();
+            const WallPreview look = g_motion_controller.getWallPreview();
+            snprintf(s_look_text, sizeof(s_look_text), "left %s, right %s",
+                     look.left_wall  ? "WALL" : (look.left_open  ? "open" : "not sure"),
+                     look.right_wall ? "WALL" : (look.right_open ? "open" : "not sure"));
         }
 
         // Say what the robot is doing whenever that changes
@@ -277,9 +334,17 @@ void navigationTask(void* pvParameters) {
 // CORE 0 TASK: SERIAL TELEMETRY & DIAGNOSTICS STREAM
 // ==============================================================================
 void telemetryTask(void* pvParameters) {
-    uint32_t pass = 0;
+    uint32_t pass = 0, tick = 0;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+#if ENABLE_WIFI_OTA
+        // The phone app, Telnet and over-the-air updates are served here, not in the navigation
+        // task: a Wi-Fi exchange can take tens of milliseconds, and the navigation task has to
+        // hand the motion controller its next move within 70 ms or the robot brakes.
+        WifiOTA::handle();
+#endif
+        if (++tick % 5 != 0) continue; // The rest runs every 50 ms
 
         // Forward everything printed since last time to whoever is listening wirelessly
         static char chunk[257];
@@ -394,7 +459,7 @@ void setup() {
     Serial.println("[INIT] Launching FreeRTOS Core 1 & Core 0 Tasks...");
     xTaskCreatePinnedToCore(motionControlTask, "MotionCtrl", 4096, nullptr, PRIORITY_MOTION_TASK, nullptr, CORE_MOTION_CONTROL);
     xTaskCreatePinnedToCore(navigationTask,    "NavTask",    6144, nullptr, PRIORITY_NAV_TASK,    nullptr, CORE_NAVIGATION);
-    xTaskCreatePinnedToCore(telemetryTask,     "Telemetry",  4096, nullptr, PRIORITY_TELEMETRY,   nullptr, CORE_NAVIGATION);
+    xTaskCreatePinnedToCore(telemetryTask,     "Telemetry",  8192, nullptr, PRIORITY_TELEMETRY,   nullptr, CORE_NAVIGATION);
 
     Serial.println("[READY] Antigravitieee is Ready!");
 #if !ENABLE_GESTURE_UI

@@ -83,7 +83,7 @@ const char* stateDescription();
 
 // Start the selected run. Does nothing if a run is already active.
 // The robot must be in the start cell, facing into the maze.
-void launchSelectedRun();
+void launchSelectedRun(bool one_move_at_a_time = false); // true = search that waits before every move
 
 // Brake immediately and abandon the run
 void stopRun();

@@ -34,10 +34,21 @@ public:
     void setInverted(bool invert_left, bool invert_right);
     void getInverted(bool& invert_left, bool& invert_right) const;
 
+    // Wheel-speed smoothing weight (see ENCODER_SPEED_FILTER_ALPHA); adjustable for live tuning
+    void setSpeedFilterAlpha(float alpha) { speed_filter_alpha_ = alpha; }
+    float getSpeedFilterAlpha() const { return speed_filter_alpha_; }
+
+    // Distance correction for live tuning: 1.05 makes every move 5 % longer on the floor.
+    // Raise it if the robot stops short of a cell, lower it if it overshoots.
+    void setDistanceScale(float scale) { distance_scale_ = scale; }
+    float getDistanceScale() const { return distance_scale_; }
+
 private:
     void initPcntUnit(pcnt_unit_t unit, int pin_a, int pin_b);
 
     EncoderState state_;
+    float speed_filter_alpha_;
+    float distance_scale_;
     bool invert_left_;
     bool invert_right_;
 
@@ -262,8 +273,13 @@ public:
     // True while heading is running on encoder odometry (no BNO055, or it is currently faulted)
     bool isUsingFallback() const;
 
+    // Heading smoothing weight (see IMU_FILTER_ALPHA); adjustable for live tuning
+    void setFilterAlpha(float alpha) { filter_alpha_ = alpha; }
+    float getFilterAlpha() const { return filter_alpha_; }
+
     // Number of times the BNO055 dropped out or had to be put back into fusion mode since boot
     uint16_t getFaultCount() const { return fault_count_; }
+    uint32_t getBadReadCount() const { return bad_read_total_; }  // Every failed or rejected read since power-on
 
     // True if the gyro Z axis had to be flipped to agree with the fused heading
     bool isGyroFlipped() const { return gyro_sign_ < 0; }
@@ -282,7 +298,8 @@ private:
 
     float heading_offset_deg_;     // BNO055 heading at the last resetHeading()
     float last_bno_heading_deg_;   // Most recent accepted BNO055 heading (sensor frame)
-    float heading_rate_deg_s_;     // Rate between the last two accepted headings
+    float filter_alpha_;           // Share of each new BNO055 reading that is believed
+    float heading_rate_deg_s_;     // Turn rate estimated by the heading filter (acceptReading)
     float time_since_good_s_;      // Time since the last accepted reading
 
     float gyro_bias_z_;
@@ -295,4 +312,6 @@ private:
     uint8_t frozen_reads_;
     bool reanchor_pending_;
     uint16_t fault_count_;
+    uint32_t bad_read_total_;
+    bool retry_read_;              // The last scheduled read failed: try again on the next tick
 };

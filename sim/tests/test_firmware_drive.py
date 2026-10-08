@@ -250,7 +250,7 @@ static const float WALL_HALF_MM       = 6.0f;
 
 // Where each IR sensor sits on the robot (mm ahead of the axle, mm to the left) and where it points
 // (degrees, left positive). Order: L90, L45, FL, FR, R45, R90.
-static const float SENSOR_AHEAD[6] = { 40.0f, 46.0f, 50.0f, 50.0f, 46.0f, 40.0f };
+static const float SENSOR_AHEAD[6] = { SIDE_SENSOR_AHEAD_MM, 46.0f, 50.0f, 50.0f, 46.0f, SIDE_SENSOR_AHEAD_MM }; // 90° ones as config.h says
 static const float SENSOR_LEFT[6]  = { 28.0f, 20.0f, 10.0f, -10.0f, -20.0f, -28.0f };
 static const float SENSOR_AIM[6]   = { 90.0f, 45.0f, 0.0f, 0.0f, -45.0f, -90.0f };
 static const int EMITTER_PIN[6]  = { PIN_IR_E1, PIN_IR_E2, PIN_IR_E3, PIN_IR_E4, PIN_IR_E5, PIN_IR_E6 };

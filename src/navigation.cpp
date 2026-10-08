@@ -673,7 +673,8 @@ Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_que
       current_strategy_(SPEEDRUN_HYBRID_AUTO),
       waiting_for_motion_(false),
       current_search_speed_(0.0f),
-      speed_scale_(1.0f), best_route_explored_(false), maze_changed_(false), trap_recovery_(0),
+      speed_scale_(1.0f), best_route_explored_(false), maze_changed_(false),
+      edge_note_("nothing yet"), single_step_(false), step_allowed_(false), step_paused_(false), trap_recovery_(0),
       search_phase_(PHASE_AT_CENTRE),
       curve_cell_x_(0), curve_cell_y_(0), curve_entry_dir_(DIR_NORTH), curve_cell_was_known_(false),
       sub_cmd_count_(0),
@@ -699,9 +700,12 @@ void Navigator::begin() {
     sub_cmd_idx_ = 0;
 }
 
-void Navigator::startSearchRun() {
+void Navigator::startSearchRun(bool one_move_at_a_time) {
     // The map is NOT wiped: everything learned in earlier attempts (including ones that ended in
     // a crash) is kept, so each search starts from what is already known and explores further.
+    single_step_ = one_move_at_a_time;
+    step_allowed_ = one_move_at_a_time; // The command that started the run asks for the first move
+    step_paused_ = false;
     trap_recovery_ = 0;
     maze_.setVisited(0, 0); // Start cell (0,0) is visited
     floodfill_.setGoalToCenter();
@@ -952,6 +956,8 @@ void Navigator::stop() {
     }
     state_ = NAV_STATE_IDLE;
     search_phase_ = PHASE_AT_CENTRE;
+    single_step_ = false;
+    step_paused_ = false;
     sub_cmd_count_ = 0;
     sub_cmd_idx_ = 0;
     sendMotionCommand(ACTION_EMERGENCY_STOP, 0.0f, 0.0f, 0.0f);
@@ -978,6 +984,7 @@ void Navigator::sendMotionCommand(MotionAction action, float param, float max_sp
 
     xQueueSend(motion_cmd_queue_, &cmd, portMAX_DELAY);
     waiting_for_motion_ = true;
+    step_allowed_ = false; // One move at a time: this was the move that was asked for
 }
 
 void Navigator::processSubcommandQueue() {
@@ -986,6 +993,7 @@ void Navigator::processSubcommandQueue() {
         MotionCommand next_cmd = sub_cmd_queue_[sub_cmd_idx_++];
         xQueueSend(motion_cmd_queue_, &next_cmd, portMAX_DELAY);
         waiting_for_motion_ = true;
+        step_allowed_ = false;
         return;
     }
 
@@ -1018,6 +1026,19 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         (state_ != NAV_STATE_EXPLORING_TO_CENTER && state_ != NAV_STATE_RETURNING_TO_START)) {
         return;
     }
+
+    // One move at a time: stand still at the cell centre until the next move is asked for
+    if (single_step_ && !step_allowed_) {
+        if (!step_paused_) {
+            static const char* const kCompass[4] = { "north", "east", "south", "west" };
+            Serial.printf("[NAV] Waiting in cell (%d, %d) facing %s. Walls seen here: %s%s%s. Ask for the next move.\n",
+                          pose_.cell_x, pose_.cell_y, kCompass[pose_.current_dir % 4],
+                          ir.wall_left ? "left " : "", ir.wall_front ? "front " : "", ir.wall_right ? "right" : "");
+        }
+        step_paused_ = true;
+        return;
+    }
+    step_paused_ = false;
 
     // Part-way through a look-ahead move: the robot is on a cell edge, not a centre
     if (search_phase_ == PHASE_AT_EDGE)     { stepAtCellEdge(ir, preview); return; }
@@ -1104,7 +1125,10 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
     // 3. Anything other than "straight on" happens from a standstill at the cell centre. If the
     // robot rolled in at speed, brake, then back up the few millimetres it overshot, so that
     // turning on the spot never leaves it off-centre. Then decide again.
-    if ((at_goal || diff != 0) && current_search_speed_ > 0.0f) {
+    // (Not on reaching the centre, though: the search rolls straight on into its return leg, and
+    // the recursive step() below brakes only if the way back starts with a turn.)
+    const bool reached_centre = at_goal && state_ == NAV_STATE_EXPLORING_TO_CENTER;
+    if ((at_goal || diff != 0) && current_search_speed_ > 0.0f && !reached_centre) {
         float v = current_search_speed_;
         float brake_mm = (v * v) / (2.0f * search_accel) + 2.0f;
         sub_cmd_count_ = 0;
@@ -1117,7 +1141,7 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
     }
 
     if (at_goal) {
-        saveMazeIfChanged();
+        if (current_search_speed_ <= 0.0f) saveMazeIfChanged(); // Flash is only written standing still
 
         if (state_ == NAV_STATE_EXPLORING_TO_CENTER) {
             // Centre reached: now explore back to the start cell
@@ -1144,9 +1168,12 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         // --- STRAIGHT ON: one cell forward, without stopping if the plan keeps going straight ---
         Coordinate next_cell = path[1];
         float exit_v = 0.0f;
-        bool plan_continues_straight = path_len >= 3 &&
-                                       directionBetween(path[1], path[2]) == d0 &&
-                                       !floodfill_.isAtGoal(next_cell.x, next_cell.y);
+        // (one move at a time: every move ends at rest in a cell centre)
+        // Into the centre the plan ends, so ask where the return leg would go from there.
+        const bool next_is_goal = floodfill_.isAtGoal(next_cell.x, next_cell.y);
+        bool plan_continues_straight = !single_step_ &&
+            (next_is_goal ? returnLegGoesStraightOn(next_cell, d0)
+                          : (path_len >= 3 && directionBetween(path[1], path[2]) == d0));
         if (plan_continues_straight) {
             exit_v = maze_.isVisited(next_cell.x, next_cell.y) ? search_speed : SEARCH_PROBE_SPEED_MM_S;
         }
@@ -1158,9 +1185,8 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         // Look-ahead: if the next cell is new, or the plan turns there, drive only as far as its
         // edge. By then the 45° sensors have seen its side walls, and stepAtCellEdge() can curve
         // straight through it instead of stopping at its centre to turn on the spot.
-        const bool next_is_goal  = floodfill_.isAtGoal(next_cell.x, next_cell.y);
         const bool next_is_known = maze_.isVisited(next_cell.x, next_cell.y);
-        if (!next_is_goal && (!next_is_known || !plan_continues_straight)) {
+        if (!single_step_ && !next_is_goal && (!next_is_known || !plan_continues_straight)) {
             float edge_v = next_is_known ? SEARCH_CURVE_SPEED_MM_S : SEARCH_PROBE_SPEED_MM_S;
             sendMotionCommand(ACTION_MOVE_DISTANCE, HALF_CELL_SIZE_MM, search_speed, search_accel, true,
                               current_search_speed_, edge_v);
@@ -1221,12 +1247,20 @@ void Navigator::stepAtCellEdge(const IRReadings& ir, const WallPreview& preview)
     bool sides_certain = known;
 
     if (!known) {
-        // Two different sensors must agree about each side: the 45° sensor on the way here, and
-        // the 90° sensor now that the robot's nose is inside the cell.
+        // The 45° sensors look ahead: on the way here they were already reading this cell's side
+        // walls, and every sample in their window had to agree for a verdict (see getWallPreview).
+        // The 90° sensors look straight sideways, so at this moment they may still be beside the
+        // PREVIOUS cell's wall or the post between the two cells. Asking them to agree here is
+        // only right if they sit well ahead of the wheel axle (SEARCH_CONFIRM_WITH_90).
+#if SEARCH_CONFIRM_WITH_90
         const bool left_wall  = preview.left_wall  && ir.wall_left;
         const bool left_open  = preview.left_open  && !ir.wall_left;
         const bool right_wall = preview.right_wall && ir.wall_right;
         const bool right_open = preview.right_open && !ir.wall_right;
+#else
+        const bool left_wall  = preview.left_wall,  left_open  = preview.left_open;
+        const bool right_wall = preview.right_wall, right_open = preview.right_open;
+#endif
         sides_certain = (left_wall || left_open) && (right_wall || right_open);
 
         if (sides_certain) {
@@ -1239,10 +1273,29 @@ void Navigator::stepAtCellEdge(const IRReadings& ir, const WallPreview& preview)
     // The front wall is not known yet, so the floodfill treats it as open. If turning is still the
     // best way out of this cell, it is the best way whatever the front wall turns out to be.
     Direction best = sides_certain ? floodfill_.getNextDirection(x, y, heading) : DIR_INVALID;
+    edge_note_ = !sides_certain ? "drove to the centre: the look-ahead sensors were not sure about the side walls"
+               : (best == left || best == right) ? "curved through the corner without stopping"
+               : "went straight on to the centre";
 
-    // Whatever the map says, never curve toward a side where either sensor sees a wall right now
-    if (best == left  && (ir.wall_left  || preview.left_wall))  best = DIR_INVALID;
-    if (best == right && (ir.wall_right || preview.right_wall)) best = DIR_INVALID;
+    // Whatever the map says, never curve toward a side unless it is positively clear: no sensor
+    // that can see it reports a wall, and either the look-ahead saw the opening just now or the
+    // robot has driven through it before. (An opening the map merely has no wall for is not
+    // enough: that is also what a wall dropped by forgetWeakWalls() looks like.)
+    auto clearToCurve = [&](Direction side, bool seen_wall, bool seen_open, bool wall_at_90) {
+        if (seen_wall) return false;
+#if SEARCH_CONFIRM_WITH_90
+        (void)side; (void)seen_open;
+        return !wall_at_90;
+#else
+        (void)wall_at_90;
+        return seen_open || maze_.isKnownOpen(x, y, side);
+#endif
+    };
+    if ((best == left  && !clearToCurve(left,  preview.left_wall,  preview.left_open,  ir.wall_left)) ||
+        (best == right && !clearToCurve(right, preview.right_wall, preview.right_open, ir.wall_right))) {
+        best = DIR_INVALID;
+        edge_note_ = "drove to the centre: the side the route turns to was not positively clear";
+    }
 
     if (best == left || best == right) {
         maze_.confirmOpen(x, y, best); // About to drive through it
@@ -1284,17 +1337,38 @@ void Navigator::stepAfterCurve(const WallPreview& preview) {
     driveToCellCentre();
 }
 
+// The robot is about to roll into the centre cell `centre` heading `heading`. Once there the search
+// turns round and explores its way back to the start: would that begin by going straight on? If
+// so there is no reason to stop in the centre at all.
+bool Navigator::returnLegGoesStraightOn(Coordinate centre, Direction heading) {
+    if (state_ != NAV_STATE_EXPLORING_TO_CENTER) return false; // The start cell is where the search ends
+    floodfill_.setGoalToStart();
+    floodfill_.recalculate();
+    const Direction onward = floodfill_.getNextDirection(centre.x, centre.y, heading);
+    floodfill_.setGoalToCenter();
+    floodfill_.recalculate();
+    return onward == heading;
+}
+
 // Second half of a look-ahead move: from the entry edge of pose_.cell to its centre, where the
 // next decision is taken with all the sensors in the normal way.
 void Navigator::driveToCellCentre() {
     const Direction best = floodfill_.getNextDirection(pose_.cell_x, pose_.cell_y, pose_.current_dir);
-    const bool keep_rolling = (best == pose_.current_dir) && !floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y);
+    const bool keep_rolling = floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y)
+                              ? returnLegGoesStraightOn({ pose_.cell_x, pose_.cell_y }, pose_.current_dir)
+                              : (best == pose_.current_dir);
     const float exit_v = keep_rolling ? SEARCH_PROBE_SPEED_MM_S : 0.0f;
 
     sendMotionCommand(ACTION_MOVE_DISTANCE, HALF_CELL_SIZE_MM, SEARCH_SPEED_DEFAULT_MM_S, SEARCH_ACCEL_DEFAULT_MM_S2,
                       true, current_search_speed_, exit_v, true);
     current_search_speed_ = exit_v;
     search_phase_ = PHASE_AT_CENTRE;
+}
+
+void Navigator::continueOneMove(const IRReadings& ir, const WallPreview& preview) {
+    if (!step_paused_) return;
+    step_allowed_ = true;
+    step(ir, preview);
 }
 
 NavState Navigator::getState() const {
@@ -1318,5 +1392,15 @@ void Navigator::clearSavedMaze() {
     maze_.reset();
     floodfill_.setGoalToCenter();
     floodfill_.recalculate();
-    Serial.println("[NAV] Flash NVS maze cleared and grid reset.");
+
+    // With no map the robot is back to square one: start cell, facing into the maze, nothing
+    // ready to run. (Never called during a run: Actions::clearSavedMaze refuses.)
+    pose_.cell_x = 0;
+    pose_.cell_y = 0;
+    pose_.current_dir = DIR_NORTH;
+    state_ = NAV_STATE_IDLE;
+    search_phase_ = PHASE_AT_CENTRE;
+    maze_changed_ = false;
+    best_route_explored_ = false;
+    Serial.println("[NAV] Flash NVS maze cleared, grid reset, position back to the start cell (0, 0).");
 }

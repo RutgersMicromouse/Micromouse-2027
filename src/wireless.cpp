@@ -631,6 +631,7 @@ static WiFiClient s_telnet_client;
 
 static String s_telnet_rx_buf = "";
 static bool   s_telnet_cmd_ready = false;
+static uint32_t s_commands_taken = 0;   // Commands the console has finished with so far (the app's buttons watch this)
 
 // Web update page HTML
 static const char UPDATE_INDEX_HTML[] PROGMEM =
@@ -696,11 +697,17 @@ form{display:flex;gap:8px;margin-top:10px}
 input{flex:1;min-width:0;background:#07090c;border:1px solid #303844;border-radius:12px;padding:12px;color:#f5f7fa;font:14px ui-monospace,Consolas,monospace}
 form button{width:auto;padding:12px 18px}
 a{color:#7fb6ff}
+button.busy{background:#ff5d5d;color:#fff;border-color:#ff5d5d}
+.tune{display:grid;grid-template-columns:1fr 130px;gap:8px 10px;align-items:center;font-size:14px;margin-bottom:10px}
+.tune input.changed{border-color:#ffc94d}
 </style></head><body>
 <div class="top"><h1>Antigrav-Mouse</h1><div id="link" class="dim"><span class="dot"></span><span id="linkText">connecting</span></div></div>
 
 <div class="card"><div class="dim">The robot is</div><div id="state">...</div><div class="dim" id="mode"></div>
-<div style="margin-top:8px">It thinks it is in cell <b id="cell">--</b></div><div class="dim">Cells explored so far: <b id="visited">--</b> &nbsp;(the start cell is (0, 0); first number counts right, second counts forward)</div></div>
+<div style="margin-top:8px">It thinks it is in cell <b id="cell">--</b></div><div class="dim">Cells explored so far: <b id="visited">--</b> &nbsp;(the start cell is (0, 0); first number counts right, second counts forward)</div>
+<div style="margin-top:8px">45&deg; sensors say the next cell has: <b id="look">--</b></div>
+<div class="dim">At the last cell edge it <b id="why">--</b></div>
+<div class="dim">Times it had to brake because the next move came late: <b id="late">--</b></div></div>
 
 <div class="row" style="margin-bottom:12px">
   <button id="start">START</button>
@@ -710,6 +717,9 @@ a{color:#7fb6ff}
   <button class="plain" data-cmd="speedrun">Speed run</button>
   <button class="plain" data-cmd="calib">Calibrate sensors</button>
   <button class="plain" data-cmd="clear">Forget the maze</button>
+  <button class="plain" data-cmd="cell">Drive one cell (search, step by step)</button>
+  <button class="plain" data-cmd="left45">Turn left 45&deg;</button>
+  <button class="plain" data-cmd="right45">Turn right 45&deg;</button>
   <button class="plain" data-cmd="health">Health check</button>
   <button class="plain" data-cmd="resetall">Reset sensors</button>
   <button class="plain" data-cmd="ir">Raw IR readings</button>
@@ -735,6 +745,17 @@ a{color:#7fb6ff}
 </div></div>
 
 <div class="card">
+  <div class="dim" style="margin-bottom:8px">Tuning. Change a number, press Apply, try it. A changed box is outlined in yellow until applied. Not allowed during a run.</div>
+  <div class="tune" id="tune"></div>
+  <div class="row">
+    <button class="plain" id="tuneApply">Apply</button>
+    <button class="plain" id="tuneSave">Save on the robot</button>
+    <button class="plain" data-cmd="tune">List values</button>
+    <button class="plain" id="tuneReset">Back to code values</button>
+  </div>
+</div>
+
+<div class="card">
   <div class="top" style="margin-bottom:8px"><span class="dim">Robot output (same as the serial monitor)</span><button class="plain" id="clear" style="width:auto;padding:6px 12px;font-size:13px">Clear</button></div>
   <pre id="log"></pre>
   <form id="form"><input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="command, e.g. status"><button type="submit">Send</button></form>
@@ -744,17 +765,54 @@ a{color:#7fb6ff}
 <script>
 const $ = id => document.getElementById(id);
 let next = 0, misses = 0;
+let done = 0;        // Commands the robot has taken so far (from its last answer)
+let waiting = null;  // The button whose command is still being carried out
 
-function send(command) {
+// A button given here turns red until the robot has taken its command and has stopped moving
+function send(command, button) {
   $("log").textContent += "> " + command + "\n";
   $("log").scrollTop = $("log").scrollHeight;
   fetch("/cmd?c=" + encodeURIComponent(command)).catch(() => {});
+  if (button) {
+    if (waiting) waiting.button.classList.remove("busy");
+    button.classList.add("busy");
+    waiting = { button: button, done: done, since: Date.now() };
+  }
 }
 
 $("start").onclick = () => send("start");
 $("stop").onclick = () => send("stop");
-document.querySelectorAll("button[data-cmd]").forEach(b => b.onclick = () => send(b.dataset.cmd));
+document.querySelectorAll("button[data-cmd]").forEach(b => b.onclick = () => send(b.dataset.cmd, b));
 $("clear").onclick = () => { $("log").textContent = ""; };
+// The Tuning card. Same names, in the same order, as kTune in control.cpp: keep the two in step.
+const TUNE = [["v_kp", "Speed loop P"], ["v_ki", "Speed loop I"], ["v_kd", "Speed loop D"],
+  ["h_kp", "Heading loop P"], ["h_ki", "Heading loop I"], ["h_kd", "Heading loop D"],
+  ["k_sync", "Wheel sync"], ["enc_a", "Wheel-speed smoothing (1 = none)"], ["imu_a", "Heading smoothing (1 = none)"],
+  ["dist_k", "Distance scale (raise if it stops short)"]];
+TUNE.forEach(([name, label]) => {
+  $("tune").insertAdjacentHTML("beforeend", "<div>" + label + " <span class=dim>" + name + "</span></div>" +
+    "<input id=t_" + name + " inputmode=decimal autocomplete=off>");
+  $("t_" + name).oninput = e => e.target.classList.add("changed");
+});
+const pause = ms => new Promise(done => setTimeout(done, ms));
+// The robot takes one command at a time, so changed values are sent one after another
+async function applyTuning() {
+  for (const [name] of TUNE) {
+    const box = $("t_" + name);
+    if (!box.classList.contains("changed")) continue;
+    send("tune " + name + " " + box.value.trim());
+    box.classList.remove("changed");
+    await pause(300);
+  }
+}
+$("tuneApply").onclick = applyTuning;
+$("tuneSave").onclick = async () => { await applyTuning(); send("tune save"); };
+$("tuneReset").onclick = () => {
+  if (!confirm("Go back to the values in the code and wipe the set saved on the robot?")) return;
+  TUNE.forEach(([name]) => $("t_" + name).classList.remove("changed"));
+  send("tune reset");
+};
+
 $("form").onsubmit = e => {
   e.preventDefault();
   const c = $("cmd").value.trim();
@@ -764,6 +822,15 @@ $("form").onsubmit = e => {
 
 function show(d) {
   const s = d.status || {};
+  if (d.done !== undefined) done = d.done;
+  if (waiting) {
+    const taken = done > waiting.done;
+    // Finished, or the robot never took the command (it was busy, or was restarted)
+    if ((taken && !s.busy) || (!taken && Date.now() - waiting.since > 8000)) {
+      waiting.button.classList.remove("busy");
+      waiting = null;
+    }
+  }
   $("state").textContent = s.state || "...";
   $("mode").textContent = s.mode ? "Mode: " + s.mode + (s.tier ? ", speed tier " + s.tier : "") : "";
   if (s.ir) for (let i = 0; i < 6; i++) {
@@ -772,8 +839,13 @@ function show(d) {
   }
   if (s.walls) $("walls").textContent =
     (s.walls[0] === "L" ? "LEFT " : "- ") + (s.walls[1] === "F" ? "FRONT " : "- ") + (s.walls[2] === "R" ? "RIGHT" : "-");
-  for (const k of ["heading", "vbat", "encL", "encR", "motor", "imu", "supply", "loop", "cell", "visited"])
+  for (const k of ["heading", "vbat", "encL", "encR", "motor", "imu", "supply", "loop", "cell", "visited", "look", "why", "late"])
     if (s[k] !== undefined) $(k).textContent = s[k];
+  // Tuning boxes follow the robot, except one that is being edited
+  if (s.tune) TUNE.forEach(([name], i) => {
+    const box = $("t_" + name);
+    if (!box.classList.contains("changed") && document.activeElement !== box) box.value = s.tune[i];
+  });
   if (d.log) {
     const log = $("log");
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
@@ -819,7 +891,9 @@ void WifiOTA::appendWebLog(const char* text, size_t length) {
     portEXIT_CRITICAL(&s_web_log_mux);
 }
 
-// GET /data?since=N  ->  {"next":M,"log":"...new output...","status":{...}}
+// GET /data?since=N  ->  {"next":M,"done":K,"log":"...new output...","status":{...}}
+// "done" counts the commands the console has taken; the page uses it to tell when a button's
+// command has been carried out.
 static void handleAppData() {
     static char slice[1025];
     uint32_t since = (uint32_t)s_web_server.arg("since").toInt();
@@ -836,9 +910,11 @@ static void handleAppData() {
     portEXIT_CRITICAL(&s_web_log_mux);
 
     String out;
-    out.reserve(count + 600);
+    out.reserve(count + 1100);
     out += "{\"next\":";
     out += String(since + count);
+    out += ",\"done\":";
+    out += String(s_commands_taken);
     out += ",\"log\":\"";
     for (uint32_t i = 0; i < count; ++i) {
         char c = slice[i];
@@ -984,7 +1060,8 @@ void WifiOTA::handle() {
     }
 
     // Read incoming commands from Telnet client
-    if (s_telnet_client && s_telnet_client.connected() && s_telnet_client.available()) {
+    // (not while a command is waiting to be collected: the navigation task is reading the buffer)
+    if (!s_telnet_cmd_ready && s_telnet_client && s_telnet_client.connected() && s_telnet_client.available()) {
         while (s_telnet_client.available()) {
             char c = s_telnet_client.read();
             if (c == '\r' || c == '\n') {
@@ -1035,6 +1112,10 @@ String WifiOTA::readCommand() {
     s_telnet_cmd_ready = false;
     cmd.trim();
     return cmd;
+}
+
+void WifiOTA::commandDone() {
+    s_commands_taken++;
 }
 
 IPAddress WifiOTA::getIP() {

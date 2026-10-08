@@ -77,6 +77,8 @@
 //   ADC_11db  = least sensitive: full scale at about 3.1 V (what the bench test used)
 // If close walls now pin the reading at 4095, step down one line. Recalibrate (5 waves) after any change.
 #define IR_ADC_ATTENUATION     ADC_0db
+#define IR_CENTER_TOLERANCE     0.05f    // "In the middle of the cell" = within this fraction (5 %) of the wall distance
+                                        //   learned by IR calibration in the start cell; no wall steering inside it
 #define IR_FILTER_ALPHA        0.75f    // Low-pass weight of the newest sample (each channel updates at 250 Hz)
 
 // Status LED: the RGB NeoPixel on the ESP32-S3-DevKitC-1 board itself (the PCB has no LED or buttons).
@@ -111,7 +113,7 @@
 // 2. ROBOT PHYSICAL & KINEMATIC PARAMETERS
 // ==============================================================================
 
-#define WHEEL_DIAMETER_MM      24.0f    // Typical micromouse wheel diameter (mm)
+#define WHEEL_DIAMETER_MM      40.5f    // Measured by the owner (2026-10-07)
 #define WHEEL_BASE_MM          72.0f    // Distance between left and right wheels (mm)
 
 // N20 12V Micro Metal Gearmotors with Magnetic Encoders
@@ -123,10 +125,19 @@
 // this robot do not give the same count, so each side has its own number. To measure: send
 // "resetenc", turn one wheel forward by hand exactly 10 full turns, send "enc", and divide that
 // side's tick count by 10. Until measured, both use the datasheet value above.
-#define ENCODER_TICKS_PER_REV_LEFT   ENCODER_TOTAL_CPR
-#define ENCODER_TICKS_PER_REV_RIGHT  ENCODER_TOTAL_CPR
+// Measured by the owner on 2026-10-07: 4974 (left) and 2632 (right) ticks in 10 turns by hand.
+// Neither is the datasheet 840 and they are not a clean ratio of each other, so the encoders are
+// probably missing counts; these are the best numbers available until that is found.
+#define ENCODER_TICKS_PER_REV_LEFT   497.4f
+#define ENCODER_TICKS_PER_REV_RIGHT  263.2f
 #define MM_PER_TICK_LEFT       ((PI * WHEEL_DIAMETER_MM) / ENCODER_TICKS_PER_REV_LEFT)
 #define MM_PER_TICK_RIGHT      ((PI * WHEEL_DIAMETER_MM) / ENCODER_TICKS_PER_REV_RIGHT)
+
+// Wheel-speed smoothing: weight of the newest 2 ms sample (1 = none). With the tick counts above
+// the right wheel gives a tick only every few control cycles at search speed, so its raw speed
+// jumps between 0 and about 240 mm/s; at the old 0.6 the speed loop shook the motors with it.
+// Lower = smoother but slower to react. Put back toward 0.6 once the encoders give 840 per turn.
+#define ENCODER_SPEED_FILTER_ALPHA   0.05f
 
 #define MM_PER_TICK            ((PI * WHEEL_DIAMETER_MM) / ENCODER_TOTAL_CPR)
 #define TICKS_PER_MM           (1.0f / MM_PER_TICK)
@@ -134,11 +145,12 @@
 // Search & Exploration Kinematic Limits (Safe bringup defaults)
 // SLOWED DOWN for bring-up at the owner's request (2026-10-07). The normal values are in brackets;
 // put them back once the robot drives a search cleanly.
-#define SEARCH_SPEED_DEFAULT_MM_S     120.0f   // Search cruise speed (mm/s)                          [240]
+#define SEARCH_SPEED_DEFAULT_MM_S     180.0f   // Search cruise speed (mm/s)                          [240]
 #define SEARCH_ACCEL_DEFAULT_MM_S2    600.0f   // Search linear acceleration / deceleration (mm/s^2)  [1500]
 #define SEARCH_CURVE_SPEED_MM_S       100.0f   // Smooth 90° turn speed during the search (mm/s)      [200]
 #define SEARCH_TURN_SPEED_DEG_S       180.0f   // In-place turn speed (deg/s)                         [360]
 #define SEARCH_TURN_ACCEL_DEG_S2      720.0f   // In-place turn acceleration (deg/s^2)                [1800]
+#define SEARCH_PROBE_SPEED_MM_S       120.0f   // Search speed when rolling into a cell it has never seen (may have to stop) [120]
 
 // Speedrun Kinematic Limits for N20 12V 30:1 Gearmotors (Max theoretical no-load ~700 mm/s)
 #define SPEEDRUN_CRUISE_SPEED_MM_S    500.0f   // High-speed straight cruise speed for N20 (mm/s)
@@ -160,12 +172,13 @@
 #define V90_TRIM_MM            60.0f    // Diagonal distance that turn takes off each of the two diagonals (99.15 * 0.60514)
 #define V90_SPEED_RATIO        0.8f     // The V turn is tighter than the others, so it is taken this much slower
 
-#define SEARCH_PROBE_SPEED_MM_S 80.0f   // Search speed when rolling into a cell it has never seen (may have to stop) [120]
 
 // Motor Feedforward: effort = FF_KS (to overcome friction) + FF_KV * speed + FF_KA * acceleration.
 // This supplies most of the motor effort directly from the planned motion; the PID loops only
 // correct what is left over. Measure the three numbers from a run log (console command "log").
-#define MOTOR_NO_LOAD_SPEED_MM_S 700.0f // Wheel speed at 100% effort on a full supply (N20 30:1, 24 mm wheel)
+// Wheel speed at 100% effort on a full supply: 700 mm/s for an N20 30:1 on a 24 mm wheel, and in
+// proportion for the wheel actually fitted (a bigger wheel covers more ground per motor turn)
+#define MOTOR_NO_LOAD_SPEED_MM_S (700.0f * WHEEL_DIAMETER_MM / 24.0f)
 #define FF_KS                  0.03f    // Effort needed just to keep a wheel turning
 #define FF_KV                  (1.0f / MOTOR_NO_LOAD_SPEED_MM_S) // Effort per mm/s of wheel speed
 #define FF_KA                  0.0f     // Effort per mm/s² of acceleration (0 until measured)
@@ -176,16 +189,21 @@
 #define RUN_LOG_DIVIDER        10       // Record every 10th control tick (50 Hz)
 
 
-// MEASURE THIS ON THE ROBOT: how far the two 90° side sensors sit in front of the wheel axle.
-// It sets where in a cell the robot is when a side sensor sees a wall start or end.
-#define SIDE_SENSOR_AHEAD_MM   40.0f
+// How far the two 90° side sensors sit in front of the wheel axle. It sets where in a cell the
+// robot is when a side sensor sees a wall start or end. Observed by the owner (2026-10-08): the
+// 90° sensors see into the next cell about 110 mm after a cell centre, i.e. 20 mm past the cell
+// edge, which puts them about 20 mm BEHIND the axle (negative). Refine with a ruler when possible.
+#define SIDE_SENSOR_AHEAD_MM   -20.0f
 #define POST_EDGE_PHASE_MM     (HALF_CELL_SIZE_MM - SIDE_SENSOR_AHEAD_MM) // Distance past a cell centre at that moment
 
 // Settling: a move that ends in a stop is not finished until the robot is actually there.
 #define SETTLE_DISTANCE_MM     2.0f     // Close enough along the direction of travel
 #define SETTLE_HEADING_DEG     1.5f     // Close enough in heading
 #define SETTLE_SPEED_MM_S      20.0f    // Slow enough to call it stopped
+#define SETTLE_YAW_RATE_DEG_S  20.0f    // Turning slowly enough to call it stopped (else it brakes mid-swing and coasts past)
+#define SETTLE_DWELL_TICKS     50       // Must stay on target and still for this many control ticks in a row (0.1 s)
 #define SETTLE_TIMEOUT_TICKS   150      // Give up waiting after this many control ticks (0.3 s)
+#define SETTLE_TIMEOUT_TURN_TICKS 500    // ...or this many after a turn on the spot (1 s): a wrong heading costs more than a pause
 #define CHAIN_TIMEOUT_TICKS    250      // Moves starting within 0.5 s of the last one carry on from where it aimed to end
 
 // Search Look-Ahead (smooth turns during the search run)
@@ -195,12 +213,16 @@
 // corner instead of driving to the centre, stopping, and turning on the spot. Half-way round the
 // curve the outer 45° sensor faces that cell's front wall squarely and records it.
 #define ENABLE_SEARCH_LOOKAHEAD 1       // 0 = always decide at the cell centre and turn on the spot
-#define SEARCH_LOOKAHEAD_START_MM 30.0f // Side walls of the next cell are sampled between these
+#define SEARCH_CONFIRM_WITH_90  0       // 1 = at the cell edge the 90° sensor must agree with the 45° look-ahead before a
+                                        //   curve. Only right if the 90° sensors sit well ahead of the wheel axle, so that at
+                                        //   the edge they are already beside the NEXT cell's wall. 0 = trust the 45° alone:
+                                        //   on this robot the 45° sees an opening before the 90° reaches it (owner, 2026-10-08)
+#define SEARCH_LOOKAHEAD_START_MM 40.0f // Side walls of the next cell are sampled between these
 #define SEARCH_LOOKAHEAD_END_MM   80.0f //   distances after leaving a cell centre
 #define SEARCH_OPEN_RATIO      0.6f     // "Definitely open" = every sample below this fraction of the wall threshold
 #define SEARCH_FRONT_SAMPLE_FROM 0.40f  // Part of a 90° curve (0..1) during which the outer 45° sensor
 #define SEARCH_FRONT_SAMPLE_TO   0.60f  //   faces the front wall of the cell being curved through
-#define PREVIEW_MIN_SAMPLES    4        // Fewer samples than this = no opinion
+#define PREVIEW_MIN_SAMPLES    10        // Fewer samples than this = no opinion
 
 // Diagonal Centring (keeps the robot midway between the posts on a diagonal)
 // On a diagonal each 45° sensor points along a maze axis and sees the posts go by one at a time.
@@ -264,7 +286,9 @@
 #define MOTORON_HEALTH_PERIOD_MS   200  // How often the Motoron status flags are polled for resets / bus faults
 #define MOTORON_KEEPALIVE_MS       100  // Re-send interval so the Motoron's 250 ms command timeout never trips
 #define IMU_MAX_STEP_DEG           30.0f // A heading jump larger than this between two 100 Hz reads is rejected as a glitch
+#define IMU_GLITCH_READS           3    // A far-off heading this many reads running is believed, not rejected
 #define IMU_FAULT_READS            10   // Consecutive bad reads (100 ms) before falling back to encoder odometry
+#define IMU_FILTER_ALPHA           0.6f  // Heading smoothing: share of each new BNO055 reading that is believed (1 = no smoothing)
 #define ENCODER_FAULT_TICKS        75   // Control ticks (150 ms) one wheel may read zero while the other is moving
 #define HEADING_FAULT_DEG          60.0f // Heading this far off course = crashed or picked up (lift + twist to stop a run)
 #define HEADING_FAULT_TICKS        50   // ...for this many control ticks (100 ms) before the run is aborted

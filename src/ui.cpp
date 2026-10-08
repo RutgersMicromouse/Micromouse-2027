@@ -88,6 +88,7 @@ bool isRunActive() {
 }
 
 const char* stateDescription() {
+    if (g_navigator->isWaitingForNextMove()) return "SEARCHING one move at a time - waiting for 'Drive one cell'";
     switch (g_navigator->getState()) {
         case NAV_STATE_IDLE:                 return "IDLE - ready to start";
         case NAV_STATE_CALIBRATING:          return "CALIBRATING the IR sensors";
@@ -101,7 +102,7 @@ const char* stateDescription() {
     }
 }
 
-void launchSelectedRun() {
+void launchSelectedRun(bool one_move_at_a_time) {
     if (isRunActive()) return;
 
     Serial.printf("[UI] Launching: %s\n", modeName(s_selected_mode));
@@ -117,7 +118,7 @@ void launchSelectedRun() {
 
     switch (s_selected_mode) {
         case MODE_SEARCH: {
-            g_navigator->startSearchRun();
+            g_navigator->startSearchRun(one_move_at_a_time);
             // The search is driven by wall readings, so take the first step right away
             RobotTelemetry telemetry = {};
             getTelemetry(telemetry);
@@ -470,7 +471,84 @@ static void handle(String cmd, Source source) {
         reply("ACK: MAZE CLEARED");
         return;
     }
+    // Turn test: spin 45° on the spot, left or right, with no navigation. For checking that the
+    // robot turns the way it is told and by the right amount. The heading is NOT zeroed between
+    // presses, so two left turns should read 90: each press aims for the next exact multiple of
+    // 45° (see the grid snapping in MotionController::executeCommand), which is how the maze
+    // moves avoid adding up their errors. "resetall" zeroes the heading; do that after moving
+    // the robot by hand, or it will first turn back to where it was.
+    if (cmd == "left45" || cmd == "right45") {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        MotionCommand turn = {};
+        turn.action = (cmd == "left45") ? ACTION_TURN_LEFT_45 : ACTION_TURN_RIGHT_45;
+        turn.param_value = 45.0f;
+        turn.max_speed_mm_s = SEARCH_TURN_SPEED_DEG_S;  // deg/s for turns
+        turn.acceleration = SEARCH_TURN_ACCEL_DEG_S2;
+        xQueueSend(g_motion_cmd_queue, &turn, 0);
+        reply(cmd == "left45" ? "Turning 45 degrees LEFT (anticlockwise seen from above; heading should go UP to the next multiple of 45)."
+                              : "Turning 45 degrees RIGHT (clockwise seen from above; heading should go DOWN to the next multiple of 45).");
+        return;
+    }
+
+    // The search, one move at a time: the same maze-solving code as START, except that the robot
+    // stops at every cell centre and waits. The first "cell" starts the search from the start
+    // cell; each one after that lets it make its next move (one cell forward, or one turn).
+    if (cmd == "cell") {
+        if (g_navigator->isWaitingForNextMove()) {
+            RobotTelemetry telemetry = {};
+            getTelemetry(telemetry);
+            g_navigator->continueOneMove(telemetry.ir, g_motion_controller.getWallPreview());
+            return;
+        }
+        if (running) { reply("ERR: STILL_MOVING (or a run is in progress: STOP it first)"); return; }
+        reply("Calibrating the IR sensors, then searching one move at a time...");
+        if (!Actions::calibrateIR()) reply("IR calibration failed here; using the stored / default levels.");
+        Actions::selectMode(Actions::MODE_SEARCH);
+        Actions::launchSelectedRun(true);
+        return;
+    }
 #endif
+
+    // ---------------------------------------------------------------- Live tuning
+    // "tune" lists the gains, "tune <name> <value>" changes one at once, "tune save" keeps the
+    // current set through power-off, "tune reset" goes back to the values in the code.
+    if (cmd.startsWith("tune")) {
+        char name[12] = "";
+        float value = 0.0f;
+        if (cmd == "tune") {
+            reply("TUNING   now  (value in the code)");
+            for (int i = 0; i < MotionController::TUNE_COUNT; ++i) {
+                snprintf(buf, sizeof(buf), "  %-6s = %-9.6g (%.6g)  %s", MotionController::tuneName(i),
+                         g_motion_controller.getTune(i), MotionController::tuneDefault(i), MotionController::tuneDescription(i));
+                reply(buf);
+            }
+            reply("To keep a set for good, copy the numbers into kTune in control.cpp (flash can be wiped).");
+        } else if (running && !g_navigator->isWaitingForNextMove()) {
+            reply("ERR: CANNOT_TUNE_WHILE_RUNNING");
+        } else if (cmd == "tune save") {
+            g_motion_controller.saveToNVS();
+        } else if (cmd == "tune reset") {
+            g_motion_controller.forgetSavedTuning();
+        } else if (sscanf(cmd.c_str(), "tune %11s %f", name, &value) == 2) {
+            int index = -1;
+            for (int i = 0; i < MotionController::TUNE_COUNT; ++i) {
+                if (strcmp(name, MotionController::tuneName(i)) == 0) index = i;
+            }
+            if (index < 0) {
+                reply("ERR: no such setting (send 'tune' for the list)");
+            } else if (!g_motion_controller.setTune(index, value)) {
+                snprintf(buf, sizeof(buf), "ERR: %s refused, %g is outside the allowed range. It stays at %.6g.",
+                         name, value, g_motion_controller.getTune(index));
+                reply(buf);
+            } else {
+                snprintf(buf, sizeof(buf), "ACK: %s = %.6g (not saved yet: 'tune save' keeps it)", name, g_motion_controller.getTune(index));
+                reply(buf);
+            }
+        } else {
+            reply("ERR: USAGE 'tune', 'tune <name> <value>', 'tune save', 'tune reset'");
+        }
+        return;
+    }
 
     // ---------------------------------------------------------------- Debug helpers
     if (cmd == "resetall") {
@@ -674,7 +752,7 @@ static void handle(String cmd, Source source) {
 #endif
 
     if (cmd == "help") {
-        reply("Commands: start, speedrun, calib, clear (builds with a radio only); stop, status, health, ir, irtest [us], resetall, stream, perf, enc, log, log clear, motortrim [l r], motorinv [l r], "
+        reply("Commands: start, speedrun, calib, clear, cell, left45, right45 (builds with a radio only); stop, status, health, tune [name value | save | reset], ir, irtest [us], resetall, stream, perf, enc, log, log clear, motortrim [l r], motorinv [l r], "
               "encinv [l r], resetenc, resetheading. Runs are started by hand waves only.");
         return;
     }
@@ -691,9 +769,10 @@ void poll() {
 #endif
 
 #if ENABLE_WIFI_OTA
-    WifiOTA::handle(); // Also services over-the-air firmware uploads
+    // (the Wi-Fi itself is serviced by telemetryTask; only the commands arrive here)
     if (WifiOTA::hasCommand()) {
         handle(WifiOTA::readCommand(), SOURCE_TELNET);
+        WifiOTA::commandDone();
     }
 #endif
 

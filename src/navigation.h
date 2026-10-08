@@ -181,7 +181,14 @@ public:
     // Every run starts with the robot in the start cell facing into the maze.
     // The search keeps whatever map is already known (clearSavedMaze() forgets it), drives to the
     // centre, then explores its way back to the start.
-    void startSearchRun();
+    // With `one_move_at_a_time` the search is exactly the same, except that the robot stops at
+    // every cell centre and waits for continueOneMove() before each move (phone app "Drive one cell").
+    void startSearchRun(bool one_move_at_a_time = false);
+    bool isWaitingForNextMove() const { return step_paused_; }
+
+    // What the search did at the last cell edge and why (curved through, or drove to the centre)
+    const char* getEdgeNote() const { return edge_note_; }
+    void continueOneMove(const IRReadings& ir, const WallPreview& preview = WallPreview());
     void startSpeedRun(SpeedrunStrategy strategy = SPEEDRUN_HYBRID_AUTO);
     void stop();
 
@@ -243,11 +250,17 @@ private:
     bool best_route_explored_;
     bool maze_changed_;          // New cells seen since the map was last written to flash
 
+    const char* edge_note_;
+    bool single_step_;           // This search waits for a command before every move
+    bool step_allowed_;          // The next move has been asked for and not yet sent
+    bool step_paused_;           // Standing at a cell centre, waiting to be asked
+
     uint8_t trap_recovery_;      // How far "walled in" recovery has gone: 0 none, 1 weak walls dropped, 2 map wiped
 
     void stepAtCellEdge(const IRReadings& ir, const WallPreview& preview);
     void stepAfterCurve(const WallPreview& preview);
     void driveToCellCentre();
+    bool returnLegGoesStraightOn(Coordinate centre, Direction heading);
 
     // Moves waiting to be sent to the motion controller, one each time the previous one finishes.
     // A speed run is planned in full up front, so this has to hold a whole run.

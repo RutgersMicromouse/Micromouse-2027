@@ -5,7 +5,9 @@
 // ==============================================================================
 
 Encoders::Encoders()
-    : invert_left_(INVERT_LEFT_ENCODER),
+    : speed_filter_alpha_(ENCODER_SPEED_FILTER_ALPHA),
+      distance_scale_(1.0f),
+      invert_left_(INVERT_LEFT_ENCODER),
       invert_right_(INVERT_RIGHT_ENCODER),
       left_dist_acc_mm_(0.0f),
       right_dist_acc_mm_(0.0f) {
@@ -92,8 +94,9 @@ void Encoders::update(float dt_seconds) {
     state_.right_ticks_total += raw_right;
 
     // Convert ticks to millimeters
-    float d_left_mm = (float)raw_left * MM_PER_TICK_LEFT;
-    float d_right_mm = (float)raw_right * MM_PER_TICK_RIGHT;
+    // Dividing by the distance scale makes the robot count less per tick, so it drives further
+    float d_left_mm = (float)raw_left * MM_PER_TICK_LEFT / distance_scale_;
+    float d_right_mm = (float)raw_right * MM_PER_TICK_RIGHT / distance_scale_;
 
     left_dist_acc_mm_ += d_left_mm;
     right_dist_acc_mm_ += d_right_mm;
@@ -105,8 +108,9 @@ void Encoders::update(float dt_seconds) {
     float raw_speed_l = d_left_mm / dt_seconds;
     float raw_speed_r = d_right_mm / dt_seconds;
 
-    // First-order low-pass filter on speeds (alpha = 0.6) for smoother PID derivative
-    const float alpha = 0.6f;
+    // First-order low-pass filter on the speeds. One tick is a large step in speed at low speed
+    // (see ENCODER_SPEED_FILTER_ALPHA), and unfiltered that step goes straight to the motors.
+    const float alpha = speed_filter_alpha_;
     state_.left_speed_mm_s  = (alpha * raw_speed_l) + ((1.0f - alpha) * state_.left_speed_mm_s);
     state_.right_speed_mm_s = (alpha * raw_speed_r) + ((1.0f - alpha) * state_.right_speed_mm_s);
 
@@ -595,6 +599,17 @@ void IRSensors::update() {
         readings_.centering_error = 0.0f;
     }
 
+    // Tolerance: within IR_CENTER_TOLERANCE of the middle counts as centred, so the robot is not
+    // forever steering after sensor noise. One unit of error is a quarter of the centred wall
+    // distance, hence the 4. Beyond the tolerance only the excess is steered out, so the
+    // correction starts gently instead of with a kick. Squaring up on a front wall is exempt.
+    if (!readings_.wall_front) {
+        const float slack = 4.0f * IR_CENTER_TOLERANCE;
+        if (readings_.centering_error > slack)       readings_.centering_error -= slack;
+        else if (readings_.centering_error < -slack) readings_.centering_error += slack;
+        else                                         readings_.centering_error = 0.0f;
+    }
+
     // Clamp centering error to prevent extreme spikes from saturating actuators
     if (readings_.centering_error > 1.5f)  readings_.centering_error = 1.5f;
     if (readings_.centering_error < -1.5f) readings_.centering_error = -1.5f;
@@ -812,6 +827,7 @@ IMU::IMU()
       hardware_detected_(false),
       heading_offset_deg_(0.0f),
       last_bno_heading_deg_(0.0f),
+      filter_alpha_(IMU_FILTER_ALPHA),
       heading_rate_deg_s_(0.0f),
       time_since_good_s_(0.0f),
       gyro_bias_z_(0.0f),
@@ -822,7 +838,9 @@ IMU::IMU()
       settle_reads_(0),
       frozen_reads_(0),
       reanchor_pending_(false),
-      fault_count_(0) {
+      fault_count_(0),
+      bad_read_total_(0),
+      retry_read_(false) {
     memset(&state_, 0, sizeof(state_));
 }
 
@@ -942,10 +960,14 @@ void IMU::update(float dt_seconds, float encoder_yaw_rate, float linear_speed_mm
     poll_counter_++;
     time_since_good_s_ += dt_seconds;
 
-    if (hardware_detected_ && (poll_counter_ % IMU_POLL_DIVIDER) == 0) {
+    // Read on the normal 100 Hz slot. If that read fails, try once more on the very next tick
+    // instead of flying blind for another 10 ms (one retry only: a timed-out read is slow).
+    const bool poll_now = (poll_counter_ % IMU_POLL_DIVIDER) == 0;
+    if (hardware_detected_ && (poll_now || retry_read_)) {
         float raw_h = 0.0f;
         float raw_gz = 0.0f;
         bool ok = readBNO055Data(raw_h, raw_gz);
+        retry_read_ = !ok && poll_now;
 
         // A brownout drops the BNO055 back into config mode, where it answers but its heading
         // freezes. Check once per second, or right away if the heading has not moved at all while
@@ -975,25 +997,34 @@ void IMU::update(float dt_seconds, float encoder_yaw_rate, float linear_speed_mm
             // Compare against the heading we have been tracking since the last good read
             float jump = normalizeAngle180(raw_h - heading_offset_deg_ - state_.heading_deg);
             bool rate_valid = true;
-            if (reanchor_pending_ || fabsf(jump) > IMU_MAX_STEP_DEG) {
-                if (!reanchor_pending_ && bad_reads_ < IMU_FAULT_READS) {
-                    ok = false; // Physically impossible step: reject as a glitch
-                } else {
-                    // Sensor came back with a different reference after an outage:
-                    // keep our tracked heading and re-anchor the BNO055 to it
-                    heading_offset_deg_ = normalizeAngle180(raw_h - state_.heading_deg);
-                    reanchor_pending_ = false;
-                    rate_valid = false;
-                }
+            if (reanchor_pending_) {
+                // The BNO055 itself restarted (it had dropped out of fusion mode), so its heading
+                // now counts from an unrelated direction: keep our tracked heading and re-anchor
+                // the BNO055 to it
+                heading_offset_deg_ = normalizeAngle180(raw_h - state_.heading_deg);
+                reanchor_pending_ = false;
+                rate_valid = false;
+            } else if (fabsf(jump) > IMU_MAX_STEP_DEG && bad_reads_ < IMU_GLITCH_READS) {
+                ok = false; // Physically impossible step: reject as a glitch
             }
+            // Otherwise believe it, even if it is far from the tracked heading. The same far-off
+            // answer several reads running is not a glitch: reads were failing, the heading was
+            // being tracked on the wheel encoders meanwhile, and they lost count of the turn. The
+            // BNO055 kept integrating its gyro all along, so its heading is the true one.
 
             if (ok) {
+                // Bring the prediction up to this tick, so the reading is compared with where the
+                // filter expects the heading to be now
+                if (bad_reads_ == 0) {
+                    state_.heading_deg = normalizeAngle180(state_.heading_deg + heading_rate_deg_s_ * dt_seconds);
+                }
                 acceptReading(raw_h, raw_gz, rate_valid, encoder_yaw_rate, linear_speed_mm_s);
                 return;
             }
         }
 
-        if (bad_reads_ < IMU_FAULT_READS) {
+        bad_read_total_++;
+        if (poll_now && bad_reads_ < IMU_FAULT_READS) { // (the retry does not count twice)
             bad_reads_++;
             if (bad_reads_ == IMU_FAULT_READS) fault_count_++;
         }
@@ -1016,11 +1047,28 @@ void IMU::update(float dt_seconds, float encoder_yaw_rate, float linear_speed_mm
 
 void IMU::acceptReading(float raw_h, float raw_gz, bool rate_valid,
                         float encoder_yaw_rate, float linear_speed_mm_s) {
-    // Heading rate from two consecutive BNO055 headings (always sign-consistent with the heading)
+    // Alpha-beta filter on the BNO055 heading. Between reads update() has already predicted
+    // heading = heading + rate * dt. Each new reading then corrects that prediction by only part of
+    // the difference, and nudges the rate by the same difference:
+    //     heading += alpha * (measured - predicted)
+    //     rate    += beta  * (measured - predicted) / time since the last reading
+    // alpha starts at IMU_FILTER_ALPHA; beta = alpha^2 / (2 - alpha), which makes the filter
+    // settle without ringing whatever alpha is set to.
+    // The BNO055 reports in 1/16° steps at 100 Hz; taken raw, every step is a small jolt in the
+    // heading and a 6°/s jump in the rate, which the 500 Hz heading loop passes on to the motors.
+    // The rate still comes from the heading alone, so it is always sign-consistent with it.
+    const float measured = normalizeAngle180(raw_h - heading_offset_deg_);
     if (rate_valid && bad_reads_ == 0 && time_since_good_s_ > 0.0f && time_since_good_s_ < 0.05f) {
-        heading_rate_deg_s_ = normalizeAngle180(raw_h - last_bno_heading_deg_) / time_since_good_s_;
+        const float residual = normalizeAngle180(measured - state_.heading_deg);
+        const float beta = filter_alpha_ * filter_alpha_ / (2.0f - filter_alpha_);
+        state_.heading_deg = normalizeAngle180(state_.heading_deg + filter_alpha_ * residual);
+        heading_rate_deg_s_ += beta * residual / time_since_good_s_;
     } else {
-        heading_rate_deg_s_ = 0.0f;
+        // First reading, or the first after an outage: nothing to predict from, so take it as it
+        // is. After a short outage the turn rate is simply the change since the last good reading.
+        state_.heading_deg = measured;
+        heading_rate_deg_s_ = (rate_valid && time_since_good_s_ > 0.0f && time_since_good_s_ < 0.2f)
+                              ? normalizeAngle180(raw_h - last_bno_heading_deg_) / time_since_good_s_ : 0.0f;
     }
 
     // Update gyro bias while stationary
@@ -1041,8 +1089,6 @@ void IMU::acceptReading(float raw_h, float raw_gz, bool rate_valid,
 
     state_.gyro_z_deg_s = (float)gyro_sign_ * gyro;
 
-    // Use the BNO055 fused heading directly, relative to where resetHeading() was last called
-    state_.heading_deg = normalizeAngle180(raw_h - heading_offset_deg_);
     state_.heading_rad = state_.heading_deg * (PI / 180.0f);
 
     last_bno_heading_deg_ = raw_h;
