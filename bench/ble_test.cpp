@@ -2,9 +2,12 @@
 #include <Wire.h>
 
 #include "config.h"
-#include "wireless.h"
+#include "wireless/ble_debug/ble_debug.h"
 #include "battery.h"
-#include "hardware.h"
+#include "hardware/encoders/encoders.h"
+#include "hardware/motors/motors.h"
+#include "hardware/ir_sensors/ir_sensors.h"
+#include "hardware/imu/imu.h"
 
 
 // =============================================================

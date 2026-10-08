@@ -1,7 +1,7 @@
 #include <Arduino.h>
 
 #include "config.h"
-#include "wireless.h"
+#include "wireless/wifi_ota/wifi_ota.h"
 
 void setup() {
     Serial.begin(115200);

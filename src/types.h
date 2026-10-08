@@ -95,6 +95,10 @@ struct IRReadings {
     bool opening_left;           // Anticipated opening on the left (wall ending ahead)
     bool opening_right;          // Anticipated opening on the right (wall ending ahead)
 
+    // With a wall in front: how many mm further from it the robot is than it would be at the
+    // cell centre (negative = too close). 0 when there is no front wall or it cannot be told.
+    float front_offset_mm;
+
     // Centering error: positive means mouse is biased left (steer right)
     float centering_error;
 };
@@ -103,7 +107,7 @@ struct IRReadings {
 // "wall" and "open" are both false when the sensors were not sure.
 struct WallPreview {
     bool left_wall,  left_open;   // Next cell's left wall, sampled on the way to its edge
-    bool right_wall, right_open;  // Next cell's right wall
+    bool right_wall, right_open;  // Next cell's right wall (after a curve: sampled as the curve ends)
     bool front_wall, front_open;  // Front wall of the cell just curved through
 };
 

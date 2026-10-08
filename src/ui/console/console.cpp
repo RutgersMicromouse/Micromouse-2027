@@ -1,387 +1,11 @@
 #include <functional>
-#include "ui.h"
 #include "robot.h"
-#include "wireless.h"
-
-// ==============================================================================
-// STATUS LED
-// ==============================================================================
-
-namespace StatusLED {
-
-void begin() {
-    pinMode(PIN_ESP32_RGB_LED, OUTPUT);
-    set(OFF);
-}
-
-void set(Color color) {
-    const uint8_t level = RGB_BRIGHTNESS_LEVEL;
-    const uint8_t r = color.red   ? level : 0;
-    const uint8_t g = color.green ? level : 0;
-    const uint8_t b = color.blue  ? level : 0;
-    neopixelWrite(PIN_ESP32_RGB_LED, r, g, b);
-    neopixelWrite(PIN_ESP32_RGB_LED_ALT, r, g, b); // The same LED on the other board revision
-}
-
-void flash(Color color, int count, int delay_ms) {
-    for (int i = 0; i < count; ++i) {
-        set(color);
-        delay(delay_ms);
-        set(OFF);
-        delay(delay_ms);
-    }
-}
-
-} // namespace StatusLED
-
-// ==============================================================================
-// ACTIONS
-// ==============================================================================
-
-namespace Actions {
-
-static RunMode s_selected_mode = MODE_SEARCH;
-
-static const float kSpeedTierScale[3] = { SPEED_TIER_1_SCALE, SPEED_TIER_2_SCALE, SPEED_TIER_3_SCALE };
-static uint8_t s_speed_tier = 1; // 1..3
-
-const char* modeName(RunMode mode) {
-    switch (mode) {
-        case MODE_SEARCH:    return "SEARCH";
-        case MODE_HYBRID:    return "SPEED RUN - HYBRID";
-        case MODE_DIAGONALS: return "SPEED RUN - DIAGONALS";
-        case MODE_CURVES:    return "SPEED RUN - CURVES";
-        default:             return "UNKNOWN";
-    }
-}
-
-StatusLED::Color modeColor(RunMode mode) {
-    switch (mode) {
-        case MODE_SEARCH:    return StatusLED::GREEN;
-        case MODE_HYBRID:    return StatusLED::YELLOW;
-        case MODE_DIAGONALS: return StatusLED::CYAN;
-        case MODE_CURVES:    return StatusLED::MAGENTA;
-        default:             return StatusLED::BLUE;
-    }
-}
-
-RunMode getSelectedMode() {
-    return s_selected_mode;
-}
-
-void selectMode(RunMode mode) {
-    if (mode >= MODE_COUNT) return;
-    s_selected_mode = mode;
-    Serial.printf("[UI] Selected mode %d: %s\n", (int)mode, modeName(mode));
-    showSelectedMode();
-}
-
-void showSelectedMode() {
-    StatusLED::set(modeColor(s_selected_mode));
-}
-
-bool isRunActive() {
-    NavState state = g_navigator->getState();
-    return state == NAV_STATE_EXPLORING_TO_CENTER ||
-           state == NAV_STATE_RETURNING_TO_START ||
-           state == NAV_STATE_SPEED_RUNNING;
-}
-
-const char* stateDescription() {
-    switch (g_navigator->getState()) {
-        case NAV_STATE_IDLE:                 return "IDLE - ready to start";
-        case NAV_STATE_CALIBRATING:          return "CALIBRATING the IR sensors";
-        case NAV_STATE_EXPLORING_TO_CENTER:  return "SEARCHING - driving to the goal";
-        case NAV_STATE_RETURNING_TO_START:   return "SEARCHING - exploring back to the start cell";
-        case NAV_STATE_PREPARING_SPEED_RUN:  return "SEARCH DONE - back at the start, ready for the next run";
-        case NAV_STATE_SPEED_RUNNING:        return "SPEED RUN in progress";
-        case NAV_STATE_FINISHED:             return "SPEED RUN DONE - at the goal";
-        case NAV_STATE_ERROR:                return "ERROR - no route found (forget the maze and try again)";
-        default:                             return "UNKNOWN";
-    }
-}
-
-void launchSelectedRun() {
-    if (isRunActive()) return;
-
-    Serial.printf("[UI] Launching: %s\n", modeName(s_selected_mode));
-    showSelectedMode();
-
-    // The robot was placed by hand: forget where the last run left its heading and distance
-    prepareForNewRun();
-
-    if (s_selected_mode != MODE_SEARCH) {
-        Serial.printf("[UI] Speed tier %d of 3 (%.0f%% speed)\n", (int)s_speed_tier, kSpeedTierScale[s_speed_tier - 1] * 100.0f);
-        g_navigator->setSpeedScale(kSpeedTierScale[s_speed_tier - 1]);
-    }
-
-    switch (s_selected_mode) {
-        case MODE_SEARCH: {
-            g_navigator->startSearchRun();
-            // The search is driven by wall readings, so take the first step right away
-            RobotTelemetry telemetry = {};
-            getTelemetry(telemetry);
-            g_navigator->step(telemetry.ir);
-            break;
-        }
-        case MODE_HYBRID:    g_navigator->startSpeedRun(SPEEDRUN_HYBRID_AUTO);    break;
-        case MODE_DIAGONALS: g_navigator->startSpeedRun(SPEEDRUN_DIAGONALS_ONLY); break;
-        case MODE_CURVES:    g_navigator->startSpeedRun(SPEEDRUN_CURVES_ONLY);    break;
-        default: break;
-    }
-}
-
-void stopRun() {
-    Serial.println("\n[UI] STOP! Halting robot.");
-    g_navigator->stop();
-    StatusLED::flash(StatusLED::RED, 3, 100);
-    showSelectedMode();
-}
-
-bool calibrateIR() {
-    if (isRunActive()) return false;
-
-    StatusLED::set(StatusLED::YELLOW);
-    bool ok = g_ir_sensors.calibrateInCell(200);
-    StatusLED::flash(ok ? StatusLED::GREEN : StatusLED::RED, 3, 120);
-    showSelectedMode();
-    return ok;
-}
-
-void clearSavedMaze() {
-    if (isRunActive()) return;
-
-    g_navigator->clearSavedMaze();
-    StatusLED::flash(StatusLED::BLUE, 4, 100);
-    showSelectedMode();
-}
-
-uint8_t getSpeedTier() {
-    return s_speed_tier;
-}
-
-void onRunEnded(bool aborted) {
-    const NavState state = g_navigator->getState();
-    const bool was_speed_run = (s_selected_mode != MODE_SEARCH);
-
-    if (aborted) {
-        if (was_speed_run && s_speed_tier > 1) {
-            s_speed_tier--;
-            Serial.printf("[UI] Speed run aborted: next one drops to tier %d.\n", (int)s_speed_tier);
-        }
-        StatusLED::flash(StatusLED::RED, 5, 100);
-    } else if (state == NAV_STATE_FINISHED) {
-        if (s_speed_tier < 3) s_speed_tier++;
-        Serial.printf("[UI] Speed run finished: next one uses tier %d.\n", (int)s_speed_tier);
-        StatusLED::flash(StatusLED::GREEN, 3, 150);
-    } else if (state == NAV_STATE_PREPARING_SPEED_RUN) {
-        // Search finished. Green = the best route is fully explored; yellow = searching again
-        // might find a shorter one.
-        StatusLED::flash(g_navigator->isBestRouteExplored() ? StatusLED::GREEN : StatusLED::YELLOW, 2, 300);
-    } else if (state == NAV_STATE_ERROR) {
-        StatusLED::flash(StatusLED::RED, 2, 400);
-    }
-    showSelectedMode();
-}
-
-} // namespace Actions
-
-// ==============================================================================
-// HAND-WAVE DETECTOR
-// ==============================================================================
-
-// Samples in a row needed before believing the hand arrived / left (2 samples = ~40 ms)
-static const uint8_t DEBOUNCE_SAMPLES = 2;
-
-GestureInput::GestureInput() {
-    reset(0);
-}
-
-void GestureInput::reset(uint32_t now_ms) {
-    resting_level_ = -1.0f; // Not learned yet
-    hand_present_ = false;
-    confirm_samples_ = 0;
-    wave_count_ = 0;
-    wave_counted_flag_ = false;
-    started_ms_ = now_ms;
-    hand_since_ms_ = now_ms;
-    last_wave_end_ms_ = now_ms;
-}
-
-uint8_t GestureInput::update(uint16_t front_reading, uint32_t now_ms) {
-    float reading = (float)front_reading;
-
-    // Warm-up: just learn the resting level, so nothing that happens while the robot is being
-    // put down can count as a wave
-    if (resting_level_ < 0.0f) resting_level_ = reading;
-    if (now_ms - started_ms_ < GESTURE_WARMUP_MS) {
-        resting_level_ += (reading - resting_level_) * 0.2f;
-        return 0;
-    }
-
-    // How far above the resting level counts as "a hand is there" (with hysteresis on the way out)
-    float rise = resting_level_ * GESTURE_RISE_RATIO;
-    if (rise < (float)GESTURE_MIN_RISE) rise = (float)GESTURE_MIN_RISE;
-    float arrive_level = resting_level_ + rise;
-    float leave_level  = resting_level_ + rise * 0.5f;
-
-    if (!hand_present_) {
-        if (reading > arrive_level) {
-            if (++confirm_samples_ >= DEBOUNCE_SAMPLES) {
-                hand_present_ = true;
-                hand_since_ms_ = now_ms;
-                confirm_samples_ = 0;
-            }
-        } else {
-            confirm_samples_ = 0;
-            resting_level_ += (reading - resting_level_) * 0.05f; // Slowly follow ambient changes
-        }
-
-        // The operator has stopped waving: report the total
-        if (wave_count_ > 0 && !hand_present_ && (now_ms - last_wave_end_ms_ > GESTURE_SEQUENCE_GAP_MS)) {
-            uint8_t total = wave_count_;
-            wave_count_ = 0;
-            return total;
-        }
-        return 0;
-    }
-
-    // A hand is currently in front of the sensors
-    if (reading < leave_level) {
-        if (++confirm_samples_ >= DEBOUNCE_SAMPLES) {
-            hand_present_ = false;
-            confirm_samples_ = 0;
-            last_wave_end_ms_ = now_ms;
-
-            if (now_ms - hand_since_ms_ <= GESTURE_MAX_WAVE_MS) {
-                wave_count_++;
-                wave_counted_flag_ = true;
-            } else {
-                wave_count_ = 0; // Holding a hand there is the "never mind" gesture
-            }
-        }
-    } else {
-        confirm_samples_ = 0;
-        if (now_ms - hand_since_ms_ > GESTURE_REBASE_MS) {
-            // Not a hand: the robot was moved and is now looking at something closer
-            resting_level_ = reading;
-            hand_present_ = false;
-            wave_count_ = 0;
-            last_wave_end_ms_ = now_ms;
-        }
-    }
-    return 0;
-}
-
-float GestureInput::getHandLevel() const {
-    float rise = resting_level_ * GESTURE_RISE_RATIO;
-    if (rise < (float)GESTURE_MIN_RISE) rise = (float)GESTURE_MIN_RISE;
-    return resting_level_ + rise;
-}
-
-bool GestureInput::consumeWaveCounted() {
-    bool counted = wave_counted_flag_;
-    wave_counted_flag_ = false;
-    return counted;
-}
-
-// ==============================================================================
-// HAND-WAVE CONTROLS
-// ==============================================================================
-
-namespace GestureUI {
-
-static const uint8_t WAVES_CALIBRATE_IR = 5;
-static const uint8_t WAVES_CLEAR_MAZE   = 6;
-
-static GestureInput s_input;
-
-void restart() {
-    s_input.reset(millis());
-}
-
-// Rapid-blink countdown. Returns false if the operator covered the sensors to cancel.
-static bool countdown(StatusLED::Color color, uint32_t duration_ms) {
-    uint32_t start_ms = millis();
-    while (millis() - start_ms < duration_ms) {
-        bool led_on = ((millis() - start_ms) / 100) % 2 == 0;
-        StatusLED::set(led_on ? color : StatusLED::OFF);
-
-        RobotTelemetry telemetry;
-        if (getTelemetry(telemetry)) {
-            s_input.update(telemetry.ir.front_center, millis());
-        }
-        if (s_input.isHandPresent()) {
-            Serial.println("[UI] Cancelled by hand.");
-            StatusLED::flash(StatusLED::RED, 2, 100);
-            return false;
-        }
-        delay(20);
-    }
-    return true;
-}
-
-static void perform(uint8_t waves) {
-    Serial.printf("[UI] Counted %d hand wave(s).\n", waves);
-
-    if (waves >= 1 && waves <= Actions::MODE_COUNT) {
-        Actions::RunMode mode = (Actions::RunMode)(waves - 1);
-        Actions::selectMode(mode);
-        StatusLED::flash(Actions::modeColor(mode), waves, 150);
-        if (mode != Actions::MODE_SEARCH) {
-            // Speed tier the run will use: 1, 2, or 3 blue blinks
-            delay(300);
-            StatusLED::flash(StatusLED::BLUE, Actions::getSpeedTier(), 150);
-        }
-        if (countdown(Actions::modeColor(mode), GESTURE_LAUNCH_DELAY_MS)) {
-            Actions::launchSelectedRun();
-        }
-    } else if (waves == WAVES_CALIBRATE_IR) {
-        StatusLED::flash(StatusLED::YELLOW, waves, 150);
-        if (countdown(StatusLED::YELLOW, GESTURE_LAUNCH_DELAY_MS)) {
-            Actions::calibrateIR();
-        }
-    } else if (waves == WAVES_CLEAR_MAZE) {
-        Actions::clearSavedMaze();
-    } else {
-        StatusLED::flash(StatusLED::RED, 2, 100); // No action for that many waves
-    }
-
-    Actions::showSelectedMode();
-    restart();
-}
-
-void describe(char* buf, size_t size, const IRReadings& ir) {
-    snprintf(buf, size, "WAVES: front sensors read %d now (FL=%d FR=%d), %.0f at rest, a hand must exceed %.0f. Hand %s, %d wave(s) counted so far",
-             (int)ir.front_center, (int)ir.front_left, (int)ir.front_right,
-             s_input.getRestingLevel(), s_input.getHandLevel(),
-             s_input.isHandPresent() ? "SEEN" : "not seen", (int)s_input.getPendingCount());
-}
-
-void update(const IRReadings& ir) {
-    static bool hand_was_present = false;
-    uint8_t waves = s_input.update(ir.front_center, millis());
-
-    // Say on the serial monitor what is being seen, so waves can be checked without the LED
-    if (s_input.isHandPresent() != hand_was_present) {
-        hand_was_present = s_input.isHandPresent();
-        if (hand_was_present) Serial.printf("[UI] Hand seen (front sensors read %d)\n", (int)ir.front_center);
-    }
-
-    if (s_input.consumeWaveCounted()) {
-        Serial.printf("[UI] Wave %d counted\n", (int)s_input.getPendingCount());
-        // Blink white so the operator can see each wave being counted
-        StatusLED::set(StatusLED::WHITE);
-        delay(60);
-        Actions::showSelectedMode();
-    }
-
-    if (waves > 0) {
-        perform(waves);
-    }
-}
-
-} // namespace GestureUI
+#include "ui/status_led/status_led.h"
+#include "ui/actions/actions.h"
+#include "ui/gestures/gestures.h"
+#include "ui/console/console.h"
+#include "wireless/ble_debug/ble_debug.h"
+#include "wireless/wifi_ota/wifi_ota.h"
 
 // ==============================================================================
 // TEXT COMMAND CONSOLE
@@ -446,8 +70,15 @@ static void handle(String cmd, Source source) {
     // ---------------------------------------------------------------- Phone app buttons
     // Added at the owner's request (2026-10-07). Only in builds with a radio: the competition
     // build has none of these, so there a run can still only be started by hand waves.
-    if (cmd == "start" || cmd == "speedrun") {
+    // "speedrun" uses the speed tier; "speedrun 45" runs this one at 45 % of full speed (10..100),
+    // which is what the app's speed slider sends.
+    if (cmd == "start" || cmd.startsWith("speedrun")) {
         if (running) { reply("ERR: ALREADY_RUNNING"); return; }
+        if (cmd != "start") {
+            const long percent = cmd.substring(8).toInt(); // 0 when no number was given
+            if (percent != 0 && (percent < 10 || percent > 100)) { reply("ERR: SPEED MUST BE 10..100 PERCENT"); return; }
+            Actions::setNextSpeedRunPercent((uint8_t)percent);
+        }
         if (cmd == "start") {
             reply("Calibrating the IR sensors, then starting the search...");
             if (!Actions::calibrateIR()) reply("IR calibration failed here; using the stored / default levels.");
@@ -459,9 +90,26 @@ static void handle(String cmd, Source source) {
         reply("ACK: STARTED");
         return;
     }
+    // After a speed run: drive back to the start cell and face into the maze, ready to go again
+    if (cmd == "return") {
+        if (running) { reply("ERR: ALREADY_RUNNING"); return; }
+        reply(Actions::returnToStart() ? "ACK: RETURNING TO THE START CELL"
+                                       : "ERR: ONLY AFTER A SPEED RUN HAS FINISHED AT THE GOAL (otherwise the robot does not know where it is)");
+        return;
+    }
     if (cmd == "calib") {
         if (running) { reply("ERR: CANNOT_CALIB_WHILE_RUNNING"); return; }
-        reply(Actions::calibrateIR() ? "ACK: CALIB SUCCESS" : "ERR: CALIB FAILED");
+        // The owner calibrates in the start cell facing BACKWARDS, at its back wall, so the
+        // front sensors have a real wall to measure. Then the robot turns round by itself and
+        // is ready to start. It stays where it is if the calibration failed.
+        if (!Actions::calibrateIR()) { reply("ERR: CALIB FAILED (not turning round)"); return; }
+        MotionCommand turn = {};
+        turn.action = ACTION_TURN_AROUND_180;
+        turn.param_value = 180.0f;
+        turn.max_speed_mm_s = SEARCH_TURN_SPEED_DEG_S;  // deg/s for turns
+        turn.acceleration = SEARCH_TURN_ACCEL_DEG_S2;
+        xQueueSend(g_motion_cmd_queue, &turn, 0);
+        reply("ACK: CALIB SUCCESS. Turning round to face into the maze.");
         return;
     }
     if (cmd == "clear") {
@@ -470,7 +118,117 @@ static void handle(String cmd, Source source) {
         reply("ACK: MAZE CLEARED");
         return;
     }
+    // Turn test: spin 45° on the spot, left or right, with no navigation. For checking that the
+    // robot turns the way it is told and by the right amount. The heading is NOT zeroed between
+    // presses, so two left turns should read 90: each press aims for the next exact multiple of
+    // 45° (see the grid snapping in MotionController::executeCommand), which is how the maze
+    // moves avoid adding up their errors. "resetall" zeroes the heading; do that after moving
+    // the robot by hand, or it will first turn back to where it was.
+    if (cmd == "left45" || cmd == "right45") {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        MotionCommand turn = {};
+        turn.action = (cmd == "left45") ? ACTION_TURN_LEFT_45 : ACTION_TURN_RIGHT_45;
+        turn.param_value = 45.0f;
+        turn.max_speed_mm_s = SEARCH_TURN_SPEED_DEG_S;  // deg/s for turns
+        turn.acceleration = SEARCH_TURN_ACCEL_DEG_S2;
+        xQueueSend(g_motion_cmd_queue, &turn, 0);
+        reply(cmd == "left45" ? "Turning 45 degrees LEFT (anticlockwise seen from above; heading should go UP to the next multiple of 45)."
+                              : "Turning 45 degrees RIGHT (clockwise seen from above; heading should go DOWN to the next multiple of 45).");
+        return;
+    }
+
+    // The two ways the SEARCH turns 90 degrees, on their own, so each can be checked like the
+    // 45-degree test above:
+    //   left90 / right90          the turn on the spot it makes at a cell centre. Same control
+    //                             code as the 45-degree test, only the angle differs.
+    //   curveleft / curveright    the smooth 90-degree curve it drives while rolling, when the
+    //                             look-ahead has seen the gap in time. Different code: the robot
+    //                             drives an arc (about 95 mm forward and 95 mm sideways) and the
+    //                             heading target follows the planned distance along it. Here it
+    //                             starts and ends at rest; give it room.
+    if (cmd == "left90" || cmd == "right90" || cmd == "curveleft" || cmd == "curveright") {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        const bool left = (cmd == "left90" || cmd == "curveleft");
+        MotionCommand move = {};
+        if (cmd == "left90" || cmd == "right90") {
+            move.action = left ? ACTION_TURN_LEFT_90 : ACTION_TURN_RIGHT_90;
+            move.param_value = 90.0f;
+            move.max_speed_mm_s = SEARCH_TURN_SPEED_DEG_S;  // deg/s for turns
+            move.acceleration = SEARCH_TURN_ACCEL_DEG_S2;
+            reply(left ? "Turning 90 degrees LEFT on the spot (heading should go UP by 90)."
+                       : "Turning 90 degrees RIGHT on the spot (heading should go DOWN by 90).");
+        } else {
+            move.action = left ? ACTION_CURVE_LEFT_90 : ACTION_CURVE_RIGHT_90;
+            move.param_value = CURVE_90_LENGTH_MM;
+            move.max_speed_mm_s = SEARCH_CURVE_SPEED_MM_S;
+            move.acceleration = SEARCH_ACCEL_DEFAULT_MM_S2;
+            reply(left ? "Driving a smooth 90 degree curve to the LEFT (heading should go UP by 90)."
+                       : "Driving a smooth 90 degree curve to the RIGHT (heading should go DOWN by 90).");
+        }
+        xQueueSend(g_motion_cmd_queue, &move, 0);
+        return;
+    }
+
+    // The search, one move at a time: the same maze-solving code as START, except that the robot
+    // stops at every cell centre and waits. The first "cell" starts the search from the start
+    // cell; each one after that lets it make its next move (one cell forward, or one turn).
+    if (cmd == "cell") {
+        if (g_navigator->isWaitingForNextMove()) {
+            RobotTelemetry telemetry = {};
+            getTelemetry(telemetry);
+            NavigatorLock lock;
+            g_navigator->continueOneMove(telemetry.ir, g_motion_controller.getWallPreview());
+            return;
+        }
+        if (running) { reply("ERR: STILL_MOVING (or a run is in progress: STOP it first)"); return; }
+        reply("Calibrating the IR sensors, then searching one move at a time...");
+        if (!Actions::calibrateIR()) reply("IR calibration failed here; using the stored / default levels.");
+        Actions::selectMode(Actions::MODE_SEARCH);
+        Actions::launchSelectedRun(true);
+        return;
+    }
 #endif
+
+    // ---------------------------------------------------------------- Live tuning
+    // "tune" lists the gains, "tune <name> <value>" changes one at once, "tune save" keeps the
+    // current set through power-off, "tune reset" goes back to the values in the code.
+    if (cmd.startsWith("tune")) {
+        char name[12] = "";
+        float value = 0.0f;
+        if (cmd == "tune") {
+            reply("TUNING   now  (value in the code)");
+            for (int i = 0; i < MotionController::TUNE_COUNT; ++i) {
+                snprintf(buf, sizeof(buf), "  %-6s = %-9.6g (%.6g)  %s", MotionController::tuneName(i),
+                         g_motion_controller.getTune(i), MotionController::tuneDefault(i), MotionController::tuneDescription(i));
+                reply(buf);
+            }
+            reply("To keep a set for good, copy the numbers into kTune in control.cpp (flash can be wiped).");
+        } else if (running && !g_navigator->isWaitingForNextMove()) {
+            reply("ERR: CANNOT_TUNE_WHILE_RUNNING");
+        } else if (cmd == "tune save") {
+            g_motion_controller.saveToNVS();
+        } else if (cmd == "tune reset") {
+            g_motion_controller.forgetSavedTuning();
+        } else if (sscanf(cmd.c_str(), "tune %11s %f", name, &value) == 2) {
+            int index = -1;
+            for (int i = 0; i < MotionController::TUNE_COUNT; ++i) {
+                if (strcmp(name, MotionController::tuneName(i)) == 0) index = i;
+            }
+            if (index < 0) {
+                reply("ERR: no such setting (send 'tune' for the list)");
+            } else if (!g_motion_controller.setTune(index, value)) {
+                snprintf(buf, sizeof(buf), "ERR: %s refused, %g is outside the allowed range. It stays at %.6g.",
+                         name, value, g_motion_controller.getTune(index));
+                reply(buf);
+            } else {
+                snprintf(buf, sizeof(buf), "ACK: %s = %.6g (not saved yet: 'tune save' keeps it)", name, g_motion_controller.getTune(index));
+                reply(buf);
+            }
+        } else {
+            reply("ERR: USAGE 'tune', 'tune <name> <value>', 'tune save', 'tune reset'");
+        }
+        return;
+    }
 
     // ---------------------------------------------------------------- Debug helpers
     if (cmd == "resetall") {
@@ -514,6 +272,12 @@ static void handle(String cmd, Source source) {
         snprintf(buf, sizeof(buf), "IR wall levels: front %d, left %d, right %d (a reading above its level counts as a wall)",
                  (int)g_ir_sensors.getThresholdFront(), (int)g_ir_sensors.getThresholdL90(), (int)g_ir_sensors.getThresholdR90());
         reply(buf);
+        snprintf(buf, sizeof(buf), "Front sensors compared (0 = square to the wall, or not calibrated facing one): %.2f",
+                 g_ir_sensors.getFrontSkew());
+        reply(buf);
+        reply(g_ir_sensors.isFrontLevelMeasured()
+              ? "The front level was measured against a real wall."
+              : "The front level is ONLY A GUESS: calibrate once in the middle of a cell facing a wall (walls on both sides too).");
         return;
     }
     if (cmd == "resetenc" || cmd == "resetheading") {
@@ -556,6 +320,13 @@ static void handle(String cmd, Source source) {
                  g_imu.isGyroFlipped() ? ", gyro axis flipped" : "",
                  (unsigned int)g_motion_controller.getEncoderFaults(),
                  (unsigned long)telemetry.timing.loop_overruns);
+        reply(buf);
+        // The IMU is read 100 times a second (every 5th control tick), which is how often the
+        // BNO055 produces a new heading. These say how those reads are going, and why any fail.
+        snprintf(buf, sizeof(buf),
+                 "IMU READS: %lu good | failed: %lu no answer, %lu cut short, %lu impossible value | slowest read %lu us (a 2000 us control tick has to fit it)",
+                 (unsigned long)g_imu.getReadsOk(), (unsigned long)g_imu.getReadsNoAnswer(), (unsigned long)g_imu.getReadsShort(),
+                 (unsigned long)g_imu.getReadsBadValue(), (unsigned long)g_imu.getSlowestReadUs());
         reply(buf);
         return;
     }
@@ -674,7 +445,7 @@ static void handle(String cmd, Source source) {
 #endif
 
     if (cmd == "help") {
-        reply("Commands: start, speedrun, calib, clear (builds with a radio only); stop, status, health, ir, irtest [us], resetall, stream, perf, enc, log, log clear, motortrim [l r], motorinv [l r], "
+        reply("Commands: start, speedrun [percent], return, calib, clear, cell, left45, right45, left90, right90, curveleft, curveright (builds with a radio only); stop, status, health, tune [name value | save | reset], ir, irtest [us], resetall, stream, perf, enc, log, log clear, motortrim [l r], motorinv [l r], "
               "encinv [l r], resetenc, resetheading. Runs are started by hand waves only.");
         return;
     }
@@ -691,9 +462,10 @@ void poll() {
 #endif
 
 #if ENABLE_WIFI_OTA
-    WifiOTA::handle(); // Also services over-the-air firmware uploads
+    // (the Wi-Fi itself is serviced by telemetryTask; only the commands arrive here)
     if (WifiOTA::hasCommand()) {
         handle(WifiOTA::readCommand(), SOURCE_TELNET);
+        WifiOTA::commandDone();
     }
 #endif
 

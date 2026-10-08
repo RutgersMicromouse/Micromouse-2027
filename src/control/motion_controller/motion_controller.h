@@ -1,91 +1,15 @@
 #pragma once
 
-// Turns "move one cell" / "turn left 90" into motor effort, 500 times a second:
-//   PIDController      - generic PID loop
-//   TrapezoidalProfile - accelerate / cruise / decelerate target generator
-//   MotionController   - runs one MotionCommand at a time using the two above
+// Runs one MotionCommand at a time: turns "move one cell" / "turn left 90" into motor effort
 
 #include "config.h"
 #include "types.h"
-#include "hardware.h"
-
-// ==============================================================================
-// PID CONTROLLER
-// ==============================================================================
-
-#include <Arduino.h>
-
-class PIDController {
-public:
-    PIDController();
-    PIDController(float kp, float ki, float kd, float max_out, float max_integral = 0.0f);
-
-    void setGains(float kp, float ki, float kd);
-    void getGains(float& kp, float& ki, float& kd) const { kp = kp_; ki = ki_; kd = kd_; }
-    void setOutputLimits(float max_out, float max_integral = 0.0f);
-    void reset();
-
-    // Compute PID output given current error and time delta
-    float update(float error, float dt_seconds);
-
-private:
-    float kp_;
-    float ki_;
-    float kd_;
-    float max_output_;
-    float max_integral_;
-
-    float integral_;
-    float prev_error_;
-    float prev_derivative_;
-    bool first_run_;
-};
-
-// ==============================================================================
-// TRAPEZOIDAL PROFILE
-// ==============================================================================
-
-#include <Arduino.h>
-
-class TrapezoidalProfile {
-public:
-    TrapezoidalProfile();
-
-    // Start a new trapezoidal movement trajectory with optional initial and final boundary speeds
-    void start(float target_distance, float max_speed, float acceleration,
-               float start_speed = 0.0f, float end_speed = 0.0f);
-
-    // Compute target position and velocity for the current time step
-    void update(float dt_seconds);
-
-    float getTargetDistance() const;
-    float getTargetVelocity() const;
-    bool isFinished() const;
-    void stop();
-
-private:
-    float target_total_dist_;
-    float max_speed_;
-    float accel_;
-    float v_start_;
-    float v_peak_;
-    float v_end_;
-
-    float current_dist_;
-    float current_vel_;
-
-    float d_accel_;
-    float d_cruise_;
-    float d_decel_;
-
-    float t_accel_;
-    float t_cruise_;
-    float t_decel_;
-    float t_total_;
-    float elapsed_time_;
-
-    bool finished_;
-};
+#include "hardware/encoders/encoders.h"
+#include "hardware/motors/motors.h"
+#include "hardware/ir_sensors/ir_sensors.h"
+#include "hardware/imu/imu.h"
+#include "control/pid/pid.h"
+#include "control/profile/profile.h"
 
 // ==============================================================================
 // MOTION CONTROLLER
@@ -161,6 +85,23 @@ public:
     // What the 45° sensors saw of the cell ahead during the move that just finished
     WallPreview getWallPreview() const;
 
+    // Times a move that should have been followed at speed was not followed in time, so the
+    // robot braked instead of rolling on (a run that should be continuous but looks stop-and-go)
+    uint16_t getLateHandovers() const { return late_handovers_; }
+
+    // How far the heading is from where the current (or last) move was meant to end, in degrees
+    float getHeadingErrorDeg() const { return start_heading_deg_ + target_relative_angle_deg_ - accumulated_heading_deg_; }
+
+    // True once per straight, at the moment its look-ahead window closes: that is when the 45°
+    // sensors have made up their minds about the next cell's side walls. The navigation task
+    // then prints the verdict (printPreviewReport) so it can be watched on the phone app.
+    bool consumePreviewReady() {
+        bool ready = preview_ready_;
+        preview_ready_ = false;
+        return ready;
+    }
+    void printPreviewReport() const;
+
     // Recording of the most recent driving (only written while a move is running)
     const RunLog& getRunLog() const { return run_log_; }
     void clearRunLog() { run_log_.clear(); }
@@ -176,15 +117,39 @@ public:
     void setCalibrating(bool cal) { calibrating_motors_ = cal; }
 
     // Differential Wheel Speed Synchronization Lock Gain
-    void setSyncGain(float k_sync) { k_wheel_sync_ = k_sync; }
-    float getSyncGain() const { return k_wheel_sync_; }
+    void setSyncGain(float k_sync) { setTune(TUNE_K_SYNC, k_sync); }
+    float getSyncGain() const { return tune_[TUNE_K_SYNC]; }
 
     // Velocity PID Gain Tuning
-    void setLinearVelGains(float kp, float ki, float kd) { pid_linear_vel_.setGains(kp, ki, kd); }
+    void setLinearVelGains(float kp, float ki, float kd) { setTune(TUNE_V_KP, kp); setTune(TUNE_V_KI, ki); setTune(TUNE_V_KD, kd); }
     void getLinearVelGains(float& kp, float& ki, float& kd) const { pid_linear_vel_.getGains(kp, ki, kd); }
 
     // Flash NVS persistence for controller tuning
-    void saveToNVS();
+    // Live tuning: the gains that the phone app's Tuning card and the `tune` console command can
+    // change while the robot is switched on. The list itself is kTune in motion_controller.cpp,
+    // in this order. NEW ENTRIES GO AT THE END: the phone app and the saved set go by position
+    // and name, and main.cpp prints a few of these by number.
+    enum TuneIndex {
+        TUNE_V_KP, TUNE_V_KI, TUNE_V_KD,       // Speed loop (wheel speed -> motor effort)
+        TUNE_H_KP, TUNE_H_KI, TUNE_H_KD,       // Heading loop (heading error -> turning effort)
+        TUNE_K_SYNC, TUNE_ENC_A, TUNE_IMU_A, TUNE_DIST_K,
+        TUNE_D_KP, TUNE_D_KI, TUNE_D_KD,       // Distance loop (distance error -> speed)
+        TUNE_W_KP, TUNE_W_KI, TUNE_W_KD,       // Wall centring (IR error -> degrees of steering)
+        TUNE_FF_KS, TUNE_FF_KV, TUNE_FF_KA,    // Feedforward: effort to hold a speed without any loop
+        TUNE_TURN_FF,                          // Scale on the feedforward of turns and curves
+        TUNE_H_MAX, TUNE_H_IMAX,               // Heading loop: most effort it may ask for, and of that from I
+        TUNE_W_MAX,                            // Wall centring: most steering it may add, degrees
+        TUNE_W_GYRO,                           // Wall centring: damping from the turn rate
+        TUNE_COUNT
+    };
+    static const char* tuneName(int index);        // Short name; also the key it is saved under
+    static const char* tuneDescription(int index);
+    static float tuneDefault(int index);           // The value in the code
+    float getTune(int index) const;
+    bool setTune(int index, float value);          // false = outside the allowed range, not changed
+    void forgetSavedTuning();                      // Back to the values in the code, and wipe the saved set
+
+    void saveToNVS();                              // Keeps the current tuning through power-off
     bool loadFromNVS();
 
 private:
@@ -243,6 +208,8 @@ private:
     void samplePreview(float dist_in_move_mm);
     uint16_t preview_min_l_, preview_max_l_, preview_min_r_, preview_max_r_;
     uint16_t preview_samples_;
+    bool preview_reported_;        // This move's look-ahead verdict has already been announced
+    volatile bool preview_ready_;  // Set by the control task, taken by the navigation task
     uint16_t front_min_, front_max_, front_samples_;
     bool front_uses_left_sensor_;
 
@@ -252,6 +219,7 @@ private:
 
     // Settling at the end of a move that stops, and how long the robot has been idle since
     uint16_t settle_ticks_;
+    uint16_t settle_good_ticks_;       // Ticks in a row the robot has been on target and still
     uint16_t idle_ticks_;
 
     // Feedforward & logging
@@ -262,5 +230,11 @@ private:
     bool wall_centering_enabled_;
     volatile bool calibrating_motors_;
     volatile bool safety_stop_;
-    float k_wheel_sync_;
+    volatile uint16_t late_handovers_;
+    float tune_[TUNE_COUNT];       // The live tuning values (see TuneIndex); applyTuning() puts them to work
+    void applyTuning();
+
+    // Effort a wheel needs to hold `speed` while accelerating at `accel`:
+    // ff_ks (friction) + ff_kv * speed + ff_ka * acceleration, from the tuning table
+    float wheelFeedforward(float speed_mm_s, float accel_mm_s2) const;
 };

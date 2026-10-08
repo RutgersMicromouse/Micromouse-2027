@@ -1,8 +1,6 @@
 #pragma once
 
-// Wireless links (both can be switched off in config.h for competition):
-//   BLEDebug - Bluetooth text console + readable telemetry for the web dashboard
-//   WifiOTA  - Wi-Fi hotspot, the phone app, over-the-air firmware upload, Telnet console
+// Bluetooth text console + readable telemetry for the web dashboard
 
 #include "config.h"
 
@@ -59,36 +57,3 @@ public:
 };
 
 #endif // ENABLE_BLE_DEBUG
-
-// ==============================================================================
-// WI-FI OTA & TELNET
-// ==============================================================================
-
-#include <Arduino.h>
-
-#if ENABLE_WIFI_OTA
-
-class WifiOTA {
-public:
-    static void begin();
-    static void handle();
-    static bool isClientConnected();
-
-    // Wireless Telnet & Web Serial streaming
-    static void print(const char* str);
-    static void println(const char* str);
-    static void printf(const char* fmt, ...);
-
-    // Incoming wireless commands from Telnet or from the phone app
-    static bool hasCommand();
-    static String readCommand();
-
-    // The phone app (http://192.168.4.1). `provider` returns the robot's live numbers as a JSON
-    // object; appendWebLog feeds it the same text the serial monitor shows.
-    static void setStatusProvider(String (*provider)());
-    static void appendWebLog(const char* text, size_t length);
-
-    static IPAddress getIP();
-};
-
-#endif // ENABLE_WIFI_OTA

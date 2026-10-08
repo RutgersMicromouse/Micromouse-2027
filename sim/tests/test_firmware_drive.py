@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""
-Drives a simulated robot with the REAL firmware: the drivers (src/hardware.cpp), the motion
-controller (src/control.cpp) and the navigator (src/navigation.cpp), all compiled for this PC.
+Drives a simulated robot with the REAL firmware: the drivers (src/hardware/), the motion
+controller (src/control/) and the navigator (src/navigation/), all compiled for this PC.
 
 Where test_firmware_nav.py moves an ideal robot exactly as commanded, this one closes the loop
 the way the real robot does. A small physics model plays the hardware:
@@ -142,9 +142,12 @@ HARNESS = r'''
 #include <map>
 #include <string>
 #include <vector>
-#include "hardware.h"
-#include "control.h"
-#include "navigation.h"
+#include "hardware/encoders/encoders.h"
+#include "hardware/motors/motors.h"
+#include "hardware/ir_sensors/ir_sensors.h"
+#include "hardware/imu/imu.h"
+#include "control/motion_controller/motion_controller.h"
+#include "navigation/navigator/navigator.h"
 
 SerialStub Serial;
 bool g_verbose = false;
@@ -250,7 +253,7 @@ static const float WALL_HALF_MM       = 6.0f;
 
 // Where each IR sensor sits on the robot (mm ahead of the axle, mm to the left) and where it points
 // (degrees, left positive). Order: L90, L45, FL, FR, R45, R90.
-static const float SENSOR_AHEAD[6] = { 40.0f, 46.0f, 50.0f, 50.0f, 46.0f, 40.0f };
+static const float SENSOR_AHEAD[6] = { SIDE_SENSOR_AHEAD_MM, 46.0f, 50.0f, 50.0f, 46.0f, SIDE_SENSOR_AHEAD_MM }; // 90° ones as config.h says
 static const float SENSOR_LEFT[6]  = { 28.0f, 20.0f, 10.0f, -10.0f, -20.0f, -28.0f };
 static const float SENSOR_AIM[6]   = { 90.0f, 45.0f, 0.0f, 0.0f, -45.0f, -90.0f };
 static const int EMITTER_PIN[6]  = { PIN_IR_E1, PIN_IR_E2, PIN_IR_E3, PIN_IR_E4, PIN_IR_E5, PIN_IR_E6 };
@@ -727,9 +730,11 @@ def main():
         exe = os.path.join(work, 'drive.exe')
         src = os.path.join(ROOT, 'src')
         command = compiler + ['-std=c++17', '-O2', '-D_USE_MATH_DEFINES', '-DMAZE_ACTIVE_SIZE=g_maze_size',
-                              '-I', os.path.join(work, 'stubs'), '-I', src, harness,
-                              os.path.join(src, 'hardware.cpp'), os.path.join(src, 'control.cpp'),
-                              os.path.join(src, 'navigation.cpp'), '-o', exe]
+                              '-I', os.path.join(work, 'stubs'), '-I', src, harness]
+        for folder in ('hardware', 'control', 'navigation'):
+            for path, _, names in sorted(os.walk(os.path.join(src, folder))):
+                command += sorted(os.path.join(path, name) for name in names if name.endswith('.cpp'))
+        command += ['-o', exe]
         print('Compiling the firmware drivers, motion controller and navigator for this PC...')
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:

@@ -10,7 +10,10 @@
 
 #include <functional>
 #include "robot.h"
-#include "ui.h"
+#include "ui/status_led/status_led.h"
+#include "ui/actions/actions.h"
+#include "ui/gestures/gestures.h"
+#include "ui/console/console.h"
 
 // ==============================================================================
 // DYNO TEST-STAND PROTOCOL (tools/dyno_station), commands start with "dyno"

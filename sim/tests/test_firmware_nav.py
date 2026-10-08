@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 r"""
-Runs the robot's REAL navigation code (src/navigation.cpp) on this PC.
+Runs the robot's REAL navigation code (src/navigation/) on this PC.
 
 Unlike the Python simulators next to it, this compiles the firmware's own Maze, Floodfill,
 Dijkstra and Navigator and drives them with an ideal robot: each MotionCommand the navigator
@@ -34,7 +34,7 @@ import tempfile
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 # ----------------------------------------------------------------------------------------------
-# Stand-ins for the ESP32 / Arduino headers that navigation.cpp includes
+# Stand-ins for the ESP32 / Arduino headers that the navigation code includes
 # ----------------------------------------------------------------------------------------------
 STUBS = {
     'Arduino.h': r'''
@@ -114,7 +114,7 @@ HARNESS = r'''
 #include <map>
 #include <string>
 #include <vector>
-#include "navigation.h"
+#include "navigation/navigator/navigator.h"
 
 SerialStub Serial;
 bool g_verbose = false;
@@ -338,7 +338,13 @@ static void execute(const MotionCommand& cmd) {
             sideWallsAhead(l, r, cx, cy, dir);
             bool front = trueWall(cx, cy, dir);
             driveCurve(cmd.action == ACTION_CURVE_RIGHT_90 ? 90.0f : -90.0f, cmd.param_value);
-            if (g_robot.preview_enabled) { g_robot.preview.front_wall = front; g_robot.preview.front_open = !front; }
+            if (g_robot.preview_enabled) {
+                g_robot.preview.front_wall = front; g_robot.preview.front_open = !front;
+                // As the curve ends, the 45 degree sensors read the side walls of the cell being entered
+                sideWallsAhead(l, r, cx, cy, dir);
+                g_robot.preview.left_wall = l;   g_robot.preview.left_open = !l;
+                g_robot.preview.right_wall = r;  g_robot.preview.right_open = !r;
+            }
             return;
         }
         case ACTION_CURVE_LEFT_45:      driveCurve(-45.0f, cmd.param_value); break;
@@ -536,12 +542,21 @@ def find_compiler():
     return None
 
 
+def firmware_sources(*folders):
+    """Every .cpp file in the given folders of src/, including the component folders inside them."""
+    found = []
+    for folder in folders:
+        for path, _, names in os.walk(os.path.join(ROOT, 'src', folder)):
+            found += [os.path.join(path, name) for name in names if name.endswith('.cpp')]
+    return sorted(found)
+
+
 def build(compiler, work):
     """Compiles the firmware navigation code plus the harness."""
     exe = os.path.join(work, 'harness.exe')
     command = compiler + ['-std=c++17', '-O1', '-D_USE_MATH_DEFINES', '-DMAZE_ACTIVE_SIZE=g_maze_size',
                           '-I', os.path.join(work, 'stubs'), '-I', os.path.join(ROOT, 'src'),
-                          os.path.join(work, 'harness.cpp'), os.path.join(ROOT, 'src', 'navigation.cpp'), '-o', exe]
+                          os.path.join(work, 'harness.cpp')] + firmware_sources('navigation') + ['-o', exe]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         print(result.stdout + result.stderr)

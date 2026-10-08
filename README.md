@@ -10,15 +10,15 @@ Each bot in this repository lives on its own branch, named `release/<bot name>` 
 | :--- | :--- |
 | [`src/`](src/) | **The firmware: everything that goes on the robot, and nothing else.** |
 | [`src/config.h`](src/config.h) | Every pin, dimension, speed limit, and threshold. Start here when something on the robot changes. |
-| [`src/main.cpp`](src/main.cpp) | Start-up and the three tasks (500 Hz motion on core 1; navigation and telemetry on core 0). |
-| [`src/hardware.cpp`](src/hardware.cpp) | Drivers: encoders, motors, IR sensors, IMU. |
-| [`src/control.cpp`](src/control.cpp) | PID loops, speed profiles, and the motion controller (straights, smooth curves, diagonals). |
-| [`src/navigation.cpp`](src/navigation.cpp) | Maze map, floodfill search, Dijkstra speed-run solver, and the navigator (search stepping and speed-run planner). |
-| [`src/ui.cpp`](src/ui.cpp) | Status LED, hand-wave controls, and the debug console. |
-| [`src/wireless.cpp`](src/wireless.cpp) | Bluetooth and Wi-Fi, for debugging only. |
+| [`src/main.cpp`](src/main.cpp) | Start-up and the four tasks (500 Hz motion on core 1; navigation, operator console and telemetry on core 0). |
+| [`src/hardware/`](src/hardware/) | Drivers, one folder each: `encoders/`, `motors/`, `ir_sensors/`, `imu/`. Every folder holds that part's `.h` and `.cpp`. |
+| [`src/control/`](src/control/) | `pid/`, `profile/` (speed ramps), `motion_controller/` (starting a move, and `motion_update.cpp`, the 500 Hz loop: straights, smooth curves, diagonals). |
+| [`src/navigation/`](src/navigation/) | `maze/` (the wall map), `floodfill/` (search), `dijkstra/` (speed-run path), `navigator/` (with `navigator_search.cpp` and `navigator_speedrun.cpp`). |
+| [`src/ui/`](src/ui/) | `status_led/`, `actions/`, `gestures/` (hand waves), `console/` (debug commands). |
+| [`src/wireless/`](src/wireless/) | `ble_debug/`, `wifi_ota/` (with `web_pages.h`, the phone app), `debug_log/`. For debugging only. |
 | [`bench/`](bench/) | Bench tests (one file per peripheral, proven on the real robot) and the calibration commands. |
 | [`sim/`](sim/) | Desktop simulators, mazes, and Python tests (`sim/run_curve_sim.bat` launches the GUI). |
-| [`tools/`](tools/) | Browser dashboard for Bluetooth telemetry, and the dyno test-stand firmware. |
+| [`tools/`](tools/) | Browser dashboard for Bluetooth telemetry, the camera feed server (`camera_feeds/`), and the dyno test-stand firmware. |
 | [`docs/`](docs/) | [Operator manual](docs/INSTRUCTIONS.md) (controls, flashing, troubleshooting, engineering constraints) and the schematic. |
 | [`AGENTS.md`](AGENTS.md) | Full project context for AI assistants (and a good summary for humans). |
 
