@@ -263,6 +263,7 @@ const $ = id => document.getElementById(id);
 let next = 0, misses = 0;
 let done = 0;        // Commands the robot has taken so far (from its last answer)
 let waiting = null;  // The button whose command is still being carried out
+let logCarry = "";   // An unfinished line of robot output, waiting for its other half
 const accHeld = [0, 1, 2].map(() => ({ value: 0, since: 0 })); // Largest acceleration per axis, held 3 s
 
 // A button given here turns red until the robot has taken its command and has stopped moving
@@ -277,6 +278,13 @@ function send(command, button) {
   }
 }
 
+// Things done on this page that send no command are reported to the robot as notes. It prints
+// them as [APP] lines, so a recording of its output shows the order things were pressed in.
+function note(text) {
+  fetch("/note?t=" + encodeURIComponent(text)).catch(() => {});
+}
+note("page opened, " + window.innerWidth + "x" + window.innerHeight);
+
 $("start").onclick = () => send("start");
 $("stop").onclick = () => send("stop");
 // (the boxes that cover the page each have a STOP of their own, so the robot can always be stopped)
@@ -286,6 +294,7 @@ document.querySelectorAll("button[data-cmd]").forEach(b => b.onclick = () => sen
 try { $("speedPct").value = localStorage.getItem("speedPct") || 35; } catch (e) {}
 const showSpeed = () => { $("speedPctText").textContent = $("speedPct").value; };
 $("speedPct").oninput = () => { showSpeed(); try { localStorage.setItem("speedPct", $("speedPct").value); } catch (e) {} };
+$("speedPct").onchange = () => note("speed slider set to " + $("speedPct").value + " percent");
 showSpeed();
 $("speedrun").onclick = () => send("speedrun " + $("speedPct").value, $("speedrun"));
 // The verdict buttons. "It worked" is sent at once. "It failed" first asks what happened and
@@ -297,7 +306,7 @@ function verdict(word, note) {
   $("resultSent").textContent = "Sent: " + (word == "success" ? "it worked" : "it failed") + " (" + new Date().toLocaleTimeString() + ")";
 }
 $("failSend").onclick = () => { verdict("fail", $("failNote").value); $("failNote").value = ""; $("failBox").style.display = "none"; };
-$("failCancel").onclick = () => { $("failBox").style.display = "none"; };
+$("failCancel").onclick = () => { $("failBox").style.display = "none"; note("It failed: cancelled without sending"); };
 $("failNote").onkeydown = e => { if (e.key == "Enter") $("failSend").onclick(); };
 // The two maze boxes: ticking one sends "maze 3" or "maze 16". They follow what the robot reports,
 // so if it refuses (during a run) the tick jumps back. Held still for a moment after a tap.
@@ -307,14 +316,16 @@ mazeBoxes.forEach(box => box.onchange = () => { mazeTapped = Date.now(); send("m
 // The battery warning that covers the page (owner's request): see poll()
 const BATTERY_LOW_V = 3.65;
 let lowBatSince = 0, lowBatHiddenUntil = 0; // When it first read low (0 = it is not low)
-$("lowBatOk").onclick = () => { lowBatHiddenUntil = Date.now() + 120000; $("lowBat").style.display = "none"; };
+$("lowBatOk").onclick = () => { lowBatHiddenUntil = Date.now() + 120000; $("lowBat").style.display = "none"; note("battery warning hidden for 2 minutes at " + $("lowBatVolts").textContent + " V"); };
 // The Yes / No box for a suggested change (see "ask" in the status reply)
-let askShown = 0, askAnswered = 0;
+// A question is known by its number AND its words: the robot numbers them from 1 again after
+// every restart, so the number alone made the page skip a new question it took for an old one.
+let askShown = "", askAnswered = "";
 const answerAsk = word => { askAnswered = askShown; $("ask").style.display = "none"; send(word); };
 $("askYes").onclick = () => answerAsk("yes");
 $("askNo").onclick = () => answerAsk("no");
 $("resultGood").onclick = () => verdict("success");
-$("resultBad").onclick = () => { $("failBox").style.display = "block"; $("failNote").focus(); };
+$("resultBad").onclick = () => { $("failBox").style.display = "block"; $("failNote").focus(); note("It failed pressed, typing what happened"); };
 $("clear").onclick = () => { $("log").textContent = ""; };
 // The Tuning card. Same names, in the same order, as kTune in control.cpp: keep the two in step.
 const TUNE = [["v_kp", "Speed loop P"], ["v_ki", "Speed loop I"], ["v_kd", "Speed loop D"],
@@ -333,6 +344,7 @@ TUNE.forEach(([name, label]) => {
   $("tune").insertAdjacentHTML("beforeend", "<div>" + label + " <span class=dim>" + name + "</span></div>" +
     "<input id=t_" + name + " inputmode=decimal autocomplete=off>");
   $("t_" + name).oninput = e => e.target.classList.add("changed");
+  $("t_" + name).onchange = e => note("tuning box " + name + " typed " + e.target.value.trim() + " (not applied yet)");
 });
 const pause = ms => new Promise(done => setTimeout(done, ms));
 // The robot takes one command at a time, so changed values are sent one after another
@@ -513,9 +525,15 @@ function show(d) {
     if (!box.classList.contains("changed") && document.activeElement !== box) box.value = s.tune[i];
   });
   if (d.log) {
+    // The 5-a-second [TEL] sensor line is for the recording on the computer; here it would bury
+    // everything else, so it is left out. Text arrives in pieces, so a line is only judged once
+    // it is whole (logCarry holds the unfinished end of the last piece).
+    const lines = (logCarry + d.log).split("\n");
+    logCarry = lines.pop();
+    const text = lines.filter(line => !line.startsWith("[TEL]")).map(line => line + "\n").join("");
     const log = $("log");
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-    log.textContent = (log.textContent + d.log).slice(-30000);
+    if (text) log.textContent = (log.textContent + text).slice(-30000);
     if (atBottom) log.scrollTop = log.scrollHeight;
   }
   next = d.next;
@@ -536,7 +554,8 @@ async function poll() {
     }
     // A suggested change waiting for Yes or No covers the page until it is answered
     const ask = (status.status || {}).ask;
-    if (ask && ask.id != askAnswered) { $("askText").textContent = ask.text; askShown = ask.id; $("ask").style.display = "block"; }
+    const askKey = ask ? ask.id + ":" + ask.text : "";
+    if (ask && askKey != askAnswered) { $("askText").textContent = ask.text; askShown = askKey; $("ask").style.display = "block"; }
     else $("ask").style.display = "none";
     if (Date.now() - mazeTapped > 1500) mazeBoxes.forEach(box => { box.checked = (box.value == (status.status || {}).n); });
     misses = 0;

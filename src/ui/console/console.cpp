@@ -55,7 +55,10 @@ static void handle(String cmd, Source source) {
     if (cmd.length() == 0) return;
 
     s_source = source;
-    Serial.printf("[CMD] Received: '%s'\n", cmd.c_str());
+    // (says where it came from, so a recording shows what was pressed in the app and what was
+    // sent by the computer over Bluetooth)
+    Serial.printf("[CMD] Received (%s): '%s'\n",
+                  source == SOURCE_TELNET ? "app" : (source == SOURCE_BLE ? "Bluetooth" : "USB"), cmd.c_str());
 
     const bool running = Actions::isRunActive();
     char buf[200];

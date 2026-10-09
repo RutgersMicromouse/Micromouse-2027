@@ -335,9 +335,14 @@ void Navigator::stepAtCellEdge(const IRReadings& ir, const WallPreview& preview)
         curve_entry_dir_ = heading;
         curve_cell_was_known_ = known;
 
+        // Every curve ends at the chained-curve speed. If another curve follows at once (curves
+        // are still chained, a U-turn included) that one is then driven that slowly from start to
+        // finish, which gives the heading loop time to pull the robot back onto the planned line;
+        // a straight that follows simply speeds up again.
+        const float exit_v = fminf(v, SEARCH_CHAINED_CURVE_SPEED_MM_S);
         sendMotionCommand((best == right) ? ACTION_CURVE_RIGHT_90 : ACTION_CURVE_LEFT_90,
-                          CURVE_90_LENGTH_MM, v, SEARCH_ACCEL_DEFAULT_MM_S2, false, current_search_speed_, v);
-        current_search_speed_ = v;
+                          CURVE_90_LENGTH_MM, v, SEARCH_ACCEL_DEFAULT_MM_S2, false, current_search_speed_, exit_v);
+        current_search_speed_ = exit_v;
 
         // The curve ends on the entry edge of the neighbouring cell
         pose_.current_dir = best;

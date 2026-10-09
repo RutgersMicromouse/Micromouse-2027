@@ -91,6 +91,21 @@ static void handleAppCommand() {
     s_web_server.send(200, "text/plain", "ok");
 }
 
+// GET /note?t=text  ->  printed as an [APP] line and nothing else. The page reports what was done
+// on it that sends no command (page opened, slider moved, a box opened or closed), so that a
+// recording of the robot's output shows the order things were pressed in. It does not go through
+// the console, so a note can never get in the way of a command such as STOP.
+static void handleAppNote() {
+    String note = s_web_server.arg("t");
+    note.trim();
+    if (note.length() > 0 && note.length() < 200) {
+        note.replace('\n', ' ');
+        note.replace('\r', ' ');
+        Serial.printf("[APP] %s\n", note.c_str());
+    }
+    s_web_server.send(200, "text/plain", "ok");
+}
+
 void WifiOTA::begin() {
     Serial.println("[WIFI] Initializing Wireless Network for OTA & Debugging...");
 
@@ -152,6 +167,7 @@ void WifiOTA::begin() {
     });
     s_web_server.on("/data", HTTP_GET, handleAppData);
     s_web_server.on("/cmd", HTTP_GET, handleAppCommand);
+    s_web_server.on("/note", HTTP_GET, handleAppNote);
 
     s_web_server.on("/update", HTTP_GET, []() {
         s_web_server.send(200, "text/html", UPDATE_INDEX_HTML);

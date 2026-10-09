@@ -164,7 +164,10 @@
 // The same idea for single cells and curves, which is what speeds up the way back in a small maze:
 // driving one cell into a cell it has visited, the robot may reach SEARCH_KNOWN_SPEED_MM_S in
 // between, and it curves through a visited cell at this instead of SEARCH_CURVE_SPEED_MM_S.
-#define SEARCH_KNOWN_CURVE_SPEED_MM_S 140.0f   // Smooth 90° turn through a cell already visited (mm/s)
+// (140 until 2026-10-09: on the way back in the 5x5 a right-left-left chain of curves at 140 drifted
+// wide and hit a wall. The owner wants the curves kept chained, but slower, so the robot can adjust.)
+#define SEARCH_KNOWN_CURVE_SPEED_MM_S 100.0f   // Smooth 90° turn through a cell already visited (mm/s)
+#define SEARCH_CHAINED_CURVE_SPEED_MM_S 80.0f  // A curve that follows straight after another curve, a U-turn included (mm/s)
 
 // Speedrun Kinematic Limits for N20 12V 30:1 Gearmotors (Max theoretical no-load ~700 mm/s)
 #define SPEEDRUN_CRUISE_SPEED_MM_S    500.0f   // High-speed straight cruise speed for N20 (mm/s)
@@ -243,9 +246,11 @@
 // lost distance added up from wall to wall (owner approved the change from the app).
 #define FRONT_STOP_EXTRA_MM    0.0f
 // How fast the front reading falls off with distance: reading ~ 1 / distance ^ this. 2 would be
-// the textbook inverse-square rule; the robot's readings on 2026-10-09 fitted about 1.5 (one run:
-// measure `ir` at a cell centre facing a wall and one cell further back to pin it down).
-#define FRONT_FALLOFF_EXPONENT 1.5f
+// the textbook inverse-square rule. First set to 1.5 from one run; the robot still stopped short,
+// and four readings taken one cell back from a wall fitted 1.1 to 1.3, so it is 1.2 now (owner's
+// go-ahead, 2026-10-09). Lower it if the robot still stops short of front walls, raise it if it
+// gets too close. To pin it down: `ir` at a cell centre facing a wall, and one cell further back.
+#define FRONT_FALLOFF_EXPONENT 1.2f
 #define FRONT_FIX_GAIN       1.0f     // Share of the measured error that is corrected (was 0.7 while the distance rule was off)
 #define FRONT_FIX_MIN_MM       3.0f     // Smaller errors than this are left alone
 #define FRONT_FIX_MAX_MM       20.0f    // Never shuffle further than this, whatever the sensors say

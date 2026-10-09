@@ -69,7 +69,7 @@ class Recorder:
                         results.write('%s %s\n' % (datetime.date.today().isoformat(), stamped))
 
 
-async def record(commands):
+async def record(commands, stream=False):
     recorder = Recorder()
     recorder.note('Recording to ' + recorder.path)
     first_connection = True
@@ -86,7 +86,9 @@ async def record(commands):
             async with BleakClient(robot, disconnected_callback=lambda _client: gone.set()) as link:
                 recorder.note('Connected.')
                 await link.start_notify(UART_TX, recorder.received)
-                for command in (commands if first_connection else []):
+                # The sensor stream is switched off whenever the robot restarts, so it is asked for
+                # again on every connection; the other commands are sent once only
+                for command in (['stream on'] if stream else []) + (commands if first_connection else []):
                     recorder.note('Sending: ' + command)
                     await link.write_gatt_char(UART_RX, (command + '\n').encode(), response=False)
                     await asyncio.sleep(0.5)
@@ -122,9 +124,8 @@ def main():
     parser.add_argument('commands', nargs='*', help='console commands to send once connected, e.g. status ir')
     parser.add_argument('--stream', action='store_true', help='switch on the 5-per-second [TEL] sensor line')
     args = parser.parse_args()
-    commands = (['stream on'] if args.stream else []) + args.commands
     try:
-        asyncio.run(record(commands))
+        asyncio.run(record(args.commands, args.stream))
     except KeyboardInterrupt:
         print('Stopped.')
 
