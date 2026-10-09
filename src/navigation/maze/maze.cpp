@@ -7,7 +7,7 @@
 #include <Preferences.h>
 
 // Flash storage name. The practice maze keeps its own map so it never mixes with a real one.
-#define MAZE_STORAGE ((MAZE_ACTIVE_SIZE == 16) ? "maze_votes" : "maze_small")
+#define MAZE_STORAGE ((MAZE_ACTIVE_SIZE == 16) ? "maze_votes" : (MAZE_ACTIVE_SIZE == 5) ? "maze_5x5" : "maze_small")
 
 #ifdef MAZE_SIZE_SWITCHABLE
 // The maze size in use (see MAZE_ACTIVE_SIZE in config.h), switchable while the robot is on
@@ -18,7 +18,7 @@ void Maze::loadSizeFromNVS() {
     prefs.begin("maze_cfg", true);
     const int size = prefs.getInt("size", MAZE_DEFAULT_SIZE);
     prefs.end();
-    g_maze_size = (size == 16) ? 16 : 3;
+    g_maze_size = (size == 16 || size == 5) ? size : 3;
 }
 
 void Maze::saveSizeToNVS() {

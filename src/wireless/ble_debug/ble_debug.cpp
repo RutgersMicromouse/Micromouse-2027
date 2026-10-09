@@ -85,7 +85,7 @@ static bool s_device_connected = false;
 // heap allocation out of the critical sections.
 // =============================================================
 
-#define BLE_CMD_MAX_LEN 64
+#define BLE_CMD_MAX_LEN 200
 
 static portMUX_TYPE s_rx_mux = portMUX_INITIALIZER_UNLOCKED;
 

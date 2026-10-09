@@ -239,8 +239,14 @@
 // Where the robot stands in front of a wall: this much further from the wall than the cell centre
 // (owner's request, 2026-10-08). Both the stop above and the front-wall check aim for that point,
 // and the check's printed "short of / past the cell centre" is measured from it. 0 = the centre.
-#define FRONT_STOP_EXTRA_MM    5.0f
-#define FRONT_FIX_GAIN       0.7f     // Share of the measured error that is corrected (the distance is an estimate)
+// Back to 0 on 2026-10-09 (was 5): the robot was by then stopping well short of the centre, and the
+// lost distance added up from wall to wall (owner approved the change from the app).
+#define FRONT_STOP_EXTRA_MM    0.0f
+// How fast the front reading falls off with distance: reading ~ 1 / distance ^ this. 2 would be
+// the textbook inverse-square rule; the robot's readings on 2026-10-09 fitted about 1.5 (one run:
+// measure `ir` at a cell centre facing a wall and one cell further back to pin it down).
+#define FRONT_FALLOFF_EXPONENT 1.5f
+#define FRONT_FIX_GAIN       1.0f     // Share of the measured error that is corrected (was 0.7 while the distance rule was off)
 #define FRONT_FIX_MIN_MM       3.0f     // Smaller errors than this are left alone
 #define FRONT_FIX_MAX_MM       20.0f    // Never shuffle further than this, whatever the sensors say
 
@@ -320,6 +326,7 @@
 #define MAZE_HEIGHT            16
 
 // How much of that grid is actually maze.
+//   5  = a 5x5 practice maze in the same corner: start cell (0,0), goal = the centre cell (2,2).
 //   3  = the 3x3 practice maze in the bottom-left corner: start cell (0,0), goal = the centre
 //        cell (1,1), everything outside it treated as solid wall.
 //   16 = a full competition maze, goal = the four centre cells.
@@ -328,7 +335,7 @@
 // when moving on to a full maze with the `main` build.
 //
 // Since 2026-10-08 (owner's request) the size can be switched while the robot is on: the app's
-// maze button, or "maze 3" / "maze 16" on the console. The choice is kept in flash, and each size
+// maze boxes, or "maze 3" / "maze 5" / "maze 16" on the console. The choice is kept in flash, and each size
 // keeps its own saved map. MAZE_DEFAULT_SIZE is only what a robot that has never been told uses.
 // A build that sets MAZE_ACTIVE_SIZE itself (`competition` = 16, `test3x3` = 3) is fixed at that.
 #ifndef MAZE_ACTIVE_SIZE

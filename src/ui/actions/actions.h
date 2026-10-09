@@ -56,7 +56,7 @@ bool calibrateIR();
 // Forget the maze saved in flash
 void clearSavedMaze();
 
-// Switch between the 3x3 practice maze (3) and a full maze (16). Each keeps its own saved map.
+// Switch between the 3x3 and 5x5 practice mazes (3, 5) and a full maze (16). Each keeps its own saved map.
 // Returns false during a run, for any other size, or in a build fixed at one size.
 bool setMazeSize(uint8_t size);
 

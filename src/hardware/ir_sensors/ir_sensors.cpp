@@ -154,12 +154,15 @@ void IRSensors::update() {
 
     // Distance to a front wall, relative to the cell centre. The wall level is 40 % of what the
     // front sensors read at a cell centre during calibration, so that reading is level / 0.40.
-    // Reading falls with distance squared, so distance = centred distance * sqrt(centred / now).
+    // The reading falls off with distance to the power FRONT_FALLOFF_EXPONENT, so
+    // distance = centred distance * (centred / now) ^ (1 / exponent). (It used the square rule
+    // here; on the robot that put the wall nearer than it was and every stop came up short.)
     readings_.front_offset_mm = 0.0f;
     if (front_level_measured_ && readings_.wall_front) {
         const float centred_reading = (float)thresh_front_ / 0.40f;
+        const float now = (readings_.front_center > 1) ? (float)readings_.front_center : 1.0f;
         readings_.front_offset_mm = FRONT_SENSOR_TO_WALL_MM *
-                                    (relativeDistance(readings_.front_center, (uint16_t)centred_reading) - 1.0f)
+                                    (powf(centred_reading / now, 1.0f / FRONT_FALLOFF_EXPONENT) - 1.0f)
                                     - FRONT_STOP_EXTRA_MM; // Aim to stand this much further back than the centre
     }
 

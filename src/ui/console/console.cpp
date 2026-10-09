@@ -5,6 +5,7 @@
 #include "ui/gestures/gestures.h"
 #include "ui/console/console.h"
 #include "ui/run_result/run_result.h"
+#include "ui/proposal/proposal.h"
 #include "wireless/ble_debug/ble_debug.h"
 #include "wireless/wifi_ota/wifi_ota.h"
 
@@ -48,8 +49,9 @@ static bool parseTwoFlags(const String& cmd, bool& a, bool& b) {
 }
 
 static void handle(String cmd, Source source) {
-    cmd.toLowerCase();
     cmd.trim();
+    const String typed = cmd; // Before lower-casing, for the commands that carry a sentence
+    cmd.toLowerCase();
     if (cmd.length() == 0) return;
 
     s_source = source;
@@ -295,12 +297,12 @@ static void handle(String cmd, Source source) {
     }
 
     // ---------------------------------------------------------------- Maze size
-    // "maze" says which maze the robot is set up for; "maze 3" / "maze 16" switches (the app's
+    // "maze" says which maze the robot is set up for; "maze 3" / "maze 5" / "maze 16" switches (the app's
     // maze button). Starts nothing. Each size keeps its own saved map.
     if (cmd == "maze" || cmd.startsWith("maze ")) {
         const long size = cmd.substring(4).toInt();
         if (cmd != "maze" && !Actions::setMazeSize((uint8_t)size)) {
-            reply("ERR: MAZE SIZE NOT CHANGED (use 'maze 3' or 'maze 16', not during a run; the competition and test3x3 builds are fixed)");
+            reply("ERR: MAZE SIZE NOT CHANGED (use 'maze 3', 'maze 5' or 'maze 16', not during a run; the competition and test3x3 builds are fixed)");
         }
         snprintf(buf, sizeof(buf), "MAZE: %dx%d", (int)MAZE_ACTIVE_SIZE, (int)MAZE_ACTIVE_SIZE);
         reply(buf);
@@ -312,9 +314,21 @@ static void handle(String cmd, Source source) {
     // app's two buttons. Starts nothing; it only prints what was in force (see RunResult).
     if (cmd.startsWith("success") || cmd.startsWith("fail")) {
         const bool success = cmd.startsWith("success");
-        String note = cmd.substring(success ? 7 : 4);
+        String note = typed.substring(success ? 7 : 4); // As typed, capitals and all
         note.trim();
         RunResult::report(success, note.c_str());
+        return;
+    }
+
+    // ---------------------------------------------------------------- Question for the operator
+    // A suggested change, shown in the phone app with Yes and No buttons (see Proposal). The text
+    // arrives in pieces because a command line is short. Starts nothing on the robot.
+    if (cmd == "ask new")        { Proposal::startNew(); return; }
+    if (cmd.startsWith("ask+ ")) { Proposal::append(typed.c_str() + 5); return; }
+    if (cmd == "ask show")       { Proposal::show(); return; }
+    if (cmd == "ask clear")      { Proposal::clear(); reply("ACK: QUESTION TAKEN DOWN"); return; }
+    if (cmd == "yes" || cmd == "no") {
+        if (!Proposal::answer(cmd == "yes")) reply("ERR: NO QUESTION IS ON SHOW");
         return;
     }
 

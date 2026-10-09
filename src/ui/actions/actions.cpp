@@ -159,7 +159,7 @@ void clearSavedMaze() {
 
 bool setMazeSize(uint8_t size) {
 #ifdef MAZE_SIZE_SWITCHABLE
-    if (isRunActive() || (size != 3 && size != 16)) return false;
+    if (isRunActive() || (size != 3 && size != 5 && size != 16)) return false;
     {
         NavigatorLock lock;
         g_navigator->changeMazeSize(size);

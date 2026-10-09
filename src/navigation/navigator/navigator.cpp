@@ -30,11 +30,11 @@ Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_que
 }
 
 #ifdef MAZE_SIZE_SWITCHABLE
-// Switch between the 3x3 practice maze and a full 16x16 one. Each size has its own saved map,
+// Switch between the 3x3 and 5x5 practice mazes and a full 16x16 one. Each size has its own saved map,
 // which is loaded here; the robot is taken to be in the start cell facing into the maze.
 // (Never called during a run: Actions::setMazeSize refuses.)
 void Navigator::changeMazeSize(int size) {
-    g_maze_size = (size == 16) ? 16 : 3;
+    g_maze_size = (size == 16 || size == 5) ? size : 3;
     Maze::saveSizeToNVS();
     begin();
     pose_.cell_x = 0;

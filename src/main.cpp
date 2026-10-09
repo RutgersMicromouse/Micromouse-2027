@@ -31,6 +31,7 @@
 #include "ui/actions/actions.h"
 #include "ui/gestures/gestures.h"
 #include "ui/console/console.h"
+#include "ui/proposal/proposal.h"
 #include "wireless/ble_debug/ble_debug.h"
 #include "wireless/wifi_ota/wifi_ota.h"
 
@@ -161,7 +162,7 @@ static String buildAppStatus() {
     //   "map"  = hex digit of the walls believed there: 1 north, 2 east, 4 south, 8 west
     //   "seen" = 0 not visited, 1 visited, +2 if it is a goal cell
     String out;
-    out.reserve(sizeof(buf) + 2 * MAZE_ACTIVE_SIZE * MAZE_ACTIVE_SIZE + 160);
+    out.reserve(sizeof(buf) + 2 * MAZE_ACTIVE_SIZE * MAZE_ACTIVE_SIZE + 900);
     out += buf;
     const Maze& maze = g_navigator->getMaze();
     String seen;
@@ -181,12 +182,22 @@ static String buildAppStatus() {
     // Where the robot believes it is, and the reading at which each sensor calls "wall"
     // (order L90, L45, FL, FR, R45, R90, as "ir")
     char tail[150];
-    snprintf(tail, sizeof(tail), "\",\"n\":%d,\"x\":%d,\"y\":%d,\"d\":%d,\"lvl\":[%d,%d,%d,%d,%d,%d]}",
+    snprintf(tail, sizeof(tail), "\",\"n\":%d,\"x\":%d,\"y\":%d,\"d\":%d,\"lvl\":[%d,%d,%d,%d,%d,%d]",
              (int)MAZE_ACTIVE_SIZE, (int)pose.cell_x, (int)pose.cell_y, (int)(pose.current_dir % 4),
              (int)g_ir_sensors.getThresholdL90(), (int)g_ir_sensors.getThresholdL45(),
              (int)g_ir_sensors.getThresholdFront(), (int)g_ir_sensors.getThresholdFront(),
              (int)g_ir_sensors.getThresholdR45(), (int)g_ir_sensors.getThresholdR90());
     out += tail;
+
+    // A question waiting for the operator's Yes or No (see Proposal); its text is already safe to quote
+    if (Proposal::shownId() != 0) {
+        out += ",\"ask\":{\"id\":";
+        out += String((unsigned int)Proposal::shownId());
+        out += ",\"text\":\"";
+        out += Proposal::text();
+        out += "\"}";
+    }
+    out += "}";
     return out;
 }
 #endif

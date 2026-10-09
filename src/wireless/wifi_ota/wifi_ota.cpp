@@ -83,7 +83,8 @@ static void handleAppData() {
 static void handleAppCommand() {
     String command = s_web_server.arg("c");
     command.trim();
-    if (command.length() > 0 && command.length() < 64 && !s_telnet_cmd_ready) {
+    // (the limit was 64, which silently dropped any "fail <what happened>" longer than a few words)
+    if (command.length() > 0 && command.length() < 300 && !s_telnet_cmd_ready) {
         s_telnet_rx_buf = command;
         s_telnet_cmd_ready = true;
     }

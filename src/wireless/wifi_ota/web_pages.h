@@ -69,6 +69,7 @@ form{display:flex;gap:8px;margin-top:10px}
 input{flex:1;min-width:0;background:#07090c;border:1px solid #303844;border-radius:12px;padding:12px;color:#f5f7fa;font:14px ui-monospace,Consolas,monospace}
 form button{width:auto;padding:12px 18px}
 a{color:#7fb6ff}
+button.stopHere{background:#ff5d5d;color:#fff}
 button.busy{background:#ff5d5d;color:#fff;border-color:#ff5d5d}
 h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;margin:24px 0 10px}
 .step{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:17px;font-weight:700}
@@ -83,7 +84,31 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
 .cams{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .cams img{width:100%;border-radius:8px;background:#07090c;display:block}
 @media(max-width:520px){.cams{grid-template-columns:1fr}}
+#lowBat{display:none;position:fixed;left:0;right:0;top:0;bottom:0;z-index:20;background:rgba(120,10,10,.9);padding:16px;overflow:auto;text-align:center}
+#lowBat .card{max-width:520px;margin:10vh auto 0;border:3px solid #ff5d5d;padding:26px 18px}
+#lowBatTitle{font-size:40px;font-weight:900;color:#ff5d5d;letter-spacing:.04em}
+#lowBatWhat{font-size:26px;font-weight:800;margin-top:6px}
+#ask{display:none;position:fixed;left:0;right:0;top:0;bottom:0;z-index:10;background:rgba(5,7,10,.82);padding:16px;overflow:auto}
+#ask .card{max-width:520px;margin:8vh auto 0;border-color:#ffc94d}
+#askText{font-size:16px;line-height:1.45;margin:10px 0 16px;white-space:pre-wrap}
 </style></head><body>
+<div id="lowBat"><div class="card">
+  <div id="lowBatTitle">BATTERY LOW</div>
+  <div id="lowBatWhat">Switch the battery</div>
+  <div style="margin:10px 0 18px">It reads <b id="lowBatVolts">--</b> V. Below <b>3.65</b> V the robot goes weak and its behaviour drifts.</div>
+  <button id="lowBatOk">OK, hide this for 2 minutes</button>
+  <button class="stopHere" style="margin-top:10px">STOP the robot</button>
+</div></div>
+<div id="ask"><div class="card">
+  <div class="step" style="margin-bottom:0"><span class="num" style="background:#ffc94d">?</span>Suggested change</div>
+  <div id="askText"></div>
+  <div class="row">
+    <button id="askYes" style="background:#3ddc84">Yes, change it</button>
+    <button id="askNo" style="background:#ff5d5d;color:#fff">No</button>
+  </div>
+  <button class="stopHere" style="margin-top:10px">STOP the robot</button>
+  <div class="dim" style="margin-top:10px">Sent from the computer that is recording the robot. Yes means the change is made there; a change to the code still has to be flashed onto the robot.</div>
+</div></div>
 <div class="top"><h1>Antigrav-Mouse</h1><div id="link" class="dim"><span class="dot"></span><span id="linkText">connecting</span></div></div>
 
 <div class="row" style="margin-bottom:10px">
@@ -119,9 +144,10 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
 
 <div class="card">
   <div class="step"><span class="num">1</span>Which maze is it in?</div>
-  <div class="row">
-    <label class="pick"><input type="radio" name="mazeSize" value="3"> 3x3 practice</label>
-    <label class="pick"><input type="radio" name="mazeSize" value="16"> 16x16 full maze</label>
+  <div class="row3">
+    <label class="pick"><input type="radio" name="mazeSize" value="3"> 3x3</label>
+    <label class="pick"><input type="radio" name="mazeSize" value="5"> 5x5</label>
+    <label class="pick"><input type="radio" name="mazeSize" value="16"> 16x16</label>
   </div>
   <div class="dim" style="margin-top:10px">Each size keeps its own map.</div>
 </div>
@@ -141,11 +167,20 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
 
 <div class="card">
   <div class="step"><span class="num">4</span>How did that go?</div>
-  <div class="dim" style="margin-bottom:8px">The robot writes down every setting that was in force, for the Bluetooth recording. "It failed" asks what happened.</div>
+  <div class="dim" style="margin-bottom:8px">The robot writes down every setting that was in force, for the Bluetooth recording. "It failed" asks what happened, then press Send it.</div>
   <div class="row">
     <button id="resultGood" style="background:#3ddc84">It worked</button>
     <button id="resultBad" style="background:#ff5d5d;color:#fff">It failed</button>
   </div>
+  <div id="failBox" style="display:none;margin-top:10px">
+    <div class="dim" style="margin-bottom:6px">What happened? (where, and what the robot did)</div>
+    <input id="failNote" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:100%;box-sizing:border-box;margin-bottom:10px">
+    <div class="row">
+      <button class="plain" id="failSend">Send it</button>
+      <button class="plain" id="failCancel">Cancel</button>
+    </div>
+  </div>
+  <div class="dim" id="resultSent" style="margin-top:8px"></div>
 </div>
 
 <h2>Tuning</h2>
@@ -244,6 +279,8 @@ function send(command, button) {
 
 $("start").onclick = () => send("start");
 $("stop").onclick = () => send("stop");
+// (the boxes that cover the page each have a STOP of their own, so the robot can always be stopped)
+document.querySelectorAll(".stopHere").forEach(b => b.onclick = () => send("stop"));
 document.querySelectorAll("button[data-cmd]").forEach(b => b.onclick = () => send(b.dataset.cmd, b));
 // The speed slider: remembered on this phone, sent with the Speed run button ("speedrun 45")
 try { $("speedPct").value = localStorage.getItem("speedPct") || 35; } catch (e) {}
@@ -253,19 +290,31 @@ showSpeed();
 $("speedrun").onclick = () => send("speedrun " + $("speedPct").value, $("speedrun"));
 // The verdict buttons. "It worked" is sent at once. "It failed" first asks what happened and
 // sends that along ("fail clipped the post in 2,1"); Cancel sends nothing, an empty answer is fine.
-function verdict(word) {
-  if (word == "success") { send(word); return; }
-  const what = prompt("What happened? (where, and what the robot did)", "");
-  if (what === null) return;
-  send((word + " " + what.trim()).trim());
+// The question is a box in the page, not a browser pop-up: the little browser a phone opens for a
+// Wi-Fi network with no internet does not show pop-ups, so the fail was never sent from there.
+function verdict(word, note) {
+  send((word + " " + (note || "").trim()).trim());
+  $("resultSent").textContent = "Sent: " + (word == "success" ? "it worked" : "it failed") + " (" + new Date().toLocaleTimeString() + ")";
 }
+$("failSend").onclick = () => { verdict("fail", $("failNote").value); $("failNote").value = ""; $("failBox").style.display = "none"; };
+$("failCancel").onclick = () => { $("failBox").style.display = "none"; };
+$("failNote").onkeydown = e => { if (e.key == "Enter") $("failSend").onclick(); };
 // The two maze boxes: ticking one sends "maze 3" or "maze 16". They follow what the robot reports,
 // so if it refuses (during a run) the tick jumps back. Held still for a moment after a tap.
 let mazeTapped = 0;
 const mazeBoxes = document.querySelectorAll("input[name=mazeSize]");
 mazeBoxes.forEach(box => box.onchange = () => { mazeTapped = Date.now(); send("maze " + box.value); });
+// The battery warning that covers the page (owner's request): see poll()
+const BATTERY_LOW_V = 3.65;
+let lowBatSince = 0, lowBatHiddenUntil = 0; // When it first read low (0 = it is not low)
+$("lowBatOk").onclick = () => { lowBatHiddenUntil = Date.now() + 120000; $("lowBat").style.display = "none"; };
+// The Yes / No box for a suggested change (see "ask" in the status reply)
+let askShown = 0, askAnswered = 0;
+const answerAsk = word => { askAnswered = askShown; $("ask").style.display = "none"; send(word); };
+$("askYes").onclick = () => answerAsk("yes");
+$("askNo").onclick = () => answerAsk("no");
 $("resultGood").onclick = () => verdict("success");
-$("resultBad").onclick = () => verdict("fail");
+$("resultBad").onclick = () => { $("failBox").style.display = "block"; $("failNote").focus(); };
 $("clear").onclick = () => { $("log").textContent = ""; };
 // The Tuning card. Same names, in the same order, as kTune in control.cpp: keep the two in step.
 const TUNE = [["v_kp", "Speed loop P"], ["v_ki", "Speed loop I"], ["v_kd", "Speed loop D"],
@@ -477,6 +526,18 @@ async function poll() {
     const r = await fetch("/data?since=" + next, { cache: "no-store" });
     const status = await r.json();
     show(status);
+    // Battery warning: under BATTERY_LOW_V for three seconds running (it dips for a moment
+    // whenever the motors pull hard). A reading near zero means no battery is being measured.
+    const volts = (status.status || {}).vbat;
+    if (volts !== undefined) {
+      if (!(volts > 1 && volts < BATTERY_LOW_V)) lowBatSince = 0; else if (!lowBatSince) lowBatSince = Date.now();
+      $("lowBatVolts").textContent = (+volts).toFixed(2);
+      $("lowBat").style.display = (lowBatSince && Date.now() - lowBatSince >= 3000 && Date.now() > lowBatHiddenUntil) ? "block" : "none";
+    }
+    // A suggested change waiting for Yes or No covers the page until it is answered
+    const ask = (status.status || {}).ask;
+    if (ask && ask.id != askAnswered) { $("askText").textContent = ask.text; askShown = ask.id; $("ask").style.display = "block"; }
+    else $("ask").style.display = "none";
     if (Date.now() - mazeTapped > 1500) mazeBoxes.forEach(box => { box.checked = (box.value == (status.status || {}).n); });
     misses = 0;
   } catch (e) {

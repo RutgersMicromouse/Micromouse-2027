@@ -22,7 +22,7 @@ public:
 
     void begin();
 #ifdef MAZE_SIZE_SWITCHABLE
-    void changeMazeSize(int size); // 3 or 16; loads that size's saved map and goes back to idle in the start cell
+    void changeMazeSize(int size); // 3, 5 or 16; loads that size's saved map and goes back to idle in the start cell
 #endif
 
     // Core 0 navigation step execution
