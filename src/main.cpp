@@ -7,7 +7,7 @@
 // =============================================================================
 // Ratatouieee Micromouse Firmware - Main Entry Point
 // Rutgers Micromouse 2026-2027
-// Target: Teensy 3.2 (ARM Cortex-M4 @ 72MHz)
+// Target: Teensy 4.0 (ARM Cortex-M7 @ 600MHz)
 // =============================================================================
 
 RobotState current_robot_state = STATE_IDLE;
@@ -22,7 +22,7 @@ uint32_t last_telemetry_time = 0;
 void printBanner() {
     Serial.println("\n========================================================");
     Serial.println("       RATATOUIEEE - RUTGERS MICROMOUSE 2026-2027       ");
-    Serial.println("  Hardware: Teensy 3.2 | Motoron M2T256 | MinIMU-9 v5   ");
+    Serial.println("  Hardware: Teensy 4.0 | Motoron M2T256 | MinIMU-9 v5   ");
     Serial.println("  Sensors: 5x Analog IR (FIR, L1, L2, R1, R2) | Encoders");
     Serial.println("========================================================");
 }
@@ -67,7 +67,7 @@ void testSingleWheel(bool right) {
 
 void streamDiagnostics() {
     DistanceSensors ir = ir_sensors.getReadings();
-    Serial.printf("[DIAG] BAT: %4.2fV | ENC: L=%6.1fmm R=%6.1fmm | IMU: %6.1f deg (%5.1f dps) | IR mm: [FL:%4.1f RL:%4.1f F:%4.1f FR:%4.1f RR:%4.1f] Center:%+4.2f Align:%+4.1fdeg\n",
+    Serial.printf("[DIAG] MOTOR BAT: %4.2fV | ENC: L=%6.1fmm R=%6.1fmm | IMU: %6.1f deg (%5.1f dps) | IR mm: [FL:%4.1f RL:%4.1f F:%4.1f FR:%4.1f RR:%4.1f] Center:%+4.2f Align:%+4.1fdeg\n",
                   battery.getVoltage(),
                   encoders.getLeftDistanceMM(),
                   encoders.getRightDistanceMM(),
@@ -329,9 +329,9 @@ void setup() {
 
     printHelp();
 
-    // Check battery voltage at boot
+    // Check motor battery voltage at boot
     float vbat = battery.getVoltage();
-    Serial.printf("[SETUP] Battery Status: %4.2f V (%s)\n",
+    Serial.printf("[SETUP] Motor Battery Status: %4.2f V (%s)\n",
                   vbat, battery.isLow() ? "LOW WARNING!" : "HEALTHY");
 
     // Enter gesture mode selection or await serial command

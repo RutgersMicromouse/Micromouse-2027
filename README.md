@@ -8,7 +8,7 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 
 | Subsystem | Component | Interface | Pin / Address | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **Microcontroller** | **Teensy 3.2** | ARM Cortex-M4 @ 72MHz | — | 64KB RAM, 256KB Flash, Hardware FPU |
+| **Microcontroller** | **Teensy 4.0** | ARM Cortex-M7 @ 600MHz | — | 1MB RAM, 2MB Flash, Hardware FPU |
 | **Motor Driver** | **Pololu Motoron M2T256** | I2C (`Wire`) | Addr `0x10` (16) | Dual-channel DC driver, 12V motor supply |
 | **Left Motor (LMOT)** | Pololu Micro Metal Gearmotor | Motoron Ch 1 | M1A / M1B | Channel 1 on Motoron |
 | **Right Motor (RMOT)**| Pololu Micro Metal Gearmotor | Motoron Ch 2 | M2A / M2B | Channel 2 on Motoron (direction inverted) |
@@ -20,7 +20,7 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 | **Rear-left side IR Sensor**| Analog Distance | ADC (Analog) | Pin 15 (`A1`) | Parallel left-side wall and heading alignment |
 | **Front-right side IR Sensor**| Analog Distance | ADC (Analog) | Pin 14 (`A0`) | Parallel right-side wall sensing |
 | **Rear-right side IR Sensor**| Analog Distance | ADC (Analog) | Pin 20 (`A6`) | Parallel right-side wall and heading alignment |
-| **Battery Sense** | Resistor Divider (100k/33k) | ADC (Analog) | Pin 21 (`A7`) | Ratio: 4.0303x, Critical cutoff: 6.4V |
+| **Motor Battery Sense** | Resistor Divider (100k/33k) | ADC (Analog) | Pin 21 (`A7`) | Monitors only the motor battery; ratio: 4.0303x, critical threshold: 6.4V |
 | **Status LED** | On-Board LED | GPIO Output | Pin 13 (`LED_BUILTIN`) | Startup diagnostics, mode select, blink feedback |
 
 ---
@@ -29,7 +29,7 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 
 ```
 Micromouse-2027/
-    ├── platformio.ini               # PlatformIO Teensy 3.2 build configuration
+    ├── platformio.ini               # PlatformIO Teensy 4.0 build configuration
 ├── include/
 │   ├── config.h                 # Global hardware pins, dimensions, rates, and thresholds
 │   ├── maze_constants.h         # Standard 16x16 maze bitmasks and direction utilities
@@ -41,7 +41,7 @@ Micromouse-2027/
 │   │   ├── encoders.h / .cpp     # PaulStoffregen/Encoder high-resolution odometry
 │   │   ├── imu.h / .cpp          # MinIMU-9 v5 (LSM6DS33) gyro heading & bias ZUPT
 │   │   ├── ir_sensors.h / .cpp   # 5-channel analog distance sensors & wall centering
-│   │   └── battery.h / .cpp      # LiPo battery voltage monitor & safety cutoff
+│   │   └── battery.h / .cpp      # Motor battery voltage monitor & safety cutoff
 │   ├── control/
 │   │   ├── pid.h / .cpp          # Discrete PID with derivative filter & anti-windup
 │   │   ├── profile.h / .cpp      # Real-time trapezoidal / S-curve motion profiling
@@ -59,7 +59,7 @@ Micromouse-2027/
 ## 3. Control & Navigation Engine
 
 1. **500 Hz Synchronous Loop**:
-   - Updates encoders, gyroscope yaw integration, analog IR distance sensors, and battery voltage.
+   - Updates encoders, gyroscope yaw integration, analog IR distance sensors, and motor battery voltage.
    - Closed-loop linear velocity PID tracking desired velocity from the trapezoidal motion profiler.
    - Angular heading PID fusing target heading, IMU gyro rate, and IR wall-centering error.
 2. **Autonomous Maze Exploration**:

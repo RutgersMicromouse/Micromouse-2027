@@ -4,9 +4,9 @@
 #include "config.h"
 
 // =============================================================================
-// Battery Voltage Sensing
+// Motor battery voltage sensing
 // Pin: 21 (A7)
-// Divider: R1=100k to BAT+, R2=33k to GND
+// Divider: R1=100k to motor BAT+, R2=33k to GND
 // =============================================================================
 
 class BatteryMonitor {

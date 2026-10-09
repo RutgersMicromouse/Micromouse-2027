@@ -4,7 +4,7 @@
 
 // =============================================================================
 // Ratatouieee Micromouse Configuration Header
-// Target: Teensy 3.2 (ARM Cortex-M4 @ 72MHz)
+// Target: Teensy 4.0 (ARM Cortex-M7 @ 600MHz)
 // Schematic: Schematic_ratatouieee_2026-10-02
 // =============================================================================
 
@@ -19,8 +19,8 @@
 #define PIN_ENC_R_B            5   // RMOTChanB
 
 // I2C Bus (Pololu Motoron M2T256 + Pololu MinIMU-9 v5)
-#define PIN_I2C_SDA            18  // SDA1 (Hardware I2C Wire)
-#define PIN_I2C_SCL            19  // SCL1 (Hardware I2C Wire)
+#define PIN_I2C_SDA            18  // SDA (Hardware I2C Wire)
+#define PIN_I2C_SCL            19  // SCL (Hardware I2C Wire)
 #define I2C_BUS_SPEED          400000 // 400 kHz Fast I2C
 
 // Analog distance sensors: front sensor plus parallel side sensors.
@@ -30,8 +30,8 @@
 #define PIN_IR_FRONT           17  // A3 - Front-facing sensor
 #define PIN_IR_REAR_RIGHT      20  // A6 - Rear right side sensor
 
-// Battery Voltage Sensing
-#define PIN_BAT_SENSE          21  // BAT_SENSE (A7) - Resistor divider R1=100k, R2=33k
+// Motor battery voltage sensing
+#define PIN_BAT_SENSE          21  // Motor BAT_SENSE (A7) - Resistor divider R1=100k, R2=33k
 
 // Status / Debug LED
 #define PIN_STATUS_LED         13  // On-board LED_BUILTIN
@@ -69,10 +69,10 @@
 #define CELL_DIMENSION_MM      180.0f  // Standard micromouse cell size
 #define HALF_CELL_MM           90.0f
 #define WALL_THICKNESS_MM      13.0f
-#define CORRIDOR_WIDTH_MM      167.0f  // 180 - 12 mm
+#define CORRIDOR_WIDTH_MM      167.0f  // 180 - 13 mm
 
 // Drive Mechanics (Pololu Micro Metal Gearmotors + Wheels)
-#define WHEEL_DIAMETER_MM      32.0f
+#define WHEEL_DIAMETER_MM      40.15f
 #define WHEEL_CIRCUMFERENCE_MM (WHEEL_DIAMETER_MM * 3.1415926535f)
 #define TRACK_WIDTH_MM         75.0f   // Distance between wheel contact patches
 #define SIDE_SENSOR_SPACING_MM 71.5f   // Front-to-rear spacing on each side
@@ -84,15 +84,15 @@
 #define MM_PER_TICK            (1.0f / TICKS_PER_MM)
 
 // -----------------------------------------------------------------------------
-// 4. BATTERY MONITORING
+// 4. MOTOR BATTERY MONITORING
 // -----------------------------------------------------------------------------
 // Divider: R1 = 100k, R2 = 33k. Vout = Vin * (33 / 133) = Vin * 0.24812
 // Vin = Vout * (133 / 33) = Vout * 4.0303
 #define BATTERY_DIVIDER_RATIO  ((100.0f + 33.0f) / 33.0f)
 #define ADC_REF_VOLTAGE        3.3f
 #define ADC_RESOLUTION         1023.0f // 10-bit analogRead default
-#define BATTERY_WARN_VOLTAGE   6.8f    // 2S LiPo low warning (or ~10.2V for 3S)
-#define BATTERY_CRITICAL_V     6.4f    // Cutoff threshold
+#define BATTERY_WARN_VOLTAGE   3.6f    // 1-cell LiPo/Li-ion motor battery low warning
+#define BATTERY_CRITICAL_V     3.3f    // 1-cell LiPo/Li-ion motor battery critical threshold
 
 // -----------------------------------------------------------------------------
 // 5. MOTION CONTROL LOOP
@@ -127,7 +127,7 @@
 #define SHARP_MIN_DIST_MM      15.0f   // Physical close-range threshold
 #define SHARP_MAX_DIST_MM      160.0f  // Physical far-range threshold
 
-// Raw ADC Thresholds (Teensy 3.2 10-bit ADC, 3.3V reference)
+// Raw ADC Thresholds (10-bit ADC readings, 3.3V reference)
 #define IR_WALL_DETECT_FRONT   220     // Front wall if raw ADC is at or above this value
 #define IR_WALL_DETECT_SIDE    200     // Side wall if raw ADC is at or above this value
 

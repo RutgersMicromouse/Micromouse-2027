@@ -18,7 +18,7 @@ void BatteryMonitor::begin() {
         delay(2);
     }
     filtered_voltage_ = sum / 10.0f;
-    Serial.printf("[BATTERY] Initial Battery Voltage: %4.2f V\n", filtered_voltage_);
+    Serial.printf("[BATTERY] Initial motor battery voltage: %4.2f V\n", filtered_voltage_);
 }
 
 void BatteryMonitor::update() {
@@ -31,7 +31,7 @@ void BatteryMonitor::update() {
     if (isCritical()) {
         warning_counter_++;
         if (warning_counter_ % 50 == 0) {
-            Serial.printf("[BATTERY] CRITICAL BATTERY ALERT: %4.2f V!\n", filtered_voltage_);
+            Serial.printf("[BATTERY] CRITICAL MOTOR BATTERY ALERT: %4.2f V!\n", filtered_voltage_);
         }
     }
 }
