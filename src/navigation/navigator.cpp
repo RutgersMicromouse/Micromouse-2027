@@ -25,6 +25,79 @@ void Navigator::reset() {
     motion.setTargetHeading(0.0f);
 }
 
+Direction directionFromImuHeading(float heading_deg) {
+    while (heading_deg > 180.0f)  heading_deg -= 360.0f;
+    while (heading_deg <= -180.0f) heading_deg += 360.0f;
+
+    if (heading_deg >= -45.0f && heading_deg < 45.0f) {
+        return DIR_NORTH;
+    } else if (heading_deg >= -135.0f && heading_deg < -45.0f) {
+        return DIR_EAST;
+    } else if (heading_deg >= 45.0f && heading_deg < 135.0f) {
+        return DIR_WEST;
+    } else {
+        return DIR_SOUTH;
+    }
+}
+
+void Navigator::scanAndBuildCellManual() {
+    // 1. Refresh IR sensor readings and IMU
+    ir_sensors.update();
+    float imu_heading = imu.getHeadingDeg();
+    
+    // Calculate the new discrete compass direction based on IMU
+    Direction new_heading = directionFromImuHeading(imu_heading);
+
+    // Track the first iteration to prevent moving before the initial cell is mapped
+    static bool first_scan = true;
+
+    // 2. Determine if the bot turned, moved forward, or is just starting
+    if (first_scan) {
+        current_heading_ = new_heading;
+        Serial.printf("[MANUAL DEBUG] Initial Start. Scanning cell (%d, %d)\n", current_pos_.x, current_pos_.y);
+        first_scan = false;
+    } 
+    else if (new_heading != current_heading_) {
+        // TURN DETECTED: Heading changed. Do not update X/Y.
+        Serial.printf("[MANUAL DEBUG] Turn Detected (Heading %d -> %d). Staying at (%d, %d)\n",
+                      current_heading_, new_heading, current_pos_.x, current_pos_.y);
+        current_heading_ = new_heading; 
+    } 
+    else {
+        // MOVE DETECTED: Heading is identical. Advance position by 1 cell.
+        int8_t next_x = current_pos_.x + dxFromDir(current_heading_);
+        int8_t next_y = current_pos_.y + dyFromDir(current_heading_);
+
+        if (Maze::isValidCoordinate(next_x, next_y)) {
+            current_pos_.x = next_x;
+            current_pos_.y = next_y;
+            Serial.printf("[MANUAL DEBUG] Move Detected. Advanced forward to (%d, %d)\n", current_pos_.x, current_pos_.y);
+        } else {
+            Serial.printf("[MANUAL DEBUG] Move Detected, but boundary reached at (%d, %d).\n", current_pos_.x, current_pos_.y);
+        }
+    }
+
+    // 3. Map relative walls to absolute compass directions based on current_heading_
+    Direction front_dir = current_heading_;
+    Direction left_dir  = turnLeft(current_heading_);
+    Direction right_dir = turnRight(current_heading_);
+
+    bool front_wall = ir_sensors.hasFrontWall();
+    bool left_wall  = ir_sensors.hasLeftWall();
+    bool right_wall = ir_sensors.hasRightWall();
+
+    // 4. Update the maze structure at the current coordinates
+    maze_.setWall(current_pos_.x, current_pos_.y, front_dir, front_wall);
+    maze_.setWall(current_pos_.x, current_pos_.y, left_dir,  left_wall);
+    maze_.setWall(current_pos_.x, current_pos_.y, right_dir, right_wall);
+    maze_.setVisited(current_pos_.x, current_pos_.y, true);
+
+    Serial.printf("               Walls Scanned -> F(%d): %s | L(%d): %s | R(%d): %s\n",
+                  front_dir, front_wall ? "WALL" : "OPEN",
+                  left_dir,  left_wall  ? "WALL" : "OPEN",
+                  right_dir, right_wall ? "WALL" : "OPEN");
+}
+
 void Navigator::scanCurrentCell() {
     // Determine absolute wall directions from robot's current heading
     Direction front_dir = current_heading_;

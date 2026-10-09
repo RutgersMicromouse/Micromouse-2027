@@ -18,6 +18,8 @@ public:
 
     void reset();
 
+    void scanAndBuildCellManual();
+    
     // Exploration to Center (7,7)-(8,8)
     bool exploreToCenter();
 

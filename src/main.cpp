@@ -14,6 +14,7 @@ RobotState current_robot_state = STATE_IDLE;
 bool continuous_telemetry = false;
 uint32_t last_telemetry_time = 0;
 
+#define DEBUG_MANUAL_MAZE_BUILD_MODE // Uncomment to enable manual 5-second step & maze building debug mode
 // #define SENSOR_DISTANCE_DIAGNOSTIC_MODE
 // #define RUN_MOTOR_STARTUP_TEST  // Never enable for normal gesture startup.
 // Uncomment to continuously print IR raw values, distances, and wall decisions.
@@ -306,6 +307,21 @@ void setup() {
     Serial.begin(115200);
     delay(1500); // Allow USB Serial terminal to attach
 
+#ifdef DEBUG_MANUAL_MAZE_BUILD_MODE
+    Serial.println("\n========================================================");
+    Serial.println("[MANUAL DEBUG MODE ACTIVE]");
+    Serial.println("  - Position reset to (0,0)");
+    Serial.println("  - Motors disabled");
+    Serial.println("  - IR & IMU active");
+    Serial.println("  - Scanning & printing ASCII map every 5 seconds");
+    Serial.println("========================================================\n");
+
+    ir_sensors.begin();
+    imu.begin();
+    navigator.reset(); // Starts at (0, 0) facing DIR_NORTH
+    return;
+#endif
+
 #ifdef SENSOR_DISTANCE_DIAGNOSTIC_MODE
     Serial.println("[DIAG] Sensor distance diagnostic mode. Motors and navigation are disabled.");
     ir_sensors.begin();
@@ -339,6 +355,39 @@ void setup() {
 }
 
 void loop() {
+#ifdef DEBUG_MANUAL_MAZE_BUILD_MODE
+    static uint32_t last_manual_step = 0;
+    static uint32_t last_imu_update = 0;
+
+    // Continuously update IMU integration at 100 Hz while the bot is physically rotated
+    if (millis() - last_imu_update >= 10) {
+        float dt = (millis() - last_imu_update) / 1000.0f;
+        last_imu_update = millis();
+        encoders.update(dt);
+        imu.update(dt, encoders.getEncoderYawRateDeg_S(), encoders.getForwardSpeedMM_S());
+    }
+
+    // Trigger cell scan, wall mapping, and map rendering every 5 seconds
+    if (millis() - last_manual_step >= 5000) {
+        last_manual_step = millis();
+
+        Serial.println("\n--------------------------------------------------------");
+        Serial.println("[MANUAL DEBUG] 5-Second Interval - Scanning Cell & Mapping");
+        Serial.println("--------------------------------------------------------");
+
+        // Perform sensor wall scan and update maze structure using IMU orientation
+        navigator.scanAndBuildCellManual();
+
+        // Print visual 16x16 maze ASCII map
+        navigator.getMaze().printAscii();
+
+        Serial.println("[MANUAL DEBUG] Move bot manually to the next cell within 5 seconds...\n");
+    }
+
+    delay(5);
+    return;
+#endif
+
 #ifdef SENSOR_DISTANCE_DIAGNOSTIC_MODE
     ir_sensors.update();
 #else
