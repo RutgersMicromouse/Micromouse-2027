@@ -4,6 +4,7 @@
 #include "ui/actions/actions.h"
 #include "ui/gestures/gestures.h"
 #include "ui/console/console.h"
+#include "ui/run_result/run_result.h"
 #include "wireless/ble_debug/ble_debug.h"
 #include "wireless/wifi_ota/wifi_ota.h"
 
@@ -290,6 +291,30 @@ static void handle(String cmd, Source source) {
             requestHeadingReset();
             reply("ACK: HEADING RESET");
         }
+        return;
+    }
+
+    // ---------------------------------------------------------------- Maze size
+    // "maze" says which maze the robot is set up for; "maze 3" / "maze 16" switches (the app's
+    // maze button). Starts nothing. Each size keeps its own saved map.
+    if (cmd == "maze" || cmd.startsWith("maze ")) {
+        const long size = cmd.substring(4).toInt();
+        if (cmd != "maze" && !Actions::setMazeSize((uint8_t)size)) {
+            reply("ERR: MAZE SIZE NOT CHANGED (use 'maze 3' or 'maze 16', not during a run; the competition and test3x3 builds are fixed)");
+        }
+        snprintf(buf, sizeof(buf), "MAZE: %dx%d", (int)MAZE_ACTIVE_SIZE, (int)MAZE_ACTIVE_SIZE);
+        reply(buf);
+        return;
+    }
+
+    // ---------------------------------------------------------------- Verdict on the last run
+    // "success" or "fail", optionally followed by a note ("fail clipped the post in 2,1"): the
+    // app's two buttons. Starts nothing; it only prints what was in force (see RunResult).
+    if (cmd.startsWith("success") || cmd.startsWith("fail")) {
+        const bool success = cmd.startsWith("success");
+        String note = cmd.substring(success ? 7 : 4);
+        note.trim();
+        RunResult::report(success, note.c_str());
         return;
     }
 

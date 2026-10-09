@@ -118,8 +118,15 @@ static String buildAppStatus() {
         }
     }
 
+    // Accelerometer, for the app only: now and the largest since the app last asked, per axis
+    float accel_now[3], accel_peak[3];
+    g_imu.getAcceleration(accel_now, accel_peak, true);
+    char accel[96];
+    snprintf(accel, sizeof(accel), "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f", accel_now[0], accel_now[1], accel_now[2],
+             accel_peak[0], accel_peak[1], accel_peak[2]);
+
     // The live-tuning values, in the order of MotionController's tuning table
-    char tune[440] = "";
+    char tune[480] = "";
     for (int i = 0, used = 0; i < MotionController::TUNE_COUNT && used < (int)sizeof(tune) - 16; ++i) {
         used += snprintf(tune + used, sizeof(tune) - used, i ? ",%.6g" : "%.6g", g_motion_controller.getTune(i));
     }
@@ -130,12 +137,12 @@ static String buildAppStatus() {
              !g_imu.isHardwareConnected() ? "MISSING" : (g_imu.isUsingFallback() ? "FAULT" : "OK"),
              (unsigned long)g_imu.getBadReadCount());
 
-    char buf[1400];
+    char buf[1500];
     snprintf(buf, sizeof(buf),
              "{\"state\":\"%s\",\"mode\":\"%s\",\"tier\":%d,\"cell\":\"(%d, %d) facing %s\",\"visited\":%d,\"look\":\"%s\",\"why\":\"%s\",\"late\":%u,"
              "\"ir\":[%d,%d,%d,%d,%d,%d],\"walls\":\"%c%c%c\","
              "\"heading\":%.1f,\"vbat\":%.2f,\"encL\":\"%ld (%.0f mm)\",\"encR\":\"%ld (%.0f mm)\","
-             "\"motor\":\"%s\",\"imu\":\"%s\",\"supply\":%.1f,\"loop\":%u,\"busy\":%d,\"tune\":[%s]",
+             "\"motor\":\"%s\",\"imu\":\"%s\",\"supply\":%.1f,\"loop\":%u,\"busy\":%d,\"tune\":[%s],\"acc\":[%s]",
              Actions::stateDescription(), Actions::modeName(Actions::getSelectedMode()), (int)Actions::getSpeedTier(),
              (int)pose.cell_x, (int)pose.cell_y, kCompass[pose.current_dir % 4], cells_seen, s_look_text,
              g_navigator->getEdgeNote(), (unsigned int)g_motion_controller.getLateHandovers(),
@@ -147,7 +154,7 @@ static String buildAppStatus() {
              g_motors.isConnected() ? "OK" : "NOT RESPONDING",
              imu_text,
              g_motors.getSupplyVolts(), (unsigned int)t.timing.loop_time_us,
-             (int)((Actions::isRunActive() && !g_navigator->isWaitingForNextMove()) || !g_motion_controller.isCommandFinished()), tune);
+             (int)((Actions::isRunActive() && !g_navigator->isWaitingForNextMove()) || !g_motion_controller.isCommandFinished()), tune, accel);
 
     // The map for the app's maze picture. One character per cell, row by row from the start
     // cell (x counts right, then y counts forward):

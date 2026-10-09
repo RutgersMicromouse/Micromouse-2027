@@ -197,6 +197,11 @@ void MotionController::update(float dt_seconds) {
     float heading_err = shortestAngularDifference(target_heading_setpoint, heading_traveled);
     rotational_effort = pid_angular_heading_.update(heading_err, dt_seconds) + rotational_feedforward;
 
+    // Smooth curves lean on the heading loop far more than straights do: the heading target is
+    // moving the whole time and there is no settling at the end. So a curve may have a stiffer
+    // loop than a straight can stand (c_kp in the tuning table, added to h_kp while curving).
+    if (curve_active_) rotational_effort += tune_[TUNE_C_KP] * heading_err;
+
     // Settling after a turn on the spot: the planned turn has run out, so the feedforward is gone
     // and only the heading loop is left to steer out what the turn left over. With a gentle
     // heading gain that is less effort than it takes to make the wheels move at all, and the
@@ -208,16 +213,27 @@ void MotionController::update(float dt_seconds) {
                                active_cmd_.action == ACTION_TURN_LEFT_45 || active_cmd_.action == ACTION_TURN_RIGHT_45 ||
                                active_cmd_.action == ACTION_TURN_AROUND_180);
     const float rate_toward_target = copysignf(1.0f, heading_err) * imu_.getGyroZ(); // deg/s
-    if (turn_on_spot && profile_angular_.isFinished() && fabsf(heading_err) > SETTLE_HEADING_DEG &&
+    const bool settling_turn = turn_on_spot && profile_angular_.isFinished();
+    if (settling_turn && fabsf(heading_err) > SETTLE_HEADING_DEG &&
         rate_toward_target < TURN_SETTLE_PUSH_MAX_RATE_DEG_S) {
-        rotational_effort += copysignf(tune_[TUNE_FF_KS] + TURN_SETTLE_PUSH, heading_err);
+        // The push shrinks as the heading closes in, so the last degrees are a gentle creep
+        const float share = fminf(1.0f, fabsf(heading_err) / TURN_SETTLE_PUSH_FULL_DEG);
+        rotational_effort += copysignf(tune_[TUNE_FF_KS] + tune_[TUNE_T_PUSH] * share, heading_err);
     }
+    // ...and whatever the robot is still turning at is braked, so it comes to rest on the
+    // heading instead of swinging through it.
+    if (settling_turn) rotational_effort -= imu_.getGyroZ() * tune_[TUNE_T_DAMP];
 
     // Differential Wheel Speed Lock: actively prevents wheel speed divergence during straight lines
     if (active_cmd_.action == ACTION_MOVE_FORWARD_CELLS || active_cmd_.action == ACTION_MOVE_DISTANCE ||
         active_cmd_.action == ACTION_MOVE_HALF_CELL || active_cmd_.action == ACTION_MOVE_DIAGONAL_HALF) {
         float speed_diff = enc.right_speed_mm_s - enc.left_speed_mm_s;
         rotational_effort -= (speed_diff * tune_[TUNE_K_SYNC]);
+
+        // Turn-rate damping: a straight should not be turning at all, so any turn rate the gyro
+        // reports is opposed a little. This calms the small left-right wobble without making
+        // the heading loop itself stiffer.
+        rotational_effort -= imu_.getGyroZ() * tune_[TUNE_S_DAMP];
     }
 
     // 4. Handle ACTION_ALIGN_FRONT_WALL touch detection

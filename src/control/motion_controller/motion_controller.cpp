@@ -434,6 +434,12 @@ static const TuneItem kTune[MotionController::TUNE_COUNT] = {
     { "h_imax", "Heading loop: most of that from I",          0.12f,  0.0f,  1.0f },
     { "w_max",  "Wall centring: most steering, degrees",      25.0f,  0.0f,  45.0f },
     { "w_gyro", "Wall centring: turn-rate damping",           0.035f, 0.0f,  0.2f },
+    // --- Turn-rate damping and the nudge after a turn on the spot (they start at the values in config.h)
+    { "s_damp", "Straights: turn-rate damping (0 = off)",     STRAIGHT_YAW_DAMPING, 0.0f, 0.005f },
+    { "t_damp", "After a turn: turn-rate damping (0 = off)",  TURN_SETTLE_DAMPING,  0.0f, 0.005f },
+    { "t_push", "After a turn: nudge onto the heading (0 = off)", TURN_SETTLE_PUSH, 0.0f, 0.3f },
+    // --- Extra heading loop P during smooth curves only, on top of h_kp (0 = curves use h_kp alone)
+    { "c_kp",   "Curves: extra heading P (0 = off)",          0.0f,   0.0f,  0.2f },
 };
 
 const char* MotionController::tuneName(int index)        { return kTune[index].name; }

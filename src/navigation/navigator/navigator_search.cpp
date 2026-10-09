@@ -206,7 +206,8 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         const bool next_is_known = maze_.isVisited(next_cell.x, next_cell.y);
         if (!single_step_ && !next_is_goal && (!next_is_known || !plan_continues_straight)) {
             // The robot may curve from that edge, so it arrives there no faster than a curve is taken
-            float edge_v = next_is_known ? SEARCH_CURVE_SPEED_MM_S
+            // (a curve through a cell it has visited before may be taken a little quicker)
+            float edge_v = next_is_known ? SEARCH_KNOWN_CURVE_SPEED_MM_S
                                          : fminf(SEARCH_PROBE_SPEED_MM_S, SEARCH_CURVE_SPEED_MM_S);
             sendMotionCommand(ACTION_MOVE_DISTANCE, HALF_CELL_SIZE_MM, search_speed, search_accel, true,
                               current_search_speed_, edge_v);
@@ -217,8 +218,11 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
             return;
         }
 #endif
-        // (the top speed follows exit_v up, so a straight of known cells is driven faster)
-        sendMotionCommand(ACTION_MOVE_FORWARD_CELLS, 1.0f, fmaxf(search_speed, exit_v), search_accel, true,
+        // Into a cell it has visited before, the robot may go faster than the search speed in
+        // between (it still arrives at exit_v); into a new one it keeps to the search speed.
+        const float cruise = maze_.isVisited(next_cell.x, next_cell.y)
+                             ? fmaxf(SEARCH_KNOWN_SPEED_MM_S, search_speed) : search_speed;
+        sendMotionCommand(ACTION_MOVE_FORWARD_CELLS, 1.0f, fmaxf(cruise, exit_v), search_accel, true,
                           current_search_speed_, exit_v, true);
         current_search_speed_ = exit_v;
         pose_.cell_x = next_cell.x;
@@ -324,7 +328,8 @@ void Navigator::stepAtCellEdge(const IRReadings& ir, const WallPreview& preview)
         maze_.confirmOpen(x, y, best); // About to drive through it
         // Curves are where the robot is most likely to slip, so they are driven at the curve
         // speed from start to finish; it speeds up again on the straight that follows.
-        const float v = fminf(current_search_speed_, SEARCH_CURVE_SPEED_MM_S);
+        // A cell it has visited before is curved through a little quicker.
+        const float v = fminf(current_search_speed_, known ? SEARCH_KNOWN_CURVE_SPEED_MM_S : SEARCH_CURVE_SPEED_MM_S);
         curve_cell_x_ = x;
         curve_cell_y_ = y;
         curve_entry_dir_ = heading;
@@ -368,6 +373,23 @@ void Navigator::stepAfterCurve(const IRReadings& ir, const WallPreview& preview)
     // otherwise stepAtCellEdge() carries on to the cell centre as before. The goal cell is
     // always entered to its centre, as it is from a straight.
     if (!floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y)) {
+#if !SEARCH_CHAIN_CURVES_BY_SENSORS
+        // ...but only where the map already knows the way. The side readings taken as a curve
+        // ends are not good enough to curve again on: the robot is still swinging, and on the
+        // real robot they called a walled side open and it curved into the wall. So a cell
+        // it has never visited is driven to its centre and read there, and in a visited cell
+        // an "open" from those readings counts for nothing (a "wall" still vetoes the curve).
+        if (!maze_.isVisited(pose_.cell_x, pose_.cell_y)) {
+            edge_note_ = "drove to the centre: new cell straight after a curve, so it is read from the centre";
+            driveToCellCentre();
+            return;
+        }
+        WallPreview walls_only = preview;
+        walls_only.left_open = false;
+        walls_only.right_open = false;
+        stepAtCellEdge(ir, walls_only);
+        return;
+#endif
         stepAtCellEdge(ir, preview);
         return;
     }

@@ -140,6 +140,9 @@ public:
         TUNE_H_MAX, TUNE_H_IMAX,               // Heading loop: most effort it may ask for, and of that from I
         TUNE_W_MAX,                            // Wall centring: most steering it may add, degrees
         TUNE_W_GYRO,                           // Wall centring: damping from the turn rate
+        TUNE_S_DAMP,                           // Straights and diagonals: damping from the turn rate
+        TUNE_T_DAMP, TUNE_T_PUSH,              // Settling after a turn on the spot: damping, and the nudge
+        TUNE_C_KP,                             // Smooth curves: heading P added to h_kp while curving
         TUNE_COUNT
     };
     static const char* tuneName(int index);        // Short name; also the key it is saved under

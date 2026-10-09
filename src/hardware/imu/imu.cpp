@@ -8,6 +8,7 @@
 #define BNO055_CHIP_ID_ADDR        0x00
 #define BNO055_PAGE_ID_ADDR        0x07
 #define BNO055_GYRO_DATA_Z_LSB     0x18
+#define BNO055_LINEAR_ACCEL_X_LSB  0x28   // Acceleration with gravity removed: X, Y, Z, 100 LSB = 1 m/s2
 #define BNO055_OPR_MODE_ADDR       0x3D
 #define BNO055_PWR_MODE_ADDR       0x3E
 
@@ -19,6 +20,10 @@
 
 // The BNO055 is read every 5th control tick (100 Hz, its fusion output rate)
 #define IMU_POLL_DIVIDER           5
+// The acceleration (display only) is read every 25th tick, two ticks after a heading read so the
+// two never share a tick, nor the tick a failed heading read is retried on
+#define IMU_ACCEL_DIVIDER          25
+#define IMU_ACCEL_TICK             2
 #define IMU_MODE_CHECK_DIVIDER     500    // Verify fusion mode once per second
 #define IMU_SETTLE_READS           5      // Reads discarded after re-entering fusion mode
 #define IMU_FROZEN_READS           10     // Unchanged readings during a turn that trigger a mode check
@@ -235,6 +240,12 @@ void IMU::update(float dt_seconds, float encoder_yaw_rate, float linear_speed_mm
         }
     }
 
+#if ENABLE_ACCEL_DISPLAY
+    if (hardware_detected_ && !retry_read_ && (poll_counter_ % IMU_ACCEL_DIVIDER) == IMU_ACCEL_TICK) {
+        readAcceleration();
+    }
+#endif
+
     // Between BNO055 reads: extrapolate with the rate measured from its last two headings so the
     // heading is smooth at 500 Hz. If the sensor is missing or a read is overdue, dead-reckon on
     // differential encoder odometry instead.
@@ -299,6 +310,30 @@ void IMU::acceptReading(float raw_h, float raw_gz, bool rate_valid,
     last_bno_heading_deg_ = raw_h;
     time_since_good_s_ = 0.0f;
     bad_reads_ = 0;
+}
+
+// Display only. A failed read just leaves the last values in place; it is not counted with the
+// heading reads, so the health numbers keep meaning what they did.
+void IMU::readAcceleration() {
+    Wire.beginTransmission(address_);
+    Wire.write(BNO055_LINEAR_ACCEL_X_LSB);
+    if (Wire.endTransmission() != 0) return;
+    if (Wire.requestFrom(address_, (uint8_t)6) != 6 || Wire.available() < 6) return;
+    for (int axis = 0; axis < 3; ++axis) {
+        const uint8_t lsb = Wire.read();
+        const uint8_t msb = Wire.read();
+        const float value = (float)(int16_t)(((uint16_t)msb << 8) | lsb) / 100.0f;
+        accel_now_[axis] = value;
+        if (fabsf(value) > accel_peak_[axis]) accel_peak_[axis] = fabsf(value);
+    }
+}
+
+void IMU::getAcceleration(float now[3], float peak[3], bool clear_peaks) {
+    for (int axis = 0; axis < 3; ++axis) {
+        now[axis] = accel_now_[axis];
+        peak[axis] = accel_peak_[axis];
+        if (clear_peaks) accel_peak_[axis] = 0.0f;
+    }
 }
 
 IMUState IMU::getState() const {

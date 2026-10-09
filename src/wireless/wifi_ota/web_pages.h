@@ -50,6 +50,7 @@ h1{font-size:24px;margin:0}
 .card{background:#171c24;border:1px solid #2c3440;border-radius:16px;padding:14px;margin-bottom:12px}
 #state{font-size:17px;font-weight:700;margin:2px 0 0}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 button{appearance:none;border:0;border-radius:14px;padding:16px 10px;font-size:17px;font-weight:700;color:#0b0d10;background:#f5f7fa;width:100%}
 button:active{opacity:.6}
 #start{background:#52d273;font-size:22px;padding:22px 10px}
@@ -69,6 +70,11 @@ input{flex:1;min-width:0;background:#07090c;border:1px solid #303844;border-radi
 form button{width:auto;padding:12px 18px}
 a{color:#7fb6ff}
 button.busy{background:#ff5d5d;color:#fff;border-color:#ff5d5d}
+h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;margin:24px 0 10px}
+.step{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:17px;font-weight:700}
+.num{flex:none;width:28px;height:28px;border-radius:50%;background:#52d273;color:#0b0d10;display:flex;align-items:center;justify-content:center;font-weight:800}
+.pick{display:flex;align-items:center;gap:10px;padding:13px 10px;border:1px solid #303844;border-radius:14px;background:#232a34;font-size:15px;font-weight:700}
+.pick input{flex:none;width:22px;height:22px;padding:0;margin:0;accent-color:#52d273}
 .tune{display:grid;grid-template-columns:1fr 130px;gap:8px 10px;align-items:center;font-size:14px;margin-bottom:10px}
 .tune input.changed{border-color:#ffc94d}
 #maze{display:block;width:100%;max-width:420px;margin:0 auto;background:#07090c;border-radius:10px}
@@ -80,11 +86,16 @@ button.busy{background:#ff5d5d;color:#fff;border-color:#ff5d5d}
 </style></head><body>
 <div class="top"><h1>Antigrav-Mouse</h1><div id="link" class="dim"><span class="dot"></span><span id="linkText">connecting</span></div></div>
 
-<div class="card"><div class="dim">The robot is</div><div id="state">...</div><div class="dim" id="mode"></div>
-<div style="margin-top:8px">It thinks it is in cell <b id="cell">--</b></div><div class="dim">Cells explored so far: <b id="visited">--</b> &nbsp;(the start cell is (0, 0); first number counts right, second counts forward)</div>
-<div style="margin-top:8px">45&deg; sensors say the next cell has: <b id="look">--</b></div>
-<div class="dim">At the last cell edge it <b id="why">--</b></div>
-<div class="dim">Times it had to brake because the next move came late: <b id="late">--</b></div></div>
+<div class="row" style="margin-bottom:10px">
+  <button id="start">START</button>
+  <button id="stop">STOP</button>
+</div>
+<div class="row3" style="margin-bottom:12px">
+  <button class="plain" data-cmd="calib">Calibrate</button>
+  <button class="plain" data-cmd="resetall">Reset sensors</button>
+  <button class="plain" data-cmd="clear">Forget maze</button>
+</div>
+<div class="dim" style="margin:-4px 0 12px">Calibrate: robot in the start cell facing its back wall; it measures the walls, then turns round. START calibrates where it stands, then searches to the centre and back.</div>
 
 <div class="card">
   <div class="dim" style="margin-bottom:8px">The maze as the robot believes it. The start cell is bottom-left, north is up.</div>
@@ -98,39 +109,60 @@ button.busy{background:#ff5d5d;color:#fff;border-color:#ff5d5d}
   <div class="dim" style="margin-top:6px">The robot is drawn in the middle of the cell it believes it is in, turned to its measured heading. It keeps track of cells, not millimetres, so it does not slide between cells here. The robot and its sensors are drawn to scale from the PCB drawing; beam lengths are rough.</div>
 </div>
 
+<div class="card"><div class="dim">The robot is</div><div id="state">...</div><div class="dim" id="mode"></div>
+<div style="margin-top:8px">It thinks it is in cell <b id="cell">--</b></div><div class="dim">Cells explored so far: <b id="visited">--</b> &nbsp;(the start cell is (0, 0); first number counts right, second counts forward)</div>
+<div style="margin-top:8px">45&deg; sensors say the next cell has: <b id="look">--</b></div>
+<div class="dim">At the last cell edge it <b id="why">--</b></div>
+<div class="dim">Times it had to brake because the next move came late: <b id="late">--</b></div></div>
+
+<h2>The rest, in this order</h2>
+
 <div class="card">
-  <div class="top" style="margin-bottom:8px"><span class="dim">Cameras</span><span class="dim" id="camNote"></span></div>
-  <div class="cams" id="cams"></div>
-  <div class="dim" style="margin-top:8px">The cameras are plugged into a computer, not the robot. On that computer, join the robot's Wi-Fi and run <b>tools/camera_feeds/camera_server.py</b>, then put the address it prints here:</div>
-  <form id="camForm"><input id="camAddr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="http://192.168.4.2:8090"><button type="submit">Show</button></form>
+  <div class="step"><span class="num">1</span>Which maze is it in?</div>
+  <div class="row">
+    <label class="pick"><input type="radio" name="mazeSize" value="3"> 3x3 practice</label>
+    <label class="pick"><input type="radio" name="mazeSize" value="16"> 16x16 full maze</label>
+  </div>
+  <div class="dim" style="margin-top:10px">Each size keeps its own map.</div>
 </div>
 
-<div class="row" style="margin-bottom:12px">
-  <button id="start">START</button>
-  <button id="stop">STOP</button>
-</div>
 <div class="card">
-  <div class="top" style="margin-bottom:6px"><span>Speed run at <b id="speedPctText">35</b>% of full speed</span><span class="dim">10 = slowest, 100 = full</span></div>
+  <div class="step"><span class="num">2</span>Speed run</div>
+  <div class="top" style="margin-bottom:6px"><span>At <b id="speedPctText">35</b>% of full speed</span><span class="dim">10 = slowest, 100 = full</span></div>
   <input type="range" id="speedPct" min="10" max="100" step="5" value="35" style="width:100%;padding:0;margin:6px 0 12px">
+  <button class="plain" id="speedrun">Speed run at this speed</button>
+</div>
+
+<div class="card">
+  <div class="step"><span class="num">3</span>Bring it back</div>
+  <div class="dim" style="margin-bottom:8px">After a speed run has finished at the centre: drives back to the start cell and faces into the maze.</div>
+  <button class="plain" data-cmd="return">Return to start</button>
+</div>
+
+<div class="card">
+  <div class="step"><span class="num">4</span>How did that go?</div>
+  <div class="dim" style="margin-bottom:8px">The robot writes down every setting that was in force, for the Bluetooth recording. "It failed" asks what happened.</div>
   <div class="row">
-    <button class="plain" id="speedrun">Speed run at this speed</button>
-    <button class="plain" data-cmd="return">Return to start</button>
+    <button id="resultGood" style="background:#3ddc84">It worked</button>
+    <button id="resultBad" style="background:#ff5d5d;color:#fff">It failed</button>
   </div>
 </div>
-<div class="row" style="margin-bottom:12px">
-  <button class="plain" data-cmd="calib">Calibrate sensors (facing the back wall), then turn round</button>
-  <button class="plain" data-cmd="clear">Forget the maze</button>
-  <button class="plain" data-cmd="cell">Drive one cell (search, step by step)</button>
-  <button class="plain" data-cmd="left45">Turn left 45&deg;</button>
-  <button class="plain" data-cmd="right45">Turn right 45&deg;</button>
-  <button class="plain" data-cmd="left90">Turn left 90&deg; (on the spot)</button>
-  <button class="plain" data-cmd="right90">Turn right 90&deg; (on the spot)</button>
-  <button class="plain" data-cmd="curveleft">Curve left 90&deg; (rolling)</button>
-  <button class="plain" data-cmd="curveright">Curve right 90&deg; (rolling)</button>
-  <button class="plain" data-cmd="health">Health check</button>
-  <button class="plain" data-cmd="resetall">Reset sensors</button>
-  <button class="plain" data-cmd="ir">Raw IR readings</button>
+
+<h2>Tuning</h2>
+
+<div class="card">
+  <div class="dim" style="margin-bottom:8px">Tuning. Change a number, press Apply, try it. A changed box is outlined in yellow until applied. Not allowed during a run.</div>
+  <div class="tune" id="tune"></div>
+  <div class="row">
+    <button class="plain" id="tuneApply">Apply</button>
+    <button class="plain" id="tuneSave">Save on the robot</button>
+    <button class="plain" data-cmd="tune">List values</button>
+    <button class="plain" id="tuneReset">Back to code values</button>
+  </div>
 </div>
+
+<h2>Visual debugging</h2>
+<div class="dim" style="margin-bottom:10px">Nothing below is needed to run the robot.</div>
 
 <div class="card">
   <div class="top" style="margin-bottom:8px"><span class="dim">IR wall sensors</span><span class="dim">Walls: <b id="walls">- - -</b></span></div>
@@ -152,13 +184,27 @@ button.busy{background:#ff5d5d;color:#fff;border-color:#ff5d5d}
 </div></div>
 
 <div class="card">
-  <div class="dim" style="margin-bottom:8px">Tuning. Change a number, press Apply, try it. A changed box is outlined in yellow until applied. Not allowed during a run.</div>
-  <div class="tune" id="tune"></div>
+  <div class="dim" style="margin-bottom:8px">Accelerometer (m/s&sup2;, gravity taken out). Only shown here: the robot does not use it. For scale, the search speeds up at 0.6 m/s&sup2; and a full-speed run at 2.6.</div>
+  <div class="vals">
+    <div>X now <b id="accX">--</b></div><div>largest in 3 s <b id="accPX">--</b></div>
+    <div>Y now <b id="accY">--</b></div><div>largest in 3 s <b id="accPY">--</b></div>
+    <div>Z now <b id="accZ">--</b></div><div>largest in 3 s <b id="accPZ">--</b></div>
+  </div>
+  <div class="dim" style="margin-top:8px">Which of X and Y is forward depends on how the sensor sits on the board: push the robot forward by hand and see which one moves.</div>
+</div>
+
+<div class="card">
+  <div class="dim" style="margin-bottom:8px">Single moves and checks</div>
   <div class="row">
-    <button class="plain" id="tuneApply">Apply</button>
-    <button class="plain" id="tuneSave">Save on the robot</button>
-    <button class="plain" data-cmd="tune">List values</button>
-    <button class="plain" id="tuneReset">Back to code values</button>
+    <button class="plain" data-cmd="cell">Drive one cell (search, step by step)</button>
+    <button class="plain" data-cmd="left45">Turn left 45&deg;</button>
+    <button class="plain" data-cmd="right45">Turn right 45&deg;</button>
+    <button class="plain" data-cmd="left90">Turn left 90&deg; (on the spot)</button>
+    <button class="plain" data-cmd="right90">Turn right 90&deg; (on the spot)</button>
+    <button class="plain" data-cmd="curveleft">Curve left 90&deg; (rolling)</button>
+    <button class="plain" data-cmd="curveright">Curve right 90&deg; (rolling)</button>
+    <button class="plain" data-cmd="health">Health check</button>
+    <button class="plain" data-cmd="ir">Raw IR readings</button>
   </div>
 </div>
 
@@ -167,6 +213,14 @@ button.busy{background:#ff5d5d;color:#fff;border-color:#ff5d5d}
   <pre id="log"></pre>
   <form id="form"><input id="cmd" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="command, e.g. status"><button type="submit">Send</button></form>
 </div>
+
+<div class="card">
+  <div class="top" style="margin-bottom:8px"><span class="dim">Cameras</span><span class="dim" id="camNote"></span></div>
+  <div class="cams" id="cams"></div>
+  <div class="dim" style="margin-top:8px">The cameras are plugged into a computer, not the robot. On that computer, join the robot's Wi-Fi and run <b>tools/camera_feeds/camera_server.py</b>, then put the address it prints here:</div>
+  <form id="camForm"><input id="camAddr" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="http://192.168.4.2:8090"><button type="submit">Show</button></form>
+</div>
+
 <p class="dim" style="text-align:center"><a href="/update">Upload new firmware</a></p>
 
 <script>
@@ -174,6 +228,7 @@ const $ = id => document.getElementById(id);
 let next = 0, misses = 0;
 let done = 0;        // Commands the robot has taken so far (from its last answer)
 let waiting = null;  // The button whose command is still being carried out
+const accHeld = [0, 1, 2].map(() => ({ value: 0, since: 0 })); // Largest acceleration per axis, held 3 s
 
 // A button given here turns red until the robot has taken its command and has stopped moving
 function send(command, button) {
@@ -196,6 +251,21 @@ const showSpeed = () => { $("speedPctText").textContent = $("speedPct").value; }
 $("speedPct").oninput = () => { showSpeed(); try { localStorage.setItem("speedPct", $("speedPct").value); } catch (e) {} };
 showSpeed();
 $("speedrun").onclick = () => send("speedrun " + $("speedPct").value, $("speedrun"));
+// The verdict buttons. "It worked" is sent at once. "It failed" first asks what happened and
+// sends that along ("fail clipped the post in 2,1"); Cancel sends nothing, an empty answer is fine.
+function verdict(word) {
+  if (word == "success") { send(word); return; }
+  const what = prompt("What happened? (where, and what the robot did)", "");
+  if (what === null) return;
+  send((word + " " + what.trim()).trim());
+}
+// The two maze boxes: ticking one sends "maze 3" or "maze 16". They follow what the robot reports,
+// so if it refuses (during a run) the tick jumps back. Held still for a moment after a tap.
+let mazeTapped = 0;
+const mazeBoxes = document.querySelectorAll("input[name=mazeSize]");
+mazeBoxes.forEach(box => box.onchange = () => { mazeTapped = Date.now(); send("maze " + box.value); });
+$("resultGood").onclick = () => verdict("success");
+$("resultBad").onclick = () => verdict("fail");
 $("clear").onclick = () => { $("log").textContent = ""; };
 // The Tuning card. Same names, in the same order, as kTune in control.cpp: keep the two in step.
 const TUNE = [["v_kp", "Speed loop P"], ["v_ki", "Speed loop I"], ["v_kd", "Speed loop D"],
@@ -207,7 +277,9 @@ const TUNE = [["v_kp", "Speed loop P"], ["v_ki", "Speed loop I"], ["v_kd", "Spee
   ["ff_ks", "Feedforward: friction"], ["ff_kv", "Feedforward: per mm/s"], ["ff_ka", "Feedforward: per mm/s\u00b2"],
   ["turn_ff", "Turn feedforward scale (lower if turns overshoot)"],
   ["h_max", "Heading loop: most effort"], ["h_imax", "Heading loop: most from I"],
-  ["w_max", "Wall centring: most steering (deg)"], ["w_gyro", "Wall centring: turn-rate damping"]];
+  ["w_max", "Wall centring: most steering (deg)"], ["w_gyro", "Wall centring: turn-rate damping"],
+  ["s_damp", "Straights: turn-rate damping (0 = off)"], ["t_damp", "After a turn: turn-rate damping (0 = off)"],
+  ["t_push", "After a turn: nudge onto the heading (0 = off)"], ["c_kp", "Curves: extra heading P (0 = off)"]];
 TUNE.forEach(([name, label]) => {
   $("tune").insertAdjacentHTML("beforeend", "<div>" + label + " <span class=dim>" + name + "</span></div>" +
     "<input id=t_" + name + " inputmode=decimal autocomplete=off>");
@@ -378,6 +450,14 @@ function show(d) {
     (s.walls[0] === "L" ? "LEFT " : "- ") + (s.walls[1] === "F" ? "FRONT " : "- ") + (s.walls[2] === "R" ? "RIGHT" : "-");
   for (const k of ["heading", "vbat", "encL", "encR", "motor", "imu", "supply", "loop", "cell", "visited", "look", "why", "late"])
     if (s[k] !== undefined) $(k).textContent = s[k];
+  // Accelerometer: three values now, then the largest on each axis since the robot was last
+  // asked. The page holds each axis's largest for 3 seconds so it can be read.
+  if (s.acc) ["X", "Y", "Z"].forEach((axis, i) => {
+    $("acc" + axis).textContent = s.acc[i].toFixed(2);
+    const held = accHeld[i];
+    if (s.acc[i + 3] >= held.value || Date.now() - held.since > 3000) { held.value = s.acc[i + 3]; held.since = Date.now(); }
+    $("accP" + axis).textContent = held.value.toFixed(2);
+  });
   // Tuning boxes follow the robot, except one that is being edited
   if (s.tune) TUNE.forEach(([name], i) => {
     const box = $("t_" + name);
@@ -395,7 +475,9 @@ function show(d) {
 async function poll() {
   try {
     const r = await fetch("/data?since=" + next, { cache: "no-store" });
-    show(await r.json());
+    const status = await r.json();
+    show(status);
+    if (Date.now() - mazeTapped > 1500) mazeBoxes.forEach(box => { box.checked = (box.value == (status.status || {}).n); });
     misses = 0;
   } catch (e) {
     misses++;

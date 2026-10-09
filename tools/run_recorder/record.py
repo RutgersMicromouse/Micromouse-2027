@@ -31,6 +31,7 @@ UART_TX = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'    # The robot's output arrives
 
 LOG_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'logs')
 SEND_FILE = os.path.join(LOG_FOLDER, 'send.txt')    # Lines added here are sent to the robot
+RESULTS_FILE = os.path.join(LOG_FOLDER, 'results.txt')  # Every [RESULT] line the robot prints
 
 
 def clock():
@@ -61,6 +62,11 @@ class Recorder:
                 stamped = '%s  %s' % (clock(), line)
                 print(stamped)
                 self.file.write(stamped + '\n')
+                # The operator's verdicts ("It worked" / "It failed" in the app) are also kept
+                # together in one file, with the date, so they can be compared across sessions
+                if '[RESULT]' in line:
+                    with open(RESULTS_FILE, 'a', encoding='utf-8') as results:
+                        results.write('%s %s\n' % (datetime.date.today().isoformat(), stamped))
 
 
 async def record(commands):

@@ -157,6 +157,22 @@ void clearSavedMaze() {
     showSelectedMode();
 }
 
+bool setMazeSize(uint8_t size) {
+#ifdef MAZE_SIZE_SWITCHABLE
+    if (isRunActive() || (size != 3 && size != 16)) return false;
+    {
+        NavigatorLock lock;
+        g_navigator->changeMazeSize(size);
+    }
+    StatusLED::flash(StatusLED::BLUE, 2, 100);
+    showSelectedMode();
+    return true;
+#else
+    (void)size;
+    return false; // This build is fixed at one size
+#endif
+}
+
 uint8_t getSpeedTier() {
     return s_speed_tier;
 }

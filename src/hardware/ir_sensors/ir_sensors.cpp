@@ -159,7 +159,8 @@ void IRSensors::update() {
     if (front_level_measured_ && readings_.wall_front) {
         const float centred_reading = (float)thresh_front_ / 0.40f;
         readings_.front_offset_mm = FRONT_SENSOR_TO_WALL_MM *
-                                    (relativeDistance(readings_.front_center, (uint16_t)centred_reading) - 1.0f);
+                                    (relativeDistance(readings_.front_center, (uint16_t)centred_reading) - 1.0f)
+                                    - FRONT_STOP_EXTRA_MM; // Aim to stand this much further back than the centre
     }
 
     // Opening anticipation: 90° sensor detects wall present beside the robot,
@@ -174,6 +175,16 @@ void IRSensors::update() {
     bool valid_left_guide  = readings_.wall_left  && !readings_.opening_left  && (readings_.left_45  > thresh_l45_);
     bool valid_right_guide = readings_.wall_right && !readings_.opening_right && (readings_.right_45 > thresh_r45_);
     bool both_diagonals_funnel = (readings_.left_45 > thresh_l45_) && (readings_.right_45 > thresh_r45_);
+
+    // A 45° sensor whose centred reading is small has little to steer by: a few counts of noise
+    // are a large share of it. While the other side has a proper wall to follow, the weak side
+    // is left out of the steering (it is still used when it is the only wall there is).
+    const bool weak_left  = nominal_center_l45_ < IR_CENTER_MIN_NOMINAL;
+    const bool weak_right = nominal_center_r45_ < IR_CENTER_MIN_NOMINAL;
+    if (valid_left_guide && valid_right_guide && weak_left != weak_right) {
+        if (weak_right) valid_right_guide = false;
+        else            valid_left_guide = false;
+    }
 
     // Centering error calculation with opening anticipation & dynamic front-wall approach squaring
     const bool squaring_on_front = ENABLE_FRONT_SQUARING && readings_.wall_front;
@@ -269,14 +280,22 @@ bool IRSensors::calibrateInCell(uint16_t sample_count) {
     // they may be looking at the side wall of the NEXT cell, which can have a gap in it. If one
     // of them sees nothing while the other does, borrow from the good side, scaled by how the two
     // 90° sensors compare (which both do see this cell's walls).
-    const bool left_ok  = avg_l45 >= 100;
-    const bool right_ok = avg_r45 >= 100;
+    // "Sees nothing" is judged against IR_CALIB_45_MIN, not a level a strong sensor would reach:
+    // on this robot the right 45° sensor reads only 50-110 against a wall (the left one 230-420),
+    // and with the old cut-off of 100 it was written off as "no wall" at most calibrations. Its
+    // level was then guessed from the left sensor, three times too high, so a wall on the right
+    // was never recognised and sometimes counted as an opening.
+    // It must also be a fair share of what the other side would predict for it: a strong sensor
+    // looking into a gap still reads something from the wall beyond, and that is not a wall.
+    // (On the robot the weak right sensor comes to 23-33 % of the prediction; a gap is well below.)
+    const float left_to_right = (avg_l90 > 100 && avg_r90 > 100) ? (float)avg_r90 / (float)avg_l90 : 1.0f;
+    const bool left_ok  = avg_l45 >= IR_CALIB_45_MIN && (float)avg_l45 >= IR_CALIB_45_MIN_SHARE * (float)avg_r45 / left_to_right;
+    const bool right_ok = avg_r45 >= IR_CALIB_45_MIN && (float)avg_r45 >= IR_CALIB_45_MIN_SHARE * (float)avg_l45 * left_to_right;
     if (!left_ok && !right_ok) {
         Serial.println("[CALIB] ERROR: Side sensor readings too low! Ensure robot is centered between left/right walls.");
         return false;
     }
     if (!left_ok || !right_ok) {
-        float left_to_right = (avg_l90 > 100 && avg_r90 > 100) ? (float)avg_r90 / (float)avg_l90 : 1.0f;
         if (!right_ok) avg_r45 = (uint16_t)((float)avg_l45 * left_to_right);
         if (!left_ok)  avg_l45 = (uint16_t)((float)avg_r45 / left_to_right);
         Serial.println("[CALIB] Note: one 45° sensor saw no wall (gap ahead on that side). Estimated it from the other side.");
@@ -288,8 +307,11 @@ bool IRSensors::calibrateInCell(uint16_t sample_count) {
 
     // Detection thresholds set to 40% of nominal wall reflection
     thresh_l90_ = (avg_l90 > 100) ? (uint16_t)(avg_l90 * 0.40f) : WALL_THRESH_L90;
-    thresh_l45_ = (uint16_t)(avg_l45 * 0.40f);
-    thresh_r45_ = (uint16_t)(avg_r45 * 0.40f);
+    // (a weak sensor's 40 % would sit down among what it reads with no wall at all, hence the floor)
+    thresh_l45_ = (uint16_t)fmaxf(avg_l45 * 0.40f, IR_45_MIN_WALL_LEVEL);
+    thresh_r45_ = (uint16_t)fmaxf(avg_r45 * 0.40f, IR_45_MIN_WALL_LEVEL);
+    Serial.printf("[CALIB] 45° sensors: centred reading left %d, right %d -> 'wall' above %d / %d.\n",
+                  avg_l45, avg_r45, thresh_l45_, thresh_r45_);
     thresh_r90_ = (avg_r90 > 100) ? (uint16_t)(avg_r90 * 0.40f) : WALL_THRESH_R90;
 
     // Is there a wall right in front? One this close reads far brighter than the side walls do

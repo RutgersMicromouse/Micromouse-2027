@@ -53,12 +53,18 @@ public:
     uint32_t getReadsOk() const       { return reads_ok_; }
     uint32_t getSlowestReadUs() const { return slowest_read_us_; }
 
+    // Acceleration with gravity taken out, in m/s2 along the sensor's own X, Y and Z axes, read
+    // a few times a second. FOR DISPLAY ONLY (the app shows it): nothing in the robot uses it.
+    // `peak` is the largest size seen on each axis since the last call that asked for peaks.
+    void getAcceleration(float now[3], float peak[3], bool clear_peaks);
+
     // True if the gyro Z axis had to be flipped to agree with the fused heading
     bool isGyroFlipped() const { return gyro_sign_ < 0; }
 
 private:
     bool initBNO055(uint8_t address);
     bool readBNO055Data(float& heading_deg, float& gyro_z);
+    void readAcceleration();
     bool writeRegister(uint8_t reg, uint8_t value);
     bool readRegister(uint8_t reg, uint8_t& value);
     void acceptReading(float raw_h, float raw_gz, bool rate_valid,
@@ -87,4 +93,6 @@ private:
     uint32_t bad_read_total_;
     uint32_t fail_no_answer_ = 0, fail_short_ = 0, fail_bad_value_ = 0, reads_ok_ = 0, slowest_read_us_ = 0;
     bool retry_read_;              // The last scheduled read failed: try again on the next tick
+    float accel_now_[3] = { 0.0f, 0.0f, 0.0f };   // Display only, see getAcceleration()
+    float accel_peak_[3] = { 0.0f, 0.0f, 0.0f };
 };

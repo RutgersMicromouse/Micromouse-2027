@@ -77,6 +77,11 @@
 //   ADC_11db  = least sensitive: full scale at about 3.1 V (what the bench test used)
 // If close walls now pin the reading at 4095, step down one line. Recalibrate (5 waves) after any change.
 #define IR_ADC_ATTENUATION     ADC_0db
+// Weak 45° sensors (found 2026-10-08: the right one reads 50-110 against a wall, the left 230-420)
+#define IR_CALIB_45_MIN        50       // At calibration, a 45° sensor reading at least this is looking at a wall
+#define IR_CALIB_45_MIN_SHARE  0.15f    // ...provided it is also this share of what the other side predicts for it
+#define IR_45_MIN_WALL_LEVEL  40.0f    // A 45° sensor's "wall" level is never set below this
+#define IR_CENTER_MIN_NOMINAL  120      // A 45° sensor centred below this is not steered by while the other side has a wall
 #define IR_CENTER_TOLERANCE     0.05f    // "In the middle of the cell" = within this fraction (5 %) of the wall distance
                                         //   learned by IR calibration in the start cell; no wall steering inside it
 #define IR_FILTER_ALPHA        0.75f    // Low-pass weight of the newest sample (each channel updates at 250 Hz)
@@ -156,6 +161,10 @@
 // that is new or where the route turns. Smooth turns are always taken at SEARCH_CURVE_SPEED_MM_S
 // or slower. Set it equal to SEARCH_SPEED_DEFAULT_MM_S to switch the speeding-up off.
 #define SEARCH_KNOWN_SPEED_MM_S       260.0f   // Top search speed on a straight of known cells (mm/s) [400]
+// The same idea for single cells and curves, which is what speeds up the way back in a small maze:
+// driving one cell into a cell it has visited, the robot may reach SEARCH_KNOWN_SPEED_MM_S in
+// between, and it curves through a visited cell at this instead of SEARCH_CURVE_SPEED_MM_S.
+#define SEARCH_KNOWN_CURVE_SPEED_MM_S 140.0f   // Smooth 90° turn through a cell already visited (mm/s)
 
 // Speedrun Kinematic Limits for N20 12V 30:1 Gearmotors (Max theoretical no-load ~700 mm/s)
 #define SPEEDRUN_CRUISE_SPEED_MM_S    500.0f   // High-speed straight cruise speed for N20 (mm/s)
@@ -227,7 +236,11 @@
 // left to correct. Like the check, it only acts once the front level has been measured.
 #define ENABLE_FRONT_WALL_STOP 1        // 0 = stop by the encoders alone, as before
 #define FRONT_STOP_TRUST_MM    30.0f    // The sensors may move the stopping point this far from where the encoders put it
-#define FRONT_FIX_GAIN        0.7f     // Share of the measured error that is corrected (the distance is an estimate)
+// Where the robot stands in front of a wall: this much further from the wall than the cell centre
+// (owner's request, 2026-10-08). Both the stop above and the front-wall check aim for that point,
+// and the check's printed "short of / past the cell centre" is measured from it. 0 = the centre.
+#define FRONT_STOP_EXTRA_MM    5.0f
+#define FRONT_FIX_GAIN       0.7f     // Share of the measured error that is corrected (the distance is an estimate)
 #define FRONT_FIX_MIN_MM       3.0f     // Smaller errors than this are left alone
 #define FRONT_FIX_MAX_MM       20.0f    // Never shuffle further than this, whatever the sensors say
 
@@ -242,6 +255,13 @@
 #define TURN_SETTLE_PUSH       0.04f    // Extra effort (on top of ff_ks) that nudges the robot onto its heading after a turn
                                         // on the spot. Raise if turns still end a few degrees off, lower if it twitches. 0 = off.
 #define TURN_SETTLE_PUSH_MAX_RATE_DEG_S 10.0f // No nudge while already turning toward the heading faster than this
+#define TURN_SETTLE_PUSH_FULL_DEG 6.0f  // The nudge is at full strength this far off the heading and fades to ff_ks alone at zero
+// Turn-rate damping (effort per deg/s of turn rate from the gyro, opposing it). For scale: holding
+// a turn of 1 deg/s takes about 0.0005 effort. 0 = off. Lower these if the robot buzzes or feels sluggish.
+// These two and TURN_SETTLE_PUSH are only starting values: the app's Tuning card changes them live
+// (s_damp, t_damp, t_push), and a set saved on the robot overrides them.
+#define TURN_SETTLE_DAMPING    0.0004f  // While settling after a turn on the spot
+#define STRAIGHT_YAW_DAMPING   0.0f     // On straights and diagonals. OFF at the owner's request (2026-10-08); try 0.0002 from the app (s_damp)
 #define CHAIN_TIMEOUT_TICKS    250      // Moves starting within 0.5 s of the last one carry on from where it aimed to end
 
 // Search Look-Ahead (smooth turns during the search run)
@@ -267,6 +287,10 @@
 // within this many degrees of the curve's final heading; with that the search can curve again
 // straight away instead of driving to the cell centre and turning on the spot.
 #define ENABLE_SEARCH_CHAINED_CURVES 1  // 0 = always drive to the cell centre after a curve
+// Whether the 45° readings taken as a curve ends may decide a second curve into a cell the robot
+// has never visited. OFF since 2026-10-08: on the robot they called a walled side open twice running
+// and it curved into the wall. With 0, curves are only chained through cells it has visited before.
+#define SEARCH_CHAIN_CURVES_BY_SENSORS 0
 #define SEARCH_CURVE_SIDE_SAMPLE_DEG 8.0f
 
 // Diagonal Centring (keeps the robot midway between the posts on a diagonal)
@@ -302,8 +326,16 @@
 // SET TO 3 FOR NOW at the owner's request (2026-10-07), so the ordinary upload runs the practice
 // maze. The `competition` build always uses 16 whatever is written here. Change this back to 16
 // when moving on to a full maze with the `main` build.
+//
+// Since 2026-10-08 (owner's request) the size can be switched while the robot is on: the app's
+// maze button, or "maze 3" / "maze 16" on the console. The choice is kept in flash, and each size
+// keeps its own saved map. MAZE_DEFAULT_SIZE is only what a robot that has never been told uses.
+// A build that sets MAZE_ACTIVE_SIZE itself (`competition` = 16, `test3x3` = 3) is fixed at that.
 #ifndef MAZE_ACTIVE_SIZE
-#define MAZE_ACTIVE_SIZE       3
+#define MAZE_SIZE_SWITCHABLE   1
+#define MAZE_DEFAULT_SIZE      3
+extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
+#define MAZE_ACTIVE_SIZE       g_maze_size
 #endif
 
 // Wall Memory: every sensor reading of a wall is a vote, +1 for "wall" and -1 for "open".
@@ -336,6 +368,11 @@
 #define IMU_MAX_STEP_DEG           30.0f // A heading jump larger than this between two 100 Hz reads is rejected as a glitch
 #define IMU_GLITCH_READS           3    // A far-off heading this many reads running is believed, not rejected
 #define IMU_FAULT_READS            10   // Consecutive bad reads (100 ms) before falling back to encoder odometry
+// Accelerometer on show (owner's request, 2026-10-08): the BNO055's acceleration is read 20 times
+// a second and shown in the app, to judge whether it could ever help measure distance. Nothing in
+// the robot uses it. It costs one extra I2C read every 25th control tick; set to 0 to drop that.
+// Follows the Wi-Fi switch, so the `competition` build (no app to show it in) never makes the read.
+#define ENABLE_ACCEL_DISPLAY       ENABLE_WIFI_OTA
 #define IMU_FILTER_ALPHA           0.6f  // Heading smoothing: share of each new BNO055 reading that is believed (1 = no smoothing)
 #define ENCODER_FAULT_TICKS        75   // Control ticks (150 ms) one wheel may read zero while the other is moving
 #define HEADING_FAULT_DEG          60.0f // Heading this far off course = crashed or picked up (lift + twist to stop a run)

@@ -66,6 +66,12 @@ public:
     void clearNVS();
     bool hasSavedMaze() const;
 
+#ifdef MAZE_SIZE_SWITCHABLE
+    // Which maze size is in use (3 or 16) is itself kept in flash
+    static void loadSizeFromNVS();
+    static void saveSizeToNVS();
+#endif
+
 private:
     // The tally for one wall, or nullptr for an outer wall (always present, never changes).
     // Each wall is stored once: as the north wall or the east wall of the cell below / left of it.

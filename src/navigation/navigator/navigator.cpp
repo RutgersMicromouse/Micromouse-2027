@@ -29,7 +29,28 @@ Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_que
     pose_.current_dir = DIR_NORTH;
 }
 
+#ifdef MAZE_SIZE_SWITCHABLE
+// Switch between the 3x3 practice maze and a full 16x16 one. Each size has its own saved map,
+// which is loaded here; the robot is taken to be in the start cell facing into the maze.
+// (Never called during a run: Actions::setMazeSize refuses.)
+void Navigator::changeMazeSize(int size) {
+    g_maze_size = (size == 16) ? 16 : 3;
+    Maze::saveSizeToNVS();
+    begin();
+    pose_.cell_x = 0;
+    pose_.cell_y = 0;
+    pose_.current_dir = DIR_NORTH;
+    search_phase_ = PHASE_AT_CENTRE;
+    maze_changed_ = false;
+    best_route_explored_ = false;
+    Serial.printf("[NAV] Maze size is now %dx%d. Position back to the start cell (0, 0).\n", g_maze_size, g_maze_size);
+}
+#endif
+
 void Navigator::begin() {
+#ifdef MAZE_SIZE_SWITCHABLE
+    Maze::loadSizeFromNVS();
+#endif
     maze_.reset();
     if (maze_.loadFromNVS()) {
         Serial.println("[NAV] Found previously saved maze in Flash! Loaded successfully for instant Speedrun.");
