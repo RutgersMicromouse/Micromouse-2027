@@ -1,7 +1,23 @@
+name: PlatformIO CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    name: PlatformIO Build & Test
+    name: PlatformIO Build
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -9,7 +25,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Cache PlatformIO dependencies
         uses: actions/cache@v4
@@ -22,11 +38,9 @@ jobs:
             ${{ runner.os }}-pio-
 
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
 
       - name: Run PlatformIO Build
         run: pio run
-
-      # Uncomment if you have unit tests set up in your test/ directory
-      # - name: Run PlatformIO Test
-      #   run: pio test
