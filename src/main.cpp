@@ -17,47 +17,118 @@ int maxHandDistance = 100;
 
 
 void distancePrint() {
-    Serial.print(left());
-    Serial.print(" | ");
-    Serial.print(front());
-    Serial.print(" | ");
-    Serial.println(right());
+    Serial1.print("Left");
+    Serial1.print(left());
+    Serial1.print("Front");
+    Serial1.print(front());
+    Serial1.print("Right");
+    Serial1.print(right());
 }
 
 // Non-blocking delay that keeps printing sensor readings
 
+void handleBluetoothCommand(String command) {
+    command.trim();
+
+    if (!command.startsWith("SET,")) {
+        Serial1.println("ERROR,Unknown command");
+        return;
+    }
+
+    int separator = command.indexOf(',', 4);
+    if (separator < 0) {
+        Serial1.println("ERROR,Invalid format");
+        return;
+    }
+
+    String name = command.substring(4, separator);
+    String valueString = command.substring(separator + 1);
+
+    if (valueString.length() == 0) {
+        Serial1.println("ERROR,Missing value");
+        return;
+    }
+
+    char* endPtr;
+    double value = strtod(valueString.c_str(), &endPtr);
+
+    if (*endPtr != '\0' || !isfinite(value)) {
+        Serial1.println("ERROR,Invalid number");
+        return;
+    }
+
+    if (setPidParameter(name.c_str(), value)) {
+        Serial1.print("ACK,");
+        Serial1.print(name);
+        Serial1.print(",");
+        Serial1.println(value, 2);
+    } else {
+        Serial1.println("ERROR,Unknown parameter or value out of range");
+    }
+}
+
+void pollBluetoothCommands() {
+    static String commandBuffer;
+
+    while (Serial1.available()) {
+        char c = Serial1.read();
+
+        if (c == '\n') {
+            handleBluetoothCommand(commandBuffer);
+            commandBuffer = "";
+        } else if (c != '\r') {
+            if (commandBuffer.length() < 80) {
+                commandBuffer += c;
+            } else {
+                commandBuffer = "";
+                Serial1.println("ERROR,Command too long");
+            }
+        }
+    }
+}
 
 void setup() {
-
     pinMode(LED_BUILTIN, OUTPUT);
     Serial.begin(115200);
-    Serial1.begin(9600); // 9600 works
-    delay(2000);
+    Serial1.begin(9600);
+    delay(1000);
 
-    Serial1.println("BOOT OK");
-
-    for (int i = 0; i < 5; i++) {
-        digitalWrite(LED_BUILTIN, LOW);  delay(200);
-        digitalWrite(LED_BUILTIN, HIGH); delay(200);
+    for (int i = 0; i < 4; i++) {
+        digitalWrite(LED_BUILTIN, LOW);  delay(250);
+        digitalWrite(LED_BUILTIN, HIGH); delay(250);
     }
     digitalWrite(LED_BUILTIN, LOW);
     Serial1.println("LED TEST DONE");
+
+    Serial1.println("BOOT OK");
+    Serial1.println("GRAPH_RESET");
+    Serial1.print("GRAPH_NODE,");
+    Serial1.print(explorer.state.current_node_id);
+    Serial1.print(",");
+    Serial1.print(explorer.state.x);
+    Serial1.print(",");
+    Serial1.println(explorer.state.y);
+
+    
 
     Wire.begin();
     Wire.setClock(400000);
     tofSetup();
     motorSetup();
     imuSetup();
-    
+    explorer.publishState();
+    Serial1.println("Done");
     // Wait to Start
     digitalWrite(LED_BUILTIN, HIGH);
-    smart_delay(25);
+    smart_delay(500);
     int handState = 0;
+    digitalWrite(LED_BUILTIN, LOW);
     double t_start = micros();
     double t_buffer = micros();
 
 
     while(true) {
+        pollBluetoothCommands();
         double t_current = micros();
         int front_dist = front();
         if(front_dist < maxHandDistance && front_dist > 0 && t_current > t_buffer + 300000UL) {
@@ -75,14 +146,17 @@ void setup() {
                 // Serial1.print("AT+UART=9600,0,0\r\n");
                 // delay(5000);
                 // Serial1.print("AT+UART?\r\n");
+                pidForward(100);
                 return;
             } else if (handState == 2) {
-                explorer.isEncoder = true;
-                pidForward(50, true);
+                explorer.isTof = true;
+                pidForward(90, true);
                 delay(2000);
-                Serial.println("First Done");
+                Serial1.println("Tof Mode Selected");
+
             } else if (handState == 1) {
-                pidForward(50);
+                pidForward(90);
+                Serial1.println("Encoder Mode Selected");
             }
             break;
         }
@@ -114,36 +188,10 @@ void setup() {
 }
 
 
-long bauds[] = {9600, 38400, 115200, 57600};
+long bauds[] = {9600, 9600, 9600, 9600};
 int idx = 0;
 
 void loop() {
-    long b = bauds[idx];
-    Serial1.begin(b);
-    for (int i = 0; i < 5; i++) {
-        Serial1.print("Hello at ");
-        Serial1.println(b);
-        delay(500);
-    }
-    Serial1.end();
-    Serial.print("tried "); Serial.println(b);
-    idx = (idx + 1) % 4;
-
-    
-
-    // Serial1.println("Something Different");
-    // Serial.println("Hi!");
-    // delay(1000);
-
-    //Send message out of TX1 (Pin 1)
-    // Serial1.println("Loopback Test String");
-
-    // // Read back what comes into RX1 (Pin 0)
-    // while (Serial1.available()) {
-    //     char c = Serial1.read();
-    //     Serial.print("SUCCESS RECEIVED: ");
-    //     Serial.print(c);
-    // }
-
-    // delay(1000);
+    delay(1000);
+    distancePrint();
 }

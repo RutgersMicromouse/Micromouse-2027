@@ -2,7 +2,7 @@
 
 #define PI 3.1415926535897932384626433832795
 #define WHEEL_DIAM 32 // wheel diameter in mm
-#define TICKS_PER_ROTATION 840 // 840 encoder ticks per 1 wheel rotation
+#define TICKS_PER_ROTATION 234 // 840 encoder ticks per 1 wheel rotation
 
 
 
@@ -12,8 +12,11 @@
 #include "ioexpander.h"
 
 // use PID to drive forward in mm
-void pidForward(double distance, bool isEncoder = false); 
+void pidForward(double distance, bool isTof = false); 
 void pidReverse(double distance);
+
+// Runtime tuning from Bluetooth dashboard
+bool setPidParameter(const char* name, double value);
 
 // left wall following logic
 /*  
@@ -28,4 +31,3 @@ void pidReverse(double distance);
 // use PID to drive straight infinitely until condition
 // if (!wallLeft() || wallFront()) { return };
 
-void pidForwardLeftWallFollow();

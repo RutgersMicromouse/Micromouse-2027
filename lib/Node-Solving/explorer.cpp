@@ -71,34 +71,42 @@ void Explorer::explore() {
         //STAGE 2: Solving
         executeInstructions(instructionsToFinal);  // EDIT HERE instructionsToFinal
 
+        #include "imu.h"
         // beacon
         //smart_delay(1000);
         Direction original_heading = state.heading;
         //smart_delay(1000);
+                publishState();
         if (front() >= 10) {
-            pidForward(50, isEncoder);
+            pidForward(50, isTof);
             smart_delay(25);
             pidReverse(40);
+                        publishState();
         }
         faceDirection(original_heading);
         
         //smart_delay(1000);
+                        publishState();
 
 
         //return back to start
         faceDirection(oppositeDirection(state.heading));  // EDIT HERE
+                        publishState();
         executeInstructions(reverseInstructionsToFinal);
         
         faceDirection(oppositeDirection(state.heading));
 
+                    publishState();
         delay(25);
     }
     //STAGE 3: Solving Faster
     // faceDirection(oppositeDirection(state.heading));
+                        publishState();
     // delay(25);
     // executeInstructions(instructionsToFinal);  // EDIT HERE instructionsToFinal
 
     // beacon
+                        publishState();
     // //smart_delay(1000);
     // Direction original2_heading = state.heading;
     // //smart_delay(1000);
@@ -207,8 +215,20 @@ void Explorer::exploreFromNode(int node_id, Direction heading_to_parent) {
         Serial1.print("| HEADING: ");
         Serial1.println(static_cast<int>(oppositeDirection(state.heading)));
         graph.addEdge(node_id, next_node_id, dir, instructions, cost);
+        Serial1.print("GRAPH_EDGE,");
+        Serial1.print(node_id);
+        Serial1.print(",");
+        Serial1.print(next_node_id);
+        Serial1.print(",");
+        Serial1.println(cost, 2);
         Direction parent_heading = oppositeDirection(state.heading);
         graph.addEdge(next_node_id, node_id, oppositeDirection(state.heading), reverseInstructions, cost);
+        Serial1.print("GRAPH_EDGE,");
+        Serial1.print(next_node_id);
+        Serial1.print(",");
+        Serial1.print(node_id);
+        Serial1.print(",");
+        Serial1.println(cost, 2);
         Serial1.print("Discovered New Node?: ");
         Serial1.println(discoveredNewNode);
         if (discoveredNewNode) {
@@ -291,7 +311,7 @@ void Explorer::executeInstructions(const std::vector<Instruction>& instructions)
         switch (instr.type) {
             case InstructionType::FORWARD:
                 Serial1.println("Reverse (Forward)");
-                pidForward(instr.value * CELL_SIZE_MM, isEncoder);
+                pidForward(instr.value * CELL_SIZE_MM, isTof);
                 updatePosition(instr.value);
                 break;
             
@@ -383,7 +403,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
             Serial1.print("Left: "); Serial1.print(left()); Serial1.print(" | Front: "); Serial1.print(front()); Serial1.print(" | Right: "); Serial1.println(right());
             if (front() > WALL_THRESHOLD_MM) {
                 Serial1.println("Move forward");
-                pidForward(CELL_SIZE_MM, isEncoder);
+                pidForward(CELL_SIZE_MM, isTof);
                 updatePosition(1);
                 steps++;
                 out_instructions.push_back({InstructionType::FORWARD, 1});
@@ -392,7 +412,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
                 pidRotate(-90);
                 state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 1) % 4);
                 smart_delay(25);
-                pidForward(CELL_SIZE_MM, isEncoder);
+                pidForward(CELL_SIZE_MM, isTof);
                 updatePosition(1);
                 steps+=2;
                 out_instructions.push_back({InstructionType::ROTATE_RELATIVE, -90});
@@ -402,7 +422,7 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
                 pidRotate(90);
                 state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4);
                 smart_delay(25);
-                pidForward(CELL_SIZE_MM, isEncoder);
+                pidForward(CELL_SIZE_MM, isTof);
                 updatePosition(1);
                 steps+=2;
                 out_instructions.push_back({InstructionType::ROTATE_RELATIVE, 90});
@@ -463,6 +483,12 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
             }
             else {
                 int new_id = graph.addNode(state.x, state.y);
+                Serial1.print("GRAPH_NODE,");
+                Serial1.print(new_id);
+                Serial1.print(",");
+                Serial1.print(state.x);
+                Serial1.print(",");
+                Serial1.println(state.y);
                 positionMap[positionKey(state.x, state.y)] = new_id;
                 state.current_node_id = new_id;
                 // if (beaconDetected) {
@@ -499,6 +525,20 @@ bool Explorer::isKnownPosition(int x, int y) {
 void Explorer::faceDirection(Direction d) {
     turnTo(directionToDegrees(d));
     state.heading = d;
+    publishState();
+}
+
+void Explorer::publishState() {
+    Serial1.print("BOT_STATE,");
+    Serial1.print(state.x);
+    Serial1.print(",");
+    Serial1.print(state.y);
+    Serial1.print(",");
+    Serial1.print(angle(), 1);
+    Serial1.print(",");
+    Serial1.print(static_cast<int>(state.heading));
+    Serial1.print(",");
+    Serial1.println(state.current_node_id);
 }
 
 
@@ -509,6 +549,7 @@ void Explorer::updatePosition(int steps) {
         case Direction::EAST:  state.x += steps; break;
         case Direction::WEST:  state.x -= steps; break;
     }
+    publishState();
 }
 
 
