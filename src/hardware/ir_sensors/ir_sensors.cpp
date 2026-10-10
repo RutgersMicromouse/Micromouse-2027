@@ -179,15 +179,30 @@ void IRSensors::update() {
     bool valid_right_guide = readings_.wall_right && !readings_.opening_right && (readings_.right_45 > thresh_r45_);
     bool both_diagonals_funnel = (readings_.left_45 > thresh_l45_) && (readings_.right_45 > thresh_r45_);
 
+    // What the steering measures the distance to each side wall with. The 90° sensors, when their
+    // centred readings are known: they read 300-600 against a wall and move clearly with a few
+    // millimetres of drift. The 45° sensors were used before; on this robot they read 110-170, as
+    // much noise as signal, so the robot crept 8 mm toward a wall with the error still at zero,
+    // and near a front wall they read THAT wall and swerved the robot (2026-10-10). They still
+    // decide whether a side is a guide at all (wall there, and no opening coming up ahead).
+    const bool steer_by_90 = ENABLE_SIDE_SENSOR_CENTERING && steer_by_side_sensors_ &&
+                             nominal_center_l90_ > 0 && nominal_center_r90_ > 0;
+
     // A 45° sensor whose centred reading is small has little to steer by: a few counts of noise
     // are a large share of it. While the other side has a proper wall to follow, the weak side
     // is left out of the steering (it is still used when it is the only wall there is).
+    // (Only while steering by the 45° sensors: the 90° ones are strong on both sides.)
     const bool weak_left  = nominal_center_l45_ < IR_CENTER_MIN_NOMINAL;
     const bool weak_right = nominal_center_r45_ < IR_CENTER_MIN_NOMINAL;
-    if (valid_left_guide && valid_right_guide && weak_left != weak_right) {
+    if (!steer_by_90 && valid_left_guide && valid_right_guide && weak_left != weak_right) {
         if (weak_right) valid_right_guide = false;
         else            valid_left_guide = false;
     }
+
+    const float guide_left  = steer_by_90 ? relativeDistance(readings_.left_90,  nominal_center_l90_)
+                                          : relativeDistance(readings_.left_45,  nominal_center_l45_);
+    const float guide_right = steer_by_90 ? relativeDistance(readings_.right_90, nominal_center_r90_)
+                                          : relativeDistance(readings_.right_45, nominal_center_r45_);
 
     // Centering error calculation with opening anticipation & dynamic front-wall approach squaring
     const bool squaring_on_front = ENABLE_FRONT_SQUARING && readings_.wall_front;
@@ -202,19 +217,20 @@ void IRSensors::update() {
         // reading: see getFrontSkew(). Comparing the raw readings made the robot veer left at
         // every front wall, because the right sensor always reads higher.)
         readings_.centering_error = 1.5f * getFrontSkew();
-    } else if ((valid_left_guide && valid_right_guide) ||
-               (both_diagonals_funnel && !readings_.wall_left && !readings_.wall_right)) {
-        // Both walls present (or re-entering a corridor with walls ahead on both sides):
-        // steer toward the side whose wall is further away
+    } else if (valid_left_guide && valid_right_guide) {
+        // Both walls present: steer toward the side whose wall is further away
+        readings_.centering_error = 2.0f * (guide_right - guide_left);
+    } else if (both_diagonals_funnel && !readings_.wall_left && !readings_.wall_right) {
+        // Re-entering a corridor with walls ahead on both sides: only the 45° sensors see them yet
         float dist_left  = relativeDistance(readings_.left_45,  nominal_center_l45_);
         float dist_right = relativeDistance(readings_.right_45, nominal_center_r45_);
         readings_.centering_error = 2.0f * (dist_right - dist_left);
     } else if (valid_left_guide) {
         // Right wall is opening or absent -> hold the centred distance from the left wall only
-        readings_.centering_error = 4.0f * (1.0f - relativeDistance(readings_.left_45, nominal_center_l45_));
+        readings_.centering_error = 4.0f * (1.0f - guide_left);
     } else if (valid_right_guide) {
         // Left wall is opening or absent -> hold the centred distance from the right wall only
-        readings_.centering_error = 4.0f * (relativeDistance(readings_.right_45, nominal_center_r45_) - 1.0f);
+        readings_.centering_error = 4.0f * (guide_right - 1.0f);
     } else {
         // Both walls open / open intersection -> maintain heading via IMU, zero steering bias
         readings_.centering_error = 0.0f;
@@ -244,7 +260,7 @@ float IRSensors::getFrontSkew() const {
     return (average > 0.15f) ? (fl - fr) / average : 0.0f; // Too faint to compare = no opinion
 }
 
-bool IRSensors::calibrateInCell(uint16_t sample_count) {
+bool IRSensors::calibrateInCell(uint16_t sample_count, bool keep_side_centre) {
     Serial.println("\n[CALIB] Starting In-Cell IR Auto-Calibration...");
     Serial.println("[CALIB] Ensure the mouse is placed squarely in the center of a cell with Left, Right, and Front walls!");
 
@@ -291,6 +307,30 @@ bool IRSensors::calibrateInCell(uint16_t sample_count) {
     // It must also be a fair share of what the other side would predict for it: a strong sensor
     // looking into a gap still reads something from the wall beyond, and that is not a wall.
     // (On the robot the weak right sensor comes to 23-33 % of the prediction; a gap is well below.)
+    // Is there a wall right in front? Then the 45° sensors are reading THAT wall, not the side
+    // walls, and what they read here must not become their "centred" value: calibrated facing the
+    // start cell's back wall they came out 2-4 times too high (273 / 453 against 149 / 117 with
+    // the way ahead clear), and in the corridor the wall steering then chased a reading it could
+    // never reach and drove the robot into the left wall (2026-10-10). A front wall at a cell
+    // centre reads about what the 90° sensors read from the side walls; an open way ahead reads
+    // a twentieth of that.
+    float side_90 = 0.0f;
+    if (avg_l90 > 100 && avg_r90 > 100) side_90 = ((float)avg_l90 + (float)avg_r90) * 0.5f;
+    else if (avg_l90 > 100)             side_90 = (float)avg_l90;
+    else if (avg_r90 > 100)             side_90 = (float)avg_r90;
+    const bool front_wall_here = (side_90 > 0.0f) ? ((float)avg_front >= 0.5f * side_90)
+                                                  : ((float)avg_front >= ((float)avg_l45 + (float)avg_r45) * 0.75f);
+    last_calibration_had_front_wall_ = front_wall_here;
+    const bool keep_45 = front_wall_here && nominal_center_l45_ > 0 && nominal_center_r45_ > 0;
+    if (keep_45) {
+        Serial.printf("[CALIB] Wall right in front: the 45° sensors are reading it, so their centred readings are kept as they were (%d / %d).\n",
+                      nominal_center_l45_, nominal_center_r45_);
+        avg_l45 = nominal_center_l45_;
+        avg_r45 = nominal_center_r45_;
+    } else if (front_wall_here) {
+        Serial.println("[CALIB] WARNING: wall right in front and no earlier 45° readings to keep. Calibrate again facing along a corridor.");
+    }
+
     const float left_to_right = (avg_l90 > 100 && avg_r90 > 100) ? (float)avg_r90 / (float)avg_l90 : 1.0f;
     const bool left_ok  = avg_l45 >= IR_CALIB_45_MIN && (float)avg_l45 >= IR_CALIB_45_MIN_SHARE * (float)avg_r45 / left_to_right;
     const bool right_ok = avg_r45 >= IR_CALIB_45_MIN && (float)avg_r45 >= IR_CALIB_45_MIN_SHARE * (float)avg_l45 * left_to_right;
@@ -307,6 +347,15 @@ bool IRSensors::calibrateInCell(uint16_t sample_count) {
     // Set nominal center values for steering
     nominal_center_l45_ = avg_l45;
     nominal_center_r45_ = avg_r45;
+    // The 90° sensors' centred readings, for the wall steering. They look straight sideways, so a
+    // wall in front does not disturb them; what matters is that the robot is standing where it
+    // was centred by hand, which it no longer is after turning round (hence keep_side_centre).
+    if (!keep_side_centre || nominal_center_l90_ == 0 || nominal_center_r90_ == 0) {
+        if (avg_l90 > 100) nominal_center_l90_ = avg_l90;
+        if (avg_r90 > 100) nominal_center_r90_ = avg_r90;
+    }
+    Serial.printf("[CALIB] 90° sensors: centred reading left %d, right %d%s.\n", nominal_center_l90_, nominal_center_r90_,
+                  keep_side_centre ? " (kept from the first measurement)" : "");
 
     // Detection thresholds set to 40% of nominal wall reflection
     thresh_l90_ = (avg_l90 > 100) ? (uint16_t)(avg_l90 * 0.40f) : WALL_THRESH_L90;
@@ -321,7 +370,7 @@ bool IRSensors::calibrateInCell(uint16_t sample_count) {
     // on the 45° sensors. A dimmer reading is only a wall further down an open corridor, and must
     // not be used as the "wall in front" level (it would make every distant wall look close).
     const float side_level = ((float)avg_l45 + (float)avg_r45) * 0.5f;
-    if ((float)avg_front >= side_level * 1.5f) {
+    if (front_wall_here) {
         thresh_front_ = (uint16_t)(avg_front * 0.40f);
         front_level_measured_ = true;
         nominal_fl_ = avg_fl; // The robot is square to this wall, so this is how the two compare
@@ -366,6 +415,8 @@ void IRSensors::saveToNVS() {
     prefs_.putUShort("r90_t", thresh_r90_);
     prefs_.putUShort("l45_c", nominal_center_l45_);
     prefs_.putUShort("r45_c", nominal_center_r45_);
+    prefs_.putUShort("l90_c", nominal_center_l90_);
+    prefs_.putUShort("r90_c", nominal_center_r90_);
     prefs_.putBool("valid", true);
     prefs_.end();
 }
@@ -387,6 +438,8 @@ bool IRSensors::loadFromNVS() {
     thresh_r90_         = prefs_.getUShort("r90_t", WALL_THRESH_R90);
     nominal_center_l45_ = prefs_.getUShort("l45_c", NOMINAL_CENTER_L45);
     nominal_center_r45_ = prefs_.getUShort("r45_c", NOMINAL_CENTER_R45);
+    nominal_center_l90_ = prefs_.getUShort("l90_c", 0); // 0 = never measured: steering falls back to the 45° sensors
+    nominal_center_r90_ = prefs_.getUShort("r90_c", 0);
     prefs_.end();
 
     Serial.printf("[IR] Loaded from Flash: CenterL45=%d, CenterR45=%d, FrontThresh=%d (%s)\n",

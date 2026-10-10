@@ -16,10 +16,15 @@
 #define PIN_ENC_R_B            5        // R2_OUT (from RENC2 via U1 pin 2Y)
 
 // Motor & Encoder Polarity Inversion (Set true/false to match physical N20 wiring)
+// All four are true. They were set to false for one night (2026-10-09), when the robot ran
+// backwards in a 3D-printed body that has since been replaced. On 2026-10-10, rolled forward by
+// hand with them false, both encoders counted DOWN, and turned left by hand they read a right turn
+// while the heading read left. "movecheck" (the app's Movement check) finds the right values on
+// the floor by itself and prints them.
 #define INVERT_LEFT_MOTOR      true
 #define INVERT_RIGHT_MOTOR     true
-#define INVERT_LEFT_ENCODER    true     // Measured on the robot: both encoders counted down when
-#define INVERT_RIGHT_ENCODER   true     //   rolling forward, so both are flipped here
+#define INVERT_LEFT_ENCODER    true
+#define INVERT_RIGHT_ENCODER   true
 
 // Motor Controller: Pololu Motoron M2T256 (I2C)
 #define PIN_MOTOR_RST          11       // MRST: Active-low reset line for Motoron (GPIO11 in schematic)
@@ -81,6 +86,13 @@
 #define IR_CALIB_45_MIN        50       // At calibration, a 45° sensor reading at least this is looking at a wall
 #define IR_CALIB_45_MIN_SHARE  0.15f    // ...provided it is also this share of what the other side predicts for it
 #define IR_45_MIN_WALL_LEVEL  40.0f    // A 45° sensor's "wall" level is never set below this
+// 1 = wall steering measures the distance to each side wall with the 90° sensors (owner said yes,
+// 2026-10-10: the 45° sensors are too weak on this robot to see a few millimetres of drift, and
+// near a front wall they read that wall). 0 = the 45° sensors, as before. Until the robot has been
+// calibrated with this firmware the 90° centred readings are unknown and it uses the 45° ones.
+// It applies to moves that ask for it (MotionCommand::steer_by_side_sensors): the search and the
+// straight test do, speed runs do not yet.
+#define ENABLE_SIDE_SENSOR_CENTERING 1
 #define IR_CENTER_MIN_NOMINAL  120      // A 45° sensor centred below this is not steered by while the other side has a wall
 #define IR_CENTER_TOLERANCE     0.05f    // "In the middle of the cell" = within this fraction (5 %) of the wall distance
                                         //   learned by IR calibration in the start cell; no wall steering inside it
@@ -118,8 +130,16 @@
 // 2. ROBOT PHYSICAL & KINEMATIC PARAMETERS
 // ==============================================================================
 
-#define WHEEL_DIAMETER_MM      40.5f    // Measured by the owner (2026-10-07)
-#define WHEEL_BASE_MM          72.0f    // Distance between left and right wheels (mm)
+#define WHEEL_DIAMETER_MM      40.89f   // Tyre diameter measured by the owner (2026-10-10; was 40.5)
+#define WHEEL_BASE_MM          80.5f    // Left wheel centre to right wheel centre, measured by the owner (2026-10-09). Was a guessed 72.
+
+// The 3D-printed base plate (owner's measurements, 2026-10-09). The PCB and its sensors did not
+// move. Nothing in the firmware uses these yet; they are here because they decide what fits:
+// a cell is 168 mm between walls, so a wall is 84 mm from the cell centre, and when the robot
+// turns on the spot its back corners sweep a circle of radius sqrt(77^2 + 47.5^2) = 90.5 mm.
+#define ROBOT_WIDTH_MM         87.5f    // Across the outside of the tyres, the widest point (2026-10-10)
+#define ROBOT_FRONT_MM         32.56f   // Wheel axle to the front edge (casing of 2026-10-10)
+#define ROBOT_BACK_MM          33.69f   // Wheel axle to the back edge (casing of 2026-10-10)
 
 // N20 12V Micro Metal Gearmotors with Magnetic Encoders
 #define ENCODER_GEAR_RATIO     30.0f    // 30:1 metal gear reduction ratio
@@ -133,8 +153,11 @@
 // Measured by the owner on 2026-10-07: 4974 (left) and 2632 (right) ticks in 10 turns by hand.
 // Neither is the datasheet 840 and they are not a clean ratio of each other, so the encoders are
 // probably missing counts; these are the best numbers available until that is found.
-#define ENCODER_TICKS_PER_REV_LEFT   497.4f
-#define ENCODER_TICKS_PER_REV_RIGHT  263.2f
+// Counted by the owner on 2026-10-10: 10 full turns of each wheel by hand, twice (left 5699 and
+// 5754 ticks, right 2930 and 2937). The right encoder counts about half of what the left does.
+// The values before this (497.4 and 263.2) were about 13 % low, which dist_k 1.15 made up for.
+#define ENCODER_TICKS_PER_REV_LEFT   572.7f
+#define ENCODER_TICKS_PER_REV_RIGHT  293.4f
 #define MM_PER_TICK_LEFT       ((PI * WHEEL_DIAMETER_MM) / ENCODER_TICKS_PER_REV_LEFT)
 #define MM_PER_TICK_RIGHT      ((PI * WHEEL_DIAMETER_MM) / ENCODER_TICKS_PER_REV_RIGHT)
 
@@ -153,8 +176,8 @@
 #define SEARCH_SPEED_DEFAULT_MM_S     180.0f   // Search cruise speed (mm/s)                          [240]
 #define SEARCH_ACCEL_DEFAULT_MM_S2    600.0f   // Search linear acceleration / deceleration (mm/s^2)  [1500]
 #define SEARCH_CURVE_SPEED_MM_S       100.0f   // Smooth 90° turn speed during the search (mm/s)      [200]
-#define SEARCH_TURN_SPEED_DEG_S       180.0f   // In-place turn speed (deg/s)                         [360]
-#define SEARCH_TURN_ACCEL_DEG_S2      720.0f   // In-place turn acceleration (deg/s^2)                [1800]
+#define SEARCH_TURN_SPEED_DEG_S       120.0f   // In-place turn speed (deg/s)                         [360]
+#define SEARCH_TURN_ACCEL_DEG_S2      480.0f   // In-place turn acceleration (deg/s^2)                [1800]
 #define SEARCH_PROBE_SPEED_MM_S       120.0f   // Search speed when rolling into a cell it has never seen (may have to stop) [120]
 // Dynamic search speed: on a straight through cells it has already visited (most of the way back,
 // and any second search) the robot speeds up to this, and slows again in time for the first cell

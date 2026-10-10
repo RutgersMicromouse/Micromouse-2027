@@ -127,6 +127,7 @@ bool returnToStart() {
 }
 
 void stopRun() {
+    requestStop(); // Brakes on the next control tick, whatever else is going on
     Serial.println("\n[UI] STOP! Halting robot.");
     {
         NavigatorLock lock;
@@ -136,11 +137,11 @@ void stopRun() {
     showSelectedMode();
 }
 
-bool calibrateIR() {
+bool calibrateIR(bool keep_side_centre) {
     if (isRunActive()) return false;
 
     StatusLED::set(StatusLED::YELLOW);
-    bool ok = g_ir_sensors.calibrateInCell(200);
+    bool ok = g_ir_sensors.calibrateInCell(200, keep_side_centre);
     StatusLED::flash(ok ? StatusLED::GREEN : StatusLED::RED, 3, 120);
     showSelectedMode();
     return ok;
@@ -181,7 +182,69 @@ void setNextSpeedRunPercent(uint8_t percent) {
     s_next_run_percent = (percent == 0) ? 0 : constrain(percent, (uint8_t)10, (uint8_t)100);
 }
 
+// The cell paths of the turn test, each starting facing north. Left-hand shapes start at x = 3 and
+// right-hand ones at x = 0 only so that every cell number stays positive; the planner works from
+// the directions between the cells, not from where they are in the maze.
+struct CurveShape {
+    const char* name;
+    bool diagonals;
+    uint8_t cells;
+    Coordinate path[7];
+    const char* what;
+};
+static const CurveShape kCurveShapes[] = {
+    { "right",    false, 3, { {0,0}, {0,1}, {1,1} },                         "one smooth 90 degree curve to the RIGHT (3 cells in an L)" },
+    { "left",     false, 3, { {3,0}, {3,1}, {2,1} },                         "one smooth 90 degree curve to the LEFT (3 cells in an L)" },
+    { "uright",   false, 4, { {0,0}, {0,1}, {1,1}, {1,0} },                  "a U-turn to the RIGHT: two 90 degree curves in a row (2 x 2 cells)" },
+    { "uleft",    false, 4, { {3,0}, {3,1}, {2,1}, {2,0} },                  "a U-turn to the LEFT: two 90 degree curves in a row (2 x 2 cells)" },
+    { "zigright", true,  4, { {0,0}, {0,1}, {1,1}, {1,2} },                  "a diagonal: right then left, 45 in and 45 out (staircase of 4 cells)" },
+    { "zigleft",  true,  4, { {3,0}, {3,1}, {2,1}, {2,2} },                  "a diagonal: left then right, 45 in and 45 out (staircase of 4 cells)" },
+    { "veeright", true,  6, { {0,0}, {0,1}, {1,1}, {1,2}, {0,2}, {0,3} },    "a diagonal with a V turn: right, left, left, right (6 cells)" },
+    { "veeleft",  true,  6, { {3,0}, {3,1}, {2,1}, {2,2}, {3,2}, {3,3} },    "a diagonal with a V turn: left, right, right, left (6 cells)" },
+};
+static bool s_test_run = false; // The run now on (or just ended) is a turn test, not a speed run
+
+bool launchCurveTest(const char* shape, uint8_t percent) {
+    if (isRunActive()) return false;
+    const CurveShape* chosen = nullptr;
+    for (const CurveShape& candidate : kCurveShapes) {
+        if (strcmp(candidate.name, shape) == 0) chosen = &candidate;
+    }
+    if (chosen == nullptr) return false;
+    percent = constrain(percent, 10, 100);
+
+    Serial.printf("[CURVETEST] Starting '%s' at %d%% speed: %s.\n", chosen->name, (int)percent, chosen->what);
+    // The robot was placed by hand: forget where the last run left its heading and distance
+    prepareForNewRun();
+
+    NavigatorLock lock; // The navigation task takes over from the first move onwards
+    g_navigator->setSpeedScale((float)percent / 100.0f);
+    s_test_run = true;
+    if (!g_navigator->startPathTest(chosen->path, chosen->cells, chosen->diagonals)) {
+        s_test_run = false;
+        Serial.println("[CURVETEST] Could not plan that shape.");
+        return false;
+    }
+    return true;
+}
+
 void onRunEnded(bool aborted) {
+    if (s_test_run) {
+        // A turn test is not a speed run: it leaves the speed tier alone
+        s_test_run = false;
+        const MotionController& mc = g_motion_controller;
+        Serial.printf("[CURVETEST] %s | heading at the end %.1f | supply %.1f V | h_kp=%.4g h_ki=%.4g c_kp=%.4g c_ff=%.4g c_ka=%.4g turn_ff=%.4g ff_kv=%.4g ff_ka=%.4g v_kp=%.4g k_sync=%.4g\n",
+                      aborted ? "ABORTED" : "done", g_imu.getHeadingDeg(), g_motors.getSupplyVolts(),
+                      mc.getTune(MotionController::TUNE_H_KP), mc.getTune(MotionController::TUNE_H_KI),
+                      mc.getTune(MotionController::TUNE_C_KP), mc.getTune(MotionController::TUNE_C_FF),
+                      mc.getTune(MotionController::TUNE_C_KA),
+                      mc.getTune(MotionController::TUNE_TURN_FF),
+                      mc.getTune(MotionController::TUNE_FF_KV), mc.getTune(MotionController::TUNE_FF_KA),
+                      mc.getTune(MotionController::TUNE_V_KP), mc.getTune(MotionController::TUNE_K_SYNC));
+        StatusLED::flash(aborted ? StatusLED::RED : StatusLED::GREEN, 2, 150);
+        showSelectedMode();
+        return;
+    }
     const NavState state = g_navigator->getState();
     const bool was_speed_run = (s_selected_mode != MODE_SEARCH);
 

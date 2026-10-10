@@ -204,3 +204,20 @@ void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
 
     processSubcommandQueue();
 }
+
+bool Navigator::startPathTest(const Coordinate* path, uint8_t path_len, bool use_diagonals) {
+    if (path_len < 2) return false;
+    current_strategy_ = use_diagonals ? SPEEDRUN_DIAGONALS_ONLY : SPEEDRUN_CURVES_ONLY;
+    waiting_for_motion_ = false;
+
+    float run_time = planSpeedRun(path, path_len, use_diagonals);
+    if (run_time < 0.0f || sub_cmd_count_ == 0) {
+        sub_cmd_count_ = 0;
+        return false;
+    }
+    Serial.printf("[NAV] Turn test planned: %d cells, %d moves, about %.2f s.\n",
+                  (int)path_len, (int)sub_cmd_count_, run_time);
+    state_ = NAV_STATE_SPEED_RUNNING;
+    processSubcommandQueue();
+    return true;
+}

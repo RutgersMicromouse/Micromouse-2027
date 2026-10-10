@@ -88,6 +88,11 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
 #lowBat .card{max-width:520px;margin:10vh auto 0;border:3px solid #ff5d5d;padding:26px 18px}
 #lowBatTitle{font-size:40px;font-weight:900;color:#ff5d5d;letter-spacing:.04em}
 #lowBatWhat{font-size:26px;font-weight:800;margin-top:6px}
+#stageRow{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:10px}
+#stageRow button{padding:10px 0;font-size:16px;background:#232a34;color:#eef2f7;border:1px solid #303844;border-radius:10px}
+#stageRow button.done{background:#1f4d33;border-color:#3ddc84;color:#bff5d5}
+#stageRow button.cur{outline:3px solid #7fb6ff}
+#stageConfirm{display:none;margin-top:10px;border-top:1px solid #303844;padding-top:10px}
 #ask{display:none;position:fixed;left:0;right:0;top:0;bottom:0;z-index:10;background:rgba(5,7,10,.82);padding:16px;overflow:auto}
 #ask .card{max-width:520px;margin:8vh auto 0;border-color:#ffc94d}
 #askText{font-size:16px;line-height:1.45;margin:10px 0 16px;white-space:pre-wrap}
@@ -120,7 +125,21 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
   <button class="plain" data-cmd="resetall">Reset sensors</button>
   <button class="plain" data-cmd="clear">Forget maze</button>
 </div>
-<div class="dim" style="margin:-4px 0 12px">Calibrate: robot in the start cell facing its back wall; it measures the walls, then turns round. START calibrates where it stands, then searches to the centre and back.</div>
+<div class="card">
+  <div class="step"><span class="num" style="background:#7fb6ff" id="stageLetter">A</span><span id="stageTitle">Stage</span></div>
+  <div id="stageRow"></div>
+  <div class="dim" id="stageWhat" style="margin-bottom:10px"></div>
+  <button class="plain" id="stageDone">Mark this stage finished</button>
+  <div id="stageConfirm">
+    <div id="stageAsk" style="margin-bottom:10px;font-weight:700"></div>
+    <div class="row">
+      <button id="stageYes" style="background:#3ddc84">Yes</button>
+      <button class="plain" id="stageCancel">Cancel</button>
+    </div>
+  </div>
+  <div class="dim" style="margin-top:8px">Tap a letter to work on that stage. Going back to a finished stage un-finishes it and the ones after it.</div>
+</div>
+<div class="dim" style="margin:-4px 0 12px">Calibrate: robot in the start cell, centred by hand, FACING INTO THE MAZE (way ahead clear, wall behind). It measures the side walls, turns to the back wall to measure the front level, and turns back. START calibrates where it stands, then searches to the centre and back.</div>
 
 <div class="card">
   <div class="dim" style="margin-bottom:8px">The maze as the robot believes it. The start cell is bottom-left, north is up.</div>
@@ -181,6 +200,57 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
     </div>
   </div>
   <div class="dim" id="resultSent" style="margin-top:8px"></div>
+</div>
+
+<div class="card">
+  <div class="step"><span class="num" style="background:#7fb6ff">F</span>Speed-run turn test (stage F)</div>
+  <div class="dim" style="margin-bottom:8px">Robot in the middle of the first cell of the shape, facing along it. It drives the shape as a speed run would, at the speed set here, and stops in the last cell. Keep a hand on STOP.</div>
+  <div style="margin-bottom:8px">Speed: <b id="curvePctText">35</b>%
+    <input type="range" id="curvePct" min="10" max="100" step="5" value="35" style="width:100%"></div>
+  <div class="row">
+    <button class="plain" data-curve="left">Curve left</button>
+    <button class="plain" data-curve="right">Curve right</button>
+    <button class="plain" data-curve="uleft">U-turn left</button>
+    <button class="plain" data-curve="uright">U-turn right</button>
+    <button class="plain" data-curve="zigleft">Diagonal, left first</button>
+    <button class="plain" data-curve="zigright">Diagonal, right first</button>
+    <button class="plain" data-curve="veeleft">V turn, left first</button>
+    <button class="plain" data-curve="veeright">V turn, right first</button>
+  </div>
+</div>
+
+
+  <div class="dim" style="margin-bottom:8px">Robot in the middle of a cell, facing along the corridor, sensors calibrated. It drives that many cells as the search does and stops at the cell centre (or at a wall in front). Leave the far end clear or walled, never half a cell short. The results go to the computer recording the robot.</div>
+  <div class="row3">
+    <button class="plain" data-cmd="straighttest 2">2 cells</button>
+    <button class="plain" data-cmd="straighttest 3">3 cells</button>
+    <button class="plain" data-cmd="straighttest 4">4 cells</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="step"><span class="num" style="background:#7fb6ff">C</span>Movement check (stage C)</div>
+  <div class="dim" style="margin-bottom:8px">Robot ON THE FLOOR with about 30 cm of clear space all round, not between walls. It nudges each wheel to find which way the motors and encoders run (and puts that right), then drives one cell forward and turns 90&deg; left and right. Nobody has to watch: the results go to the computer recording the robot.</div>
+  <div class="row">
+    <button class="plain" data-cmd="movecheck">Run the movement check</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="step"><span class="num" style="background:#7fb6ff">M</span>Motor check</div>
+  <div class="dim" style="margin-bottom:8px">Runs each wheel alone: left forward, left backward, right forward, right backward. Each step is announced in the robot output below before it starts. Watch which wheel rolls and which way. Works with the wheels off the floor, or on the floor with room to swing.</div>
+  <div class="row">
+    <button class="plain" data-cmd="motorcheck">Run the motor check</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="step"><span class="num" style="background:#7fb6ff">T</span>Turn tuning test</div>
+  <div class="dim" style="margin-bottom:8px">Put the robot on the floor in a cell. It turns 90&deg; left, then right, on the spot, 5 times each, and reports how far off each turn ended. The results go to the computer recording the robot.</div>
+  <div class="row">
+    <button class="plain" data-cmd="turntest">Run the turn test</button>
+    <button class="plain" data-cmd="turntest fast">Run it at speed-run speed</button>
+  </div>
 </div>
 
 <h2>Tuning</h2>
@@ -317,6 +387,61 @@ mazeBoxes.forEach(box => box.onchange = () => { mazeTapped = Date.now(); send("m
 const BATTERY_LOW_V = 3.65;
 let lowBatSince = 0, lowBatHiddenUntil = 0; // When it first read low (0 = it is not low)
 $("lowBatOk").onclick = () => { lowBatHiddenUntil = Date.now() + 120000; $("lowBat").style.display = "none"; note("battery warning hidden for 2 minutes at " + $("lowBatVolts").textContent + " V"); };
+// The speed-run turn test: its own speed slider, sent with whichever shape is pressed
+try { $("curvePct").value = localStorage.getItem("curvePct") || 35; } catch (e) {}
+const showCurvePct = () => { $("curvePctText").textContent = $("curvePct").value; };
+showCurvePct();
+$("curvePct").oninput = showCurvePct;
+$("curvePct").onchange = () => { try { localStorage.setItem("curvePct", $("curvePct").value); } catch (e) {} note("turn test speed set to " + $("curvePct").value + "%"); };
+document.querySelectorAll("button[data-curve]").forEach(b => b.onclick = () => send("curvetest " + b.dataset.curve + " " + $("curvePct").value, b));
+
+// The staged plan: a letter per stage (tap to work on it), and "finished", which asks twice
+const STAGES = [
+  ["Dimensions", "Measure the body and where the wheels sit, and tell the computer."],
+  ["Encoder counts", "Turn each wheel 10 full turns by hand and read the counts."],
+  ["Basic movement", "Forward goes forward; turns are 90 degrees, the right way."],
+  ["Search turns", "Turns on the spot: first with the end nudge off, then with it."],
+  ["Search straights", "No wobble, set up for turns, in every wall arrangement."],
+  ["Speed-run turns", "U-turns, lefts, rights and V turns, set up one type at a time."],
+  ["Speed-run straights", "Straight out of a turn, no wobble, at several speeds."]];
+let stageCur = 0, stageDoneMask = 0, stageStep = 0, stageTapped = 0;
+const letterOf = i => String.fromCharCode(65 + i);
+STAGES.forEach((stage, i) => {
+  const b = document.createElement("button");
+  b.textContent = letterOf(i);
+  b.onclick = () => { stageTapped = Date.now(); stageCur = i; stageReset(); drawStages(); send("stage " + letterOf(i).toLowerCase()); };
+  $("stageRow").appendChild(b);
+});
+function drawStages() {
+  [...$("stageRow").children].forEach((b, i) => {
+    b.className = ((stageDoneMask >> i) & 1 ? "done " : "") + (i == stageCur ? "cur" : "");
+    b.textContent = letterOf(i) + ((stageDoneMask >> i) & 1 ? " ✓" : "");
+  });
+  $("stageLetter").textContent = letterOf(stageCur);
+  $("stageTitle").textContent = "Stage " + letterOf(stageCur) + ": " + STAGES[stageCur][0];
+  $("stageWhat").textContent = STAGES[stageCur][1];
+}
+function stageReset() { stageStep = 0; $("stageConfirm").style.display = "none"; }
+$("stageDone").onclick = () => {
+  stageStep = 1;
+  $("stageAsk").textContent = "Is stage " + letterOf(stageCur) + " (" + STAGES[stageCur][0] + ") really finished?";
+  $("stageYes").textContent = "Yes, it is finished";
+  $("stageConfirm").style.display = "block";
+};
+$("stageCancel").onclick = stageReset;
+$("stageYes").onclick = () => {
+  if (stageStep == 1) {
+    stageStep = 2;
+    $("stageAsk").textContent = "Second check: mark stage " + letterOf(stageCur) + " finished and move on" + (stageCur < 6 ? " to stage " + letterOf(stageCur + 1) : "") + "?";
+    $("stageYes").textContent = "Confirm: finished";
+    return;
+  }
+  stageTapped = Date.now();
+  send("stage done " + letterOf(stageCur).toLowerCase());
+  stageReset();
+};
+drawStages();
+
 // The Yes / No box for a suggested change (see "ask" in the status reply)
 // A question is known by its number AND its words: the robot numbers them from 1 again after
 // every restart, so the number alone made the page skip a new question it took for an old one.
@@ -339,7 +464,9 @@ const TUNE = [["v_kp", "Speed loop P"], ["v_ki", "Speed loop I"], ["v_kd", "Spee
   ["h_max", "Heading loop: most effort"], ["h_imax", "Heading loop: most from I"],
   ["w_max", "Wall centring: most steering (deg)"], ["w_gyro", "Wall centring: turn-rate damping"],
   ["s_damp", "Straights: turn-rate damping (0 = off)"], ["t_damp", "After a turn: turn-rate damping (0 = off)"],
-  ["t_push", "After a turn: nudge onto the heading (0 = off)"], ["c_kp", "Curves: extra heading P (0 = off)"]];
+  ["t_push", "After a turn: nudge onto the heading (0 = off)"], ["c_kp", "Curves: extra heading P (0 = off)"],
+  ["t_ka", "Turns: braking push (0 = off)"], ["c_ff", "Curves: turn feedforward scale (lower if curves overshoot)"],
+  ["c_ka", "Curves: braking push (0 = off)"]];
 TUNE.forEach(([name, label]) => {
   $("tune").insertAdjacentHTML("beforeend", "<div>" + label + " <span class=dim>" + name + "</span></div>" +
     "<input id=t_" + name + " inputmode=decimal autocomplete=off>");
@@ -390,8 +517,10 @@ $("form").onsubmit = e => {
 const SENSOR_AHEAD = [16, 31, 38, 38, 31, 16];
 const SENSOR_LEFT = [36, 24, 9, -9, -24, -36];
 const SENSOR_AIM = [90, 45, 0, 0, -45, -90];
-const BOARD = [[-37, 34], [21, 34], [28, 24], [32, 12], [33, 0], [32, -12], [28, -24], [21, -34], [-37, -34]];
-const WHEEL_LEFT_MM = 40, WHEEL_LENGTH_MM = 40, WHEEL_WIDTH_MM = 8; // Wheels sit outside the board
+// The outline drawn is the 3D-printed base plate (2026-10-09): 95 mm wide, 48 mm ahead of the axle,
+// 77 mm behind. The PCB with the sensors sits on it where it always did.
+const BOARD = [[-33.7, 36], [32.6, 36], [32.6, -36], [-33.7, -36]]; // Casing of 2026-10-10; its width between the wheels is a guess
+const WHEEL_LEFT_MM = 40.25, WHEEL_LENGTH_MM = 40, WHEEL_WIDTH_MM = 7; // Wheels sit outside the board
 const CELL_MM = 180;
 
 function drawMaze(s) {
@@ -557,6 +686,11 @@ async function poll() {
     const askKey = ask ? ask.id + ":" + ask.text : "";
     if (ask && askKey != askAnswered) { $("askText").textContent = ask.text; askShown = askKey; $("ask").style.display = "block"; }
     else $("ask").style.display = "none";
+    const stage = (status.status || {}).stage;
+    if (stage && Date.now() - stageTapped > 1500 && (stage.cur != stageCur || stage.done != stageDoneMask)) {
+      if (stage.cur != stageCur) stageReset();
+      stageCur = stage.cur; stageDoneMask = stage.done; drawStages();
+    }
     if (Date.now() - mazeTapped > 1500) mazeBoxes.forEach(box => { box.checked = (box.value == (status.status || {}).n); });
     misses = 0;
   } catch (e) {

@@ -51,7 +51,7 @@ void stopRun();
 
 // Learn the IR wall levels for this maze. Robot must sit centred in a cell between two side
 // walls. Returns true on success. Blocks for about a second.
-bool calibrateIR();
+bool calibrateIR(bool keep_side_centre = false);
 
 // Forget the maze saved in flash
 void clearSavedMaze();
@@ -67,6 +67,12 @@ uint8_t getSpeedTier();
 // speeds and accelerations, instead of the tier. For trying speed levels from the phone app
 // without re-flashing. 0 = use the tier as usual.
 void setNextSpeedRunPercent(uint8_t percent);
+
+// Speed-run turn test (stage F): drives one turn shape as a speed run would, at `percent` of the
+// SPEEDRUN_* speeds. Shapes: "left", "right" (one smooth 90 degree curve), "uleft", "uright" (two
+// in a row, a U-turn), "zigleft", "zigright" (a diagonal: 45 in, 45 out), "veeleft", "veeright"
+// (a diagonal with a V turn in it). False if a run is on or the shape is not known.
+bool launchCurveTest(const char* shape, uint8_t percent);
 
 // Call once when a run ends. Shows the result on the LED and moves the speed tier:
 // up after a speed run that reached the centre, down after one that was aborted.

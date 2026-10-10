@@ -87,6 +87,7 @@ void MotionController::resetHeading() {
 
 void MotionController::executeCommand(const MotionCommand& cmd) {
     active_cmd_ = cmd;
+    ir_.setSteerBySideSensors(cmd.steer_by_side_sensors);
     command_finished_ = false;
     command_active_ = true;
     stall_count_ = 0;
@@ -107,6 +108,7 @@ void MotionController::executeCommand(const MotionCommand& cmd) {
     chain_valid_ = false;
     curve_active_ = false;
     prev_target_speed_mm_s_ = cmd.entry_speed_mm_s;
+    prev_turn_wheel_mm_s_ = 0.0f; // A turn on the spot starts from standstill
     settle_ticks_ = 0;
     settle_good_ticks_ = 0;
     idle_ticks_ = 0;
@@ -440,6 +442,17 @@ static const TuneItem kTune[MotionController::TUNE_COUNT] = {
     { "t_push", "After a turn: nudge onto the heading (0 = off)", TURN_SETTLE_PUSH, 0.0f, 0.3f },
     // --- Extra heading loop P during smooth curves only, on top of h_kp (0 = curves use h_kp alone)
     { "c_kp",   "Curves: extra heading P (0 = off)",          0.0f,   0.0f,  0.2f },
+    // --- Turns on the spot: effort per mm/s2 of planned wheel acceleration. Speeds the turn up
+    //     at the start and brakes it at the end, so it does not coast past (0 = off)
+    { "t_ka",   "Turns: braking push (0 = off)",              0.0f,   0.0f,  0.002f },
+    // --- Smooth curves only: scale on the wheel-speed difference fed forward for the turn, on top
+    //     of turn_ff (which turns on the spot share). Lower it if curves turn ahead of their plan
+    //     and end past their heading, cutting the corner (1 = no change)
+    { "c_ff",   "Curves: turn feedforward scale (lower if curves overshoot)", 1.0f, 0.5f, 1.5f },
+    // --- Smooth curves only: effort per mm/s2 of planned change in the wheel-speed difference.
+    //     Pushes the turn in at the start of a curve and brakes it at the end, as t_ka does for
+    //     turns on the spot, so a fast curve does not coast past its heading (0 = off)
+    { "c_ka",   "Curves: braking push (0 = off)",             0.0f,   0.0f,  0.002f },
 };
 
 const char* MotionController::tuneName(int index)        { return kTune[index].name; }

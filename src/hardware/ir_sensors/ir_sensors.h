@@ -46,7 +46,12 @@ public:
     float getDiagonalGuardError() const;
 
     // Calibration: Run while stationary inside a cell with Left, Right, and Front walls
-    bool calibrateInCell(uint16_t sample_count = 200);
+    // keep_side_centre: leave the 90° sensors' centred readings as they are (for a second
+    // measurement taken after the robot has turned and is no longer where it was centred by hand)
+    bool calibrateInCell(uint16_t sample_count = 200, bool keep_side_centre = false);
+    // Whether the last calibration found a wall right in front (it then measured the front level
+    // and left the 45° sensors' centred readings alone; otherwise the other way round)
+    bool lastCalibrationHadFrontWall() const { return last_calibration_had_front_wall_; }
 
     // Save and load calibrated thresholds to/from ESP32 NVS Flash
     void saveToNVS();
@@ -83,6 +88,12 @@ public:
     uint16_t getThresholdR45() const { return thresh_r45_; }
     uint16_t getNominalL45() const { return nominal_center_l45_; }
     uint16_t getNominalR45() const { return nominal_center_r45_; }
+    uint16_t getNominalL90() const { return nominal_center_l90_; }
+
+    // Which sensors the wall steering measures with for the move now running: the 90° ones
+    // (true) or the 45° ones. Set by the motion controller from each move (see MotionCommand).
+    void setSteerBySideSensors(bool on) { steer_by_side_sensors_ = on; }
+    uint16_t getNominalR90() const { return nominal_center_r90_; }
 
 private:
     // Fires one interleaved emitter group and updates its three filtered channels
@@ -103,12 +114,18 @@ private:
     uint16_t thresh_l45_;
     uint16_t thresh_front_;
     bool front_level_measured_;       // thresh_front_ came from a real wall in front, not an estimate
+    bool last_calibration_had_front_wall_ = false;
     uint16_t nominal_fl_, nominal_fr_; // What each front sensor read facing a wall squarely at calibration (0 = unknown)
     uint16_t thresh_r45_;
     uint16_t thresh_r90_;
 
     uint16_t nominal_center_l45_;
     uint16_t nominal_center_r45_;
+    // What each 90° sensor reads with the robot centred between its side walls (0 = not measured
+    // yet). Wall steering works from these; see the centring error in update().
+    uint16_t nominal_center_l90_ = 0;
+    uint16_t nominal_center_r90_ = 0;
+    volatile bool steer_by_side_sensors_ = false;
 
     Preferences prefs_;
 };

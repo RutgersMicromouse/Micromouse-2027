@@ -143,6 +143,9 @@ public:
         TUNE_S_DAMP,                           // Straights and diagonals: damping from the turn rate
         TUNE_T_DAMP, TUNE_T_PUSH,              // Settling after a turn on the spot: damping, and the nudge
         TUNE_C_KP,                             // Smooth curves: heading P added to h_kp while curving
+        TUNE_T_KA,                             // Turns on the spot: push per planned wheel acceleration (brakes the end of the turn)
+        TUNE_C_FF,                             // Smooth curves: scale on their turn feedforward (on top of TUNE_TURN_FF)
+        TUNE_C_KA,                             // Smooth curves: push per planned change of the wheel-speed difference (brakes the end of the turn)
         TUNE_COUNT
     };
     static const char* tuneName(int index);        // Short name; also the key it is saved under
@@ -227,6 +230,7 @@ private:
 
     // Feedforward & logging
     float prev_target_speed_mm_s_;
+    float prev_turn_wheel_mm_s_ = 0.0f;  // Last tick's planned wheel speed in a turn on the spot (for its acceleration)
     uint16_t log_tick_;
     RunLog run_log_;
 

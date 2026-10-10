@@ -6,6 +6,11 @@
 #include "ui/console/console.h"
 #include "ui/run_result/run_result.h"
 #include "ui/proposal/proposal.h"
+#include "ui/stages/stages.h"
+#include "ui/turn_test/turn_test.h"
+#include "ui/motor_check/motor_check.h"
+#include "ui/move_check/move_check.h"
+#include "ui/straight_test/straight_test.h"
 #include "wireless/ble_debug/ble_debug.h"
 #include "wireless/wifi_ota/wifi_ota.h"
 
@@ -105,17 +110,50 @@ static void handle(String cmd, Source source) {
     }
     if (cmd == "calib") {
         if (running) { reply("ERR: CANNOT_CALIB_WHILE_RUNNING"); return; }
-        // The owner calibrates in the start cell facing BACKWARDS, at its back wall, so the
-        // front sensors have a real wall to measure. Then the robot turns round by itself and
-        // is ready to start. It stays where it is if the calibration failed.
+        // Two things have to be measured and they need the robot facing opposite ways: the side
+        // walls (90° and 45° sensors) with the way ahead CLEAR, and the "wall in front" level
+        // facing a WALL. So: measure where it stands, turn round, measure the other. Put down
+        // facing along the corridor, centred by hand (the usual way now), it measures the sides,
+        // turns to the back wall for the front level, and turns back. Put down facing the back
+        // wall (the old way), it measures the front level, turns round and measures the sides.
+        // Either way it ends facing into the maze. It stays where it is if a step fails.
         if (!Actions::calibrateIR()) { reply("ERR: CALIB FAILED (not turning round)"); return; }
-        MotionCommand turn = {};
-        turn.action = ACTION_TURN_AROUND_180;
-        turn.param_value = 180.0f;
-        turn.max_speed_mm_s = SEARCH_TURN_SPEED_DEG_S;  // deg/s for turns
-        turn.acceleration = SEARCH_TURN_ACCEL_DEG_S2;
-        xQueueSend(g_motion_cmd_queue, &turn, 0);
-        reply("ACK: CALIB SUCCESS. Turning round to face into the maze.");
+        const bool began_facing_wall = g_ir_sensors.lastCalibrationHadFrontWall();
+        const uint32_t stops_before = stopCount();
+        auto turnRound = [&]() -> bool {
+            MotionCommand turn = {};
+            turn.action = ACTION_TURN_AROUND_180;
+            turn.param_value = 180.0f;
+            turn.max_speed_mm_s = SEARCH_TURN_SPEED_DEG_S;  // deg/s for turns
+            turn.acceleration = SEARCH_TURN_ACCEL_DEG_S2;
+            xQueueSend(g_motion_cmd_queue, &turn, 0);
+            // Wait for the motion task to take the turn up before waiting for it to finish. A fixed
+            // 10 ms was not always enough: once on the robot the second measurement was taken
+            // while the robot had barely begun to turn (L90 read 5).
+            const uint32_t started = millis();
+            while (g_motion_controller.isCommandFinished() && millis() - started < 300) {
+                vTaskDelay(pdMS_TO_TICKS(2));
+            }
+            while (!g_motion_controller.isCommandFinished()) {
+                if (stopCount() != stops_before || millis() - started > 6000) return false;
+                vTaskDelay(pdMS_TO_TICKS(5));
+            }
+            vTaskDelay(pdMS_TO_TICKS(400)); // Let it come to rest, and the readings settle
+            return stopCount() == stops_before;
+        };
+        reply(began_facing_wall ? "Front level measured. Turning round to measure the side walls."
+                                : "Side walls measured. Turning round to measure the front level against the back wall.");
+        if (!turnRound()) { reply("ERR: CALIB stopped during the turn"); return; }
+        // (the robot was centred by hand for the FIRST measurement; the turn has shifted it since)
+        if (!Actions::calibrateIR(true)) { reply("ERR: CALIB FAILED at the second measurement"); return; }
+        if (g_ir_sensors.lastCalibrationHadFrontWall() == began_facing_wall) {
+            reply(began_facing_wall ? "WARNING: a wall in front both ways, so the side walls were measured facing a wall. Calibrate in a cell that is open one way."
+                                    : "NOTE: no wall behind either, so the front level was not measured this time (the earlier one is kept).");
+        }
+        if (!began_facing_wall) {
+            if (!turnRound()) { reply("ERR: CALIB stopped during the turn back"); return; }
+        }
+        reply("ACK: CALIB SUCCESS. Facing into the maze.");
         return;
     }
     if (cmd == "clear") {
@@ -140,6 +178,56 @@ static void handle(String cmd, Source source) {
         xQueueSend(g_motion_cmd_queue, &turn, 0);
         reply(cmd == "left45" ? "Turning 45 degrees LEFT (anticlockwise seen from above; heading should go UP to the next multiple of 45)."
                               : "Turning 45 degrees RIGHT (clockwise seen from above; heading should go DOWN to the next multiple of 45).");
+        return;
+    }
+
+    // Movement check (stage C): on the floor, finds which way each motor and encoder runs from
+    // the heading, puts it right, then drives one cell and turns 90 degrees each way
+    if (cmd == "movecheck") {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        MoveCheck::run();
+        return;
+    }
+
+    // Straight test (stage E): "straighttest 3" drives 3 cells as the search does and measures
+    // the wobble, the walls seen and where it ended (see StraightTest)
+    if (cmd == "straighttest" || cmd.startsWith("straighttest ")) {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        const long cells = (cmd == "straighttest") ? 3 : cmd.substring(13).toInt();
+        StraightTest::run(cells > 0 ? (int)cells : 3);
+        return;
+    }
+
+    // Speed-run turn test (stage F): "curvetest left 40" drives one smooth left curve as a speed
+    // run would, at 40 % speed. Shapes: left right uleft uright zigleft zigright veeleft veeright.
+    if (cmd.startsWith("curvetest ")) {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        String rest = cmd.substring(10);
+        rest.trim();
+        const int space = rest.indexOf(' ');
+        const String shape = (space < 0) ? rest : rest.substring(0, space);
+        const long percent = (space < 0) ? 35 : rest.substring(space + 1).toInt();
+        if (!Actions::launchCurveTest(shape.c_str(), (uint8_t)(percent > 0 ? percent : 35))) {
+            reply("ERR: USAGE 'curvetest <left|right|uleft|uright|zigleft|zigright|veeleft|veeright> [percent]'");
+        }
+        return;
+    }
+
+    // Motor check: each wheel alone, both ways, with what the encoders and the heading did
+    if (cmd == "motorcheck") {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        MotorCheck::run();
+        return;
+    }
+
+    // Turn tuning test: several left and right turns on the spot, each measured (see TurnTest).
+    // "turntest" does 5 of each, "turntest 3" does 3 of each.
+    if (cmd == "turntest" || cmd.startsWith("turntest ")) {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        // ("turntest fast" / "turntest 3 fast": at the speed-run turn speed)
+        const bool fast = cmd.endsWith(" fast");
+        const long pairs = (cmd == "turntest" || cmd == "turntest fast") ? 5 : cmd.substring(9).toInt();
+        TurnTest::run(pairs > 0 ? (int)pairs : 5, fast);
         return;
     }
 
@@ -326,6 +414,18 @@ static void handle(String cmd, Source source) {
     // ---------------------------------------------------------------- Question for the operator
     // A suggested change, shown in the phone app with Yes and No buttons (see Proposal). The text
     // arrives in pieces because a command line is short. Starts nothing on the robot.
+    // The owner's staged plan: "stage" says where things stand, "stage c" works on stage C,
+    // "stage done c" marks C finished and moves on (the app asks twice before sending that)
+    if (cmd == "stage") { Stages::report(); return; }
+    if (cmd.startsWith("stage ")) {
+        const bool done = cmd.startsWith("stage done ");
+        const String letter = cmd.substring(done ? 11 : 6);
+        const int stage = (letter.length() == 1) ? letter[0] - 'a' : -1;
+        if (stage < 0 || stage >= Stages::COUNT) { reply("ERR: USAGE 'stage', 'stage <a..g>' or 'stage done <a..g>'"); return; }
+        if (done) Stages::markDone(stage); else Stages::goTo(stage);
+        return;
+    }
+
     if (cmd == "ask new")        { Proposal::startNew(); return; }
     if (cmd.startsWith("ask+ ")) { Proposal::append(typed.c_str() + 5); return; }
     if (cmd == "ask show")       { Proposal::show(); return; }

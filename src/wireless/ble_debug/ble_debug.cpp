@@ -1,4 +1,5 @@
 #include "wireless/ble_debug/ble_debug.h"
+#include "robot.h"  // requestStop()
 
 // ==============================================================================
 // BLUETOOTH LOW ENERGY
@@ -142,6 +143,7 @@ class RxCallbacks :
 
         std::string rxValue =
             pCharacteristic->getValue();
+        bool stop_seen = false;
 
         portENTER_CRITICAL(&s_rx_mux);
 
@@ -157,6 +159,13 @@ class RxCallbacks :
                     s_rx_command[s_rx_partial_len] = '\0';
                     s_rx_partial_len = 0;
                     s_command_ready = true;
+
+                    // STOP is carried out at once (see requestStop): the next line to arrive
+                    // would otherwise overwrite it before the console had read it
+                    if (strcasecmp(s_rx_command, "stop") == 0 || strcasecmp(s_rx_command, "estop") == 0 ||
+                        strcasecmp(s_rx_command, "halt") == 0) {
+                        stop_seen = true;
+                    }
                 }
 
             } else if (s_rx_partial_len < BLE_CMD_MAX_LEN - 1) {
@@ -166,6 +175,8 @@ class RxCallbacks :
         }
 
         portEXIT_CRITICAL(&s_rx_mux);
+
+        if (stop_seen) requestStop();
     }
 };
 

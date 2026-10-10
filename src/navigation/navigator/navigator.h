@@ -44,6 +44,12 @@ public:
     void continueOneMove(const IRReadings& ir, const WallPreview& preview = WallPreview());
     void startSpeedRun(SpeedrunStrategy strategy = SPEEDRUN_HYBRID_AUTO);
 
+    // For tuning speed-run turns: drives the given cell path exactly as a speed run would (same
+    // planner, same moves, speeds from setSpeedScale), without looking at the map. The path
+    // starts where the robot stands, and its first step must be the way the robot faces.
+    // False if the path cannot be planned.
+    bool startPathTest(const Coordinate* path, uint8_t path_len, bool use_diagonals);
+
     // After a speed run has finished in the goal cell: drive back to the start cell with the
     // search stepping (search speeds, sensors on, map kept up to date), and turn to face into the
     // maze there. Returns false, and does nothing, unless a speed run has just finished: only

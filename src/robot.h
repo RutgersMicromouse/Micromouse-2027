@@ -55,6 +55,13 @@ bool getTelemetry(RobotTelemetry& out);
 void setTelemetryStreaming(bool on);
 bool isTelemetryStreaming();
 
+// STOP, from anywhere (app, Bluetooth, USB, the console). Safe to call from any task or callback.
+// The motion task brakes on its very next tick (2 ms) and throws away any move waiting in its
+// queue, and keeps doing so until the navigation task has stopped the run. It does not wait for
+// the console, so it cannot be held up or dropped behind another command.
+void requestStop();
+uint32_t stopCount();     // How many STOPs there have been since power-on (to notice one that came and went)
+
 // Ask the motion task to zero the encoders / heading. Carried out between motions.
 void requestEncoderReset();
 void requestHeadingReset();

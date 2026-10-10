@@ -166,6 +166,10 @@ void Navigator::sendMotionCommand(MotionAction action, float param, float max_sp
     cmd.exit_speed_mm_s = exit_speed;
     cmd.start_offset_mm = 0.0f;
     cmd.stop_at_front_wall = stop_at_front_wall;
+    // Everything sent from here is the search. (The speed-run planner fills its list of moves
+    // separately and leaves this false: in the PC simulation its diagonal runs hit posts with the
+    // 90° steering, which is to be sorted out when speed-run straights are tuned.)
+    cmd.steer_by_side_sensors = true;
 
     xQueueSend(motion_cmd_queue_, &cmd, portMAX_DELAY);
     waiting_for_motion_ = true;

@@ -1,4 +1,5 @@
 #include "wireless/wifi_ota/wifi_ota.h"
+#include "robot.h"  // requestStop()
 
 // ==============================================================================
 // WI-FI OTA & TELNET
@@ -83,6 +84,12 @@ static void handleAppData() {
 static void handleAppCommand() {
     String command = s_web_server.arg("c");
     command.trim();
+    // STOP is carried out here and now, not queued: the console takes one command at a time, so
+    // a STOP pressed while another command was still waiting used to be dropped. It is still
+    // handed to the console below when there is room, for the usual reply and LED.
+    String lower = command;
+    lower.toLowerCase();
+    if (lower == "stop" || lower == "estop" || lower == "halt") requestStop();
     // (the limit was 64, which silently dropped any "fail <what happened>" longer than a few words)
     if (command.length() > 0 && command.length() < 300 && !s_telnet_cmd_ready) {
         s_telnet_rx_buf = command;

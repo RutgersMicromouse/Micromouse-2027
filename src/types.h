@@ -58,6 +58,7 @@ struct MotionCommand {
     float exit_speed_mm_s;       // Desired exit velocity for smooth chaining (default 0.0)
     float start_offset_mm;       // How far past a cell centre a straight begins (default 0.0 = at the centre)
     bool stop_at_front_wall;     // If a wall shows up ahead, finish this move at rest instead of at exit speed
+    bool steer_by_side_sensors;  // Wall steering measures with the 90° sensors (search); false = the 45° ones (speed runs, for now)
 };
 
 // Quadrature Encoder State (N20 30:1 with Magnetic Encoders)

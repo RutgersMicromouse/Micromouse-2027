@@ -134,7 +134,14 @@ void MotionController::update(float dt_seconds) {
         float yaw_rate_deg_s = target_relative_angle_deg_ * 6.0f * u * (1.0f - u) / curve_length_mm_ *
                                profile_linear_.getTargetVelocity();
         float wheel_delta_mm_s = yaw_rate_deg_s * (PI / 180.0f) * (WHEEL_BASE_MM * 0.5f);
-        rotational_feedforward = tune_[TUNE_FF_KV] * wheel_delta_mm_s * tune_[TUNE_TURN_FF];
+        rotational_feedforward = tune_[TUNE_FF_KV] * wheel_delta_mm_s * tune_[TUNE_TURN_FF] * tune_[TUNE_C_FF];
+        // ...and the push to change that difference: the robot has to be spun up going into the
+        // curve and stopped spinning coming out. Without it the turn coasts on past its heading,
+        // more the faster the curve (5 degrees at 122 mm/s, 9 at 175: 2026-10-10), and scaling the
+        // speed term above does not touch that. (prev_turn_wheel_mm_s_ is zeroed at every move.)
+        const float wheel_delta_accel = (wheel_delta_mm_s - prev_turn_wheel_mm_s_) / dt_seconds;
+        prev_turn_wheel_mm_s_ = wheel_delta_mm_s;
+        rotational_feedforward += tune_[TUNE_C_KA] * wheel_delta_accel;
     } else if (!profile_angular_.isFinished()) {
         profile_angular_.update(dt_seconds);
         target_heading_setpoint = profile_angular_.getTargetDistance();
@@ -142,6 +149,13 @@ void MotionController::update(float dt_seconds) {
         // Turn on the spot: each wheel runs at (yaw rate x half the wheelbase), in opposite directions
         float wheel_mm_s = profile_angular_.getTargetVelocity() * (PI / 180.0f) * (WHEEL_BASE_MM * 0.5f);
         rotational_feedforward = wheelFeedforward(wheel_mm_s, 0.0f) * tune_[TUNE_TURN_FF];
+
+        // Plus a push in proportion to the planned acceleration (t_ka): more while the turn speeds
+        // up and, above all, a brake while it slows down. Without it the motors simply let go as
+        // the plan slows, the robot coasts on its own momentum, and the turn ends past its target.
+        const float wheel_accel = (wheel_mm_s - prev_turn_wheel_mm_s_) / dt_seconds;
+        prev_turn_wheel_mm_s_ = wheel_mm_s;
+        rotational_feedforward += tune_[TUNE_T_KA] * wheel_accel;
     } else {
         target_heading_setpoint = target_relative_angle_deg_;
 

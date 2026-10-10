@@ -32,6 +32,7 @@
 #include "ui/gestures/gestures.h"
 #include "ui/console/console.h"
 #include "ui/proposal/proposal.h"
+#include "ui/stages/stages.h"
 #include "wireless/ble_debug/ble_debug.h"
 #include "wireless/wifi_ota/wifi_ota.h"
 
@@ -89,10 +90,21 @@ bool getTelemetry(RobotTelemetry& out) {
     return true;
 }
 
+// Set by requestStop() from any task; cleared by the navigation task once it has stopped the run.
+// While it is set the motion task brakes and lets no move through.
+static std::atomic<bool> g_stop_request{false};
+static std::atomic<uint32_t> g_stop_count{0};
+void requestStop() { g_stop_count.fetch_add(1); g_stop_request.store(true); }
+uint32_t stopCount() { return g_stop_count.load(); }
+
 void requestEncoderReset() { g_pending_resets.fetch_or(RESET_REQ_ENCODERS); }
 void requestHeadingReset() { g_pending_resets.fetch_or(RESET_REQ_HEADING); }
 
 void prepareForNewRun() {
+    // A STOP pressed just before must be finished first, or it would end the new run as it starts
+    for (int i = 0; i < 50 && g_stop_request.load(); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
     g_pending_resets.fetch_or(RESET_REQ_NEW_RUN);
     // Wait for the motion task to carry it out (it runs every 2 ms)
     for (int i = 0; i < 50 && (g_pending_resets.load() & RESET_REQ_NEW_RUN); ++i) {
@@ -189,6 +201,13 @@ static String buildAppStatus() {
              (int)g_ir_sensors.getThresholdR45(), (int)g_ir_sensors.getThresholdR90());
     out += tail;
 
+    // Where the team is in the owner's staged plan (see Stages)
+    out += ",\"stage\":{\"cur\":";
+    out += String(Stages::current());
+    out += ",\"done\":";
+    out += String((unsigned int)Stages::doneMask());
+    out += "}";
+
     // A question waiting for the operator's Yes or No (see Proposal); its text is already safe to quote
     if (Proposal::shownId() != 0) {
         out += ",\"ask\":{\"id\":";
@@ -246,8 +265,13 @@ void motionControlTask(void* pvParameters) {
         float yaw_rate = (enc.right_speed_mm_s - enc.left_speed_mm_s) / WHEEL_BASE_MM * (180.0f / PI);
         g_imu.update(CONTROL_DT_S, yaw_rate, enc.linear_speed_mm_s);
 
-        // 3. Check for motion commands from Navigation
-        if (xQueueReceive(g_motion_cmd_queue, &current_cmd, 0) == pdTRUE) {
+        // 3. Check for motion commands from Navigation. A STOP comes first: brake now, and drop
+        // whatever move is waiting, until the navigation task has stopped the run itself.
+        if (g_stop_request.load()) {
+            xQueueReset(g_motion_cmd_queue);
+            g_motion_controller.emergencyStop();
+            was_busy = false;
+        } else if (xQueueReceive(g_motion_cmd_queue, &current_cmd, 0) == pdTRUE) {
             g_motion_controller.executeCommand(current_cmd);
             was_busy = true;
         }
@@ -317,6 +341,16 @@ void navigationTask(void* pvParameters) {
 
         {
             NavigatorLock lock;
+
+            // 1b. STOP from the operator: the motion task is already braking; end the run here, then
+            // let moves through again (the run is idle now, so nothing new is sent until a new start)
+            if (g_stop_request.load()) {
+                g_navigator->stop();
+                xQueueReset(g_motion_done_queue);
+                move_finished = false;
+                g_stop_request.store(false);
+                Serial.println("[SAFETY] STOP carried out.");
+            }
 
             // 2. Automatic safety stop (motor stall / dead encoder): abort the run, don't send the next move
             if (g_motion_controller.consumeSafetyStop()) {
@@ -543,6 +577,9 @@ void setup() {
     Serial.println("[INIT] Initializing I2C Bus (SDA: 21, SCL: 20 @ 400kHz)...");
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_CLOCK_SPEED);
     Wire.setTimeOut(I2C_TIMEOUT_MS);
+
+    Stages::begin();
+    Stages::report();
 
     // 3. Initialize Hardware Drivers
     Serial.println("[INIT] Initializing N20 PCNT Hardware Encoders (30:1, 840 CPR)...");
