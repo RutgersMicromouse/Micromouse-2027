@@ -126,11 +126,13 @@
 #define GESTURE_LIFTED_DEG      15.0f   // Tipped this far out of level = lifted: cancels what was just asked for, ignores hands
 #define GESTURE_CONFIRM_BLINKS  5       // A stage (or speed level) left alone for this many blinks is carried out
 #define GESTURE_BLINK_MS        500     // One blink, on and off
+#define GESTURE_SPEED_WAIT_MS   8000    // Speed choice: the level is shown this long after the last hand before...
+#define GESTURE_SPEED_GO_MS     2000    // ...this much rapid blinking, and then the speed run starts
 // The speed levels a hand can pick for a speed run, as a percentage of the SPEEDRUN_* speeds and
-// accelerations (a hand = the next one, round again after the last), and how bright the LED
-// blinks at each (0-255).
+// accelerations (a hand = the next one, round again after the last). The LED blinks the level's
+// place in the list (1 blink = the first), and at the brightness given here (0-255).
 #define GESTURE_SPEED_PERCENTS   { 35, 50, 65, 80, 100 }
-#define GESTURE_SPEED_BRIGHTNESS {  4, 12, 35, 95, 255 }
+#define GESTURE_SPEED_BRIGHTNESS { 15, 30, 60, 120, 255 }
 #define GESTURE_SPEEDRUN_MODE    Actions::MODE_HYBRID   // The speed run a hand starts: robot picks curves or diagonals
 
 // Battery Voltage Monitoring
@@ -194,7 +196,7 @@
 // and any second search) the robot speeds up to this, and slows again in time for the first cell
 // that is new or where the route turns. Smooth turns are always taken at SEARCH_CURVE_SPEED_MM_S
 // or slower. Set it equal to SEARCH_SPEED_DEFAULT_MM_S to switch the speeding-up off.
-#define SEARCH_KNOWN_SPEED_MM_S       260.0f   // Top search speed on a straight of known cells (mm/s) [400]
+#define SEARCH_KNOWN_SPEED_MM_S       SEARCH_SPEED_DEFAULT_MM_S   // Top search speed on a straight of known cells (mm/s): no speeding up while every turn is a stop (with it at 260 the PC drive test hit a wall on 1 full-size maze in 5) [260, 400]
 // The same idea for single cells and curves, which is what speeds up the way back in a small maze:
 // driving one cell into a cell it has visited, the robot may reach SEARCH_KNOWN_SPEED_MM_S in
 // between, and it curves through a visited cell at this instead of SEARCH_CURVE_SPEED_MM_S.
@@ -213,8 +215,8 @@
 // robot (2026-10-08) curves ended 4° past their heading at 175 mm/s, 8° at 210, 18° at 245 and
 // 27° at 262. Raise it once curves at this speed end on their heading.
 #define SPEEDRUN_CURVE_MAX_MM_S       180.0f
-#define SPEEDRUN_TURN_SPEED_DEG_S     450.0f  // Speedrun in-place turn speed (deg/s)
-#define SPEEDRUN_TURN_ACCEL_DEG_S2    2200.0f  // Speedrun in-place turn accel (deg/s^2)
+#define SPEEDRUN_TURN_SPEED_DEG_S     SEARCH_TURN_SPEED_DEG_S   // Speedrun in-place turn speed (deg/s): the search's, which the turn tuning was done at; NOT scaled with the run's speed [450]
+#define SPEEDRUN_TURN_ACCEL_DEG_S2    SEARCH_TURN_ACCEL_DEG_S2  // Speedrun in-place turn accel (deg/s^2), likewise [2200]
 
 // Smooth Turn Geometry (derivation and clearance check: see docs/INSTRUCTIONS.md section 8.4)
 // A smooth turn eases its heading in and out along the path: heading = angle * (3u² - 2u³).
@@ -315,7 +317,11 @@
 // the 90° sensor agrees once the robot reaches the edge, the robot curves straight through the
 // corner instead of driving to the centre, stopping, and turning on the spot. Half-way round the
 // curve the outer 45° sensor faces that cell's front wall squarely and records it.
-#define ENABLE_SEARCH_LOOKAHEAD 1       // 0 = always decide at the cell centre and turn on the spot
+// SMOOTH CURVES ARE OFF EVERYWHERE (owner, 2026-10-10): every turn, in the search and in speed
+// runs, is made standing still at a cell centre. 1 brings back the curves, diagonals and V turns
+// of the speed-run planner; the two search flags below bring back the search's curves.
+#define ENABLE_SMOOTH_CURVES    0
+#define ENABLE_SEARCH_LOOKAHEAD 0       // 0 = always decide at the cell centre and turn on the spot [1 with smooth curves]
 #define SEARCH_CONFIRM_WITH_90  0       // 1 = at the cell edge the 90° sensor must agree with the 45° look-ahead before a
                                         //   curve. Only right if the 90° sensors sit well ahead of the wheel axle, so that at
                                         //   the edge they are already beside the NEXT cell's wall. 0 = trust the 45° alone:
@@ -331,7 +337,7 @@
 // side walls, just as they do at the end of a straight. They are sampled once the heading is
 // within this many degrees of the curve's final heading; with that the search can curve again
 // straight away instead of driving to the cell centre and turning on the spot.
-#define ENABLE_SEARCH_CHAINED_CURVES 1  // 0 = always drive to the cell centre after a curve
+#define ENABLE_SEARCH_CHAINED_CURVES 0  // 0 = always drive to the cell centre after a curve [1 with smooth curves]
 // Whether the 45° readings taken as a curve ends may decide a second curve into a cell the robot
 // has never visited. OFF since 2026-10-08: on the robot they called a walled side open twice running
 // and it curved into the wall. With 0, curves are only chained through cells it has visited before.

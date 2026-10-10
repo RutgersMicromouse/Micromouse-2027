@@ -67,8 +67,11 @@ private:
 // A hand before GESTURE_CONFIRM_BLINKS blinks have gone by = the next stage (after blue: back to
 // cyan, nothing chosen). Leave it alone for that many blinks = that stage is done.
 //
-// A speed run then asks for its speed the same way: yellow blinks, brighter for a faster level
-// (GESTURE_SPEED_PERCENTS). A hand = the next level (round again after the last), left alone = go.
+// A speed run then asks for its speed, and takes its time over it: the LED blinks the level's
+// number in yellow (1 blink = slowest, GESTURE_SPEED_PERCENTS; also brighter for faster), pauses,
+// and blinks it again. A hand = the next level (round again after the last). Left alone for
+// GESTURE_SPEED_WAIT_MS it blinks rapidly for GESTURE_SPEED_GO_MS (a hand even then = next
+// level) and goes.
 //
 // Lifting or turning the robot at any point cancels the choosing and changes nothing. Hands are
 // ignored while the robot is being moved (it waits until it has stood still for GESTURE_WARMUP_MS).

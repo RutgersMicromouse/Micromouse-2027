@@ -428,6 +428,9 @@ static void handle(String cmd, Source source) {
                  (unsigned long)g_imu.getReadsOk(), (unsigned long)g_imu.getReadsNoAnswer(), (unsigned long)g_imu.getReadsShort(),
                  (unsigned long)g_imu.getReadsBadValue(), (unsigned long)g_imu.getSlowestReadUs());
         reply(buf);
+        snprintf(buf, sizeof(buf), "TILT: %.0f degrees out of level (a run stops above %.0f; hands are ignored above %.0f)",
+                 g_imu.getTiltDeg(), (float)TILT_STOP_DEG, (float)GESTURE_LIFTED_DEG);
+        reply(buf);
         return;
     }
     if (cmd == "log" || cmd == "log clear") {

@@ -99,8 +99,9 @@ private:
     uint32_t bad_read_total_;
     uint32_t fail_no_answer_ = 0, fail_short_ = 0, fail_bad_value_ = 0, reads_ok_ = 0, slowest_read_us_ = 0;
     bool retry_read_;              // The last scheduled read failed: try again on the next tick
-    float roll_deg_ = 0.0f, pitch_deg_ = 0.0f;              // Latest from the BNO055, see getTiltDeg()
-    float level_roll_deg_ = 0.0f, level_pitch_deg_ = 0.0f;  // What they read with the robot on the floor
+    float down_[3] = { 0.0f, 0.0f, 1.0f };        // Which way is down, latest from the BNO055 (unit vector), see getTiltDeg()
+    float level_down_[3] = { 0.0f, 0.0f, 1.0f };  // The same with the robot standing on the floor
+    bool tilt_known_ = false;                               // A roll / pitch reading has arrived since power-on
     float accel_now_[3] = { 0.0f, 0.0f, 0.0f };   // Display only, see getAcceleration()
     float accel_peak_[3] = { 0.0f, 0.0f, 0.0f };
 };

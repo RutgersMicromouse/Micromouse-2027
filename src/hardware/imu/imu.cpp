@@ -8,7 +8,7 @@
 #define BNO055_CHIP_ID_ADDR        0x00
 #define BNO055_PAGE_ID_ADDR        0x07
 #define BNO055_GYRO_DATA_Z_LSB     0x18
-#define BNO055_EULER_ROLL_LSB      0x1C   // Euler roll, then pitch (0x1E), 16 LSB = 1 degree
+#define BNO055_GRAVITY_X_LSB       0x2E   // Which way is down, in the sensor's own X, Y, Z: 100 LSB = 1 m/s2
 #define BNO055_LINEAR_ACCEL_X_LSB  0x28   // Acceleration with gravity removed: X, Y, Z, 100 LSB = 1 m/s2
 #define BNO055_OPR_MODE_ADDR       0x3D
 #define BNO055_PWR_MODE_ADDR       0x3E
@@ -322,24 +322,31 @@ void IMU::acceptReading(float raw_h, float raw_gz, bool rate_valid,
     bad_reads_ = 0;
 }
 
-// Roll and pitch (0x1C / 0x1E, 16 LSB per degree): how far the robot is tipped out of level. A
-// failed read, or values that cannot be real (roll beyond 90 degrees, pitch beyond 180), leave
-// the last ones in place and are not counted with the heading reads.
+// Which way is down, as the BNO055 sees it (its gravity vector), for the tilt stop. A failed
+// read, or a vector that is not about 9.8 m/s2 long, leaves the last one in place and is not
+// counted with the heading reads.
+// (Euler roll and pitch were used first. On this robot they jump by about 180 degrees while it
+// turns on the spot, because of how the sensor is mounted, and the tilt stop cut every turn short:
+// "LIFTED AND TIPPED (178 deg)", 2026-10-10. The direction of gravity does not change in a turn.)
 void IMU::readTilt() {
     Wire.beginTransmission(address_);
-    Wire.write(BNO055_EULER_ROLL_LSB);
+    Wire.write(BNO055_GRAVITY_X_LSB);
     if (Wire.endTransmission() != 0) return;
-    if (Wire.requestFrom(address_, (uint8_t)4) != 4 || Wire.available() < 4) return;
-    const uint8_t roll_lsb  = Wire.read();
-    const uint8_t roll_msb  = Wire.read();
-    const uint8_t pitch_lsb = Wire.read();
-    const uint8_t pitch_msb = Wire.read();
-    const int16_t raw_roll  = (int16_t)(((uint16_t)roll_msb << 8) | roll_lsb);
-    const int16_t raw_pitch = (int16_t)(((uint16_t)pitch_msb << 8) | pitch_lsb);
-    if (abs(raw_roll) > 90 * 16 || abs(raw_pitch) > 180 * 16) return;
-    if (raw_roll == -1 && raw_pitch == -1) return; // All ones: the sensor was not driving the bus
-    roll_deg_  = (float)raw_roll / 16.0f;
-    pitch_deg_ = (float)raw_pitch / 16.0f;
+    if (Wire.requestFrom(address_, (uint8_t)6) != 6 || Wire.available() < 6) return;
+    float down[3];
+    for (int axis = 0; axis < 3; ++axis) {
+        const uint8_t lsb = Wire.read();
+        const uint8_t msb = Wire.read();
+        down[axis] = (float)(int16_t)(((uint16_t)msb << 8) | lsb) / 100.0f;
+    }
+    const float length = sqrtf(down[0] * down[0] + down[1] * down[1] + down[2] * down[2]);
+    if (length < 8.5f || length > 11.0f) return; // Not gravity: a corrupted transfer
+    for (int axis = 0; axis < 3; ++axis) down_[axis] = down[axis] / length;
+    // The first reading after power-on is "level" until the heading is next set
+    if (!tilt_known_) {
+        tilt_known_ = true;
+        for (int axis = 0; axis < 3; ++axis) level_down_[axis] = down_[axis];
+    }
 }
 
 // Display only. A failed read just leaves the last values in place; it is not counted with the
@@ -375,9 +382,10 @@ float IMU::getHeadingDeg() const {
 }
 
 float IMU::getTiltDeg() const {
-    if (!hardware_detected_ || isUsingFallback()) return 0.0f; // No trustworthy reading: never "tilted"
-    return fmaxf(fabsf(normalizeAngle180(roll_deg_ - level_roll_deg_)),
-                 fabsf(normalizeAngle180(pitch_deg_ - level_pitch_deg_)));
+    if (!hardware_detected_ || !tilt_known_ || isUsingFallback()) return 0.0f; // No trustworthy reading: never "tilted"
+    // The angle between where down is now and where it was with the robot on the floor
+    const float alike = down_[0] * level_down_[0] + down_[1] * level_down_[1] + down_[2] * level_down_[2];
+    return acosf(constrain(alike, -1.0f, 1.0f)) * (180.0f / PI);
 }
 
 float IMU::getGyroZ() const {
@@ -397,8 +405,9 @@ void IMU::resetHeading(float initial_heading_deg) {
         }
         heading_offset_deg_ = normalizeAngle180(bno_now - initial_heading_deg);
         // The robot is standing on the floor whenever its heading is set: this is "level"
-        level_roll_deg_  = roll_deg_;
-        level_pitch_deg_ = pitch_deg_;
+        if (tilt_known_) {
+            for (int axis = 0; axis < 3; ++axis) level_down_[axis] = down_[axis];
+        }
     }
 
     state_.heading_deg = initial_heading_deg;

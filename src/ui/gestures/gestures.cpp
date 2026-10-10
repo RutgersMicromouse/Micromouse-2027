@@ -115,6 +115,8 @@ static_assert(sizeof(kSpeedBrightness) == sizeof(kSpeedPercents), "one LED brigh
 
 static const StatusLED::Color READY_COLOR = StatusLED::CYAN;
 static const uint8_t WAIT_BRIGHTNESS = 3;   // "Not listening yet": the ready colour, very dim
+static const uint32_t LEVEL_BLINK_MS = 400; // One blink of the speed level's number
+static const uint32_t LEVEL_GAP_MS   = 1000; // Dark pause before the number is blinked again
 
 // Where the choosing stands
 enum Mode : uint8_t {
@@ -170,8 +172,9 @@ static void startBlinking(Mode mode, uint32_t now_ms) {
     if (mode == MODE_STAGE) {
         Serial.printf("[UI] Stage: %s. A hand = next, leave it for %d blinks = do it.\n", kStageName[s_stage], (int)GESTURE_CONFIRM_BLINKS);
     } else {
-        Serial.printf("[UI] Speed level %d of %d (%d%%). A hand = next level, leave it for %d blinks = go.\n",
-                      (int)s_speed_level + 1, (int)SPEED_LEVELS, (int)kSpeedPercents[s_speed_level], (int)GESTURE_CONFIRM_BLINKS);
+        Serial.printf("[UI] Speed level %d of %d (%d%%). A hand = next level, leave it for %d s = go.\n",
+                      (int)s_speed_level + 1, (int)SPEED_LEVELS, (int)kSpeedPercents[s_speed_level],
+                      (int)((GESTURE_SPEED_WAIT_MS + GESTURE_SPEED_GO_MS) / 1000));
     }
 }
 
@@ -272,25 +275,45 @@ void update(const IRReadings& ir) {
         }
     }
 
-    // While a hand is there the count waits: the blinks start again when it has gone
+    // While a hand is there the count waits: it starts again when the hand has gone
     if (s_input.isHandPresent()) s_blink_start_ms = now_ms;
-
     const uint32_t since_ms = now_ms - s_blink_start_ms;
+
+    if (s_mode == MODE_SPEED) {
+        // The speed is not rushed: the level is shown as its number in blinks, a pause, and again,
+        // for GESTURE_SPEED_WAIT_MS after the last hand. Then a rapid blink says "going", and a
+        // hand during that still counts as "next level".
+        const StatusLED::Color color = kStageColor[STAGE_SPEED_RUN];
+        const uint8_t brightness = kSpeedBrightness[s_speed_level];
+        if (since_ms >= (uint32_t)GESTURE_SPEED_WAIT_MS + GESTURE_SPEED_GO_MS) {
+            confirm(now_ms);
+            return;
+        }
+        if (since_ms >= (uint32_t)GESTURE_SPEED_WAIT_MS) {
+            snprintf(meaning, sizeof(meaning), "SPEED level %d (%d%%): GOING. A hand now = next level instead",
+                     (int)s_speed_level + 1, (int)kSpeedPercents[s_speed_level]);
+            show(((since_ms / 100) % 2 == 0) ? color : StatusLED::OFF, brightness, meaning);
+            return;
+        }
+        const uint32_t pattern_ms = (uint32_t)(s_speed_level + 1) * LEVEL_BLINK_MS + LEVEL_GAP_MS;
+        const uint32_t t = since_ms % pattern_ms;
+        const bool lit = s_input.isHandPresent() ||
+                         (t < (uint32_t)(s_speed_level + 1) * LEVEL_BLINK_MS && (t % LEVEL_BLINK_MS) < LEVEL_BLINK_MS / 2);
+        snprintf(meaning, sizeof(meaning), "SPEED level %d of %d (%d%%). Hand = next level. Goes in %d s",
+                 (int)s_speed_level + 1, (int)SPEED_LEVELS, (int)kSpeedPercents[s_speed_level],
+                 (int)((GESTURE_SPEED_WAIT_MS + GESTURE_SPEED_GO_MS - since_ms + 999) / 1000));
+        show(lit ? color : StatusLED::OFF, brightness, meaning);
+        return;
+    }
+
     if (since_ms >= (uint32_t)GESTURE_CONFIRM_BLINKS * GESTURE_BLINK_MS) {
         confirm(now_ms);
         return;
     }
-
     const int blink = (int)(since_ms / GESTURE_BLINK_MS) + 1;
     const bool lit = s_input.isHandPresent() || (since_ms % GESTURE_BLINK_MS) < GESTURE_BLINK_MS / 2;
-    if (s_mode == MODE_SPEED) {
-        snprintf(meaning, sizeof(meaning), "SPEED level %d of %d (%d%%): blink %d of %d. Hand = next level",
-                 (int)s_speed_level + 1, (int)SPEED_LEVELS, (int)kSpeedPercents[s_speed_level], blink, (int)GESTURE_CONFIRM_BLINKS);
-        show(lit ? kStageColor[STAGE_SPEED_RUN] : StatusLED::OFF, kSpeedBrightness[s_speed_level], meaning);
-    } else {
-        snprintf(meaning, sizeof(meaning), "%s: blink %d of %d. Hand = next stage", kStageName[s_stage], blink, (int)GESTURE_CONFIRM_BLINKS);
-        show(lit ? kStageColor[s_stage] : StatusLED::OFF, RGB_BRIGHTNESS_LEVEL, meaning);
-    }
+    snprintf(meaning, sizeof(meaning), "%s: blink %d of %d. Hand = next stage", kStageName[s_stage], blink, (int)GESTURE_CONFIRM_BLINKS);
+    show(lit ? kStageColor[s_stage] : StatusLED::OFF, RGB_BRIGHTNESS_LEVEL, meaning);
 }
 
 } // namespace GestureUI

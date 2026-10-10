@@ -20,6 +20,10 @@ static float moveTime(float dist, float v_max, float accel, float v0, float v1) 
 
 // Plans a whole speed run: turns the cell path into one unbroken chain of moves.
 //
+// WITH ENABLE_SMOOTH_CURVES 0 (as now) none of the curves below are used: every straight ends
+// standing in the centre of the cell where the path bends, the robot turns 90 degrees on the
+// spot, and the next straight starts from rest.
+//
 // The path is read as a list of turns, one per cell the path bends in:
 //   a turn on its own                 -> smooth 90° curve, cell edge to cell edge
 //   turns that alternate (L R L R..)  -> one diagonal, entered and left with smooth 45° curves
@@ -42,8 +46,9 @@ float Navigator::planSpeedRun(const Coordinate* path, uint8_t path_len, bool use
     // down to the curve speed before its curve, and the next one accelerates away again.
     const float turn_speed = fminf(SPEEDRUN_CURVE_SPEED_MM_S * speed_scale_, SPEEDRUN_CURVE_MAX_MM_S);
     const float v_speed    = turn_speed * V90_SPEED_RATIO;
-    const float spin_speed = SPEEDRUN_TURN_SPEED_DEG_S  * speed_scale_;
-    const float spin_accel = SPEEDRUN_TURN_ACCEL_DEG_S2 * speed_scale_;
+    // Turns on the spot keep the one speed they were tuned at, however fast the straights are
+    const float spin_speed = SPEEDRUN_TURN_SPEED_DEG_S;
+    const float spin_accel = SPEEDRUN_TURN_ACCEL_DEG_S2;
 
     // Every run begins in the start cell facing into the maze
     pose_.cell_x = path[0].x;
@@ -104,6 +109,16 @@ float Navigator::planSpeedRun(const Coordinate* path, uint8_t path_len, bool use
             i++;
             continue;
         }
+
+#if !ENABLE_SMOOTH_CURVES
+        // Smooth curves are switched off: drive to the centre of the cell, stop, turn on the spot
+        // and carry on. The straights keep their speeds; only the turning is slow.
+        driveStraight(0.0f);
+        spinOnSpot(turn == 1 ? ACTION_TURN_RIGHT_90 : ACTION_TURN_LEFT_90, 90.0f);
+        pending = MAZE_CELL_SIZE_MM;
+        i++;
+        continue;
+#endif
 
         // Cells i..j: a run of left / right turns with no straight cell in between
         uint8_t j = i;
@@ -183,6 +198,13 @@ void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
     }
 
     bool use_diagonals = (strategy != SPEEDRUN_CURVES_ONLY);
+#if !ENABLE_SMOOTH_CURVES
+    // Only straights along the maze's two axes and 90 degree turns on the spot: there is nothing
+    // to choose between, whichever kind of speed run was asked for
+    use_diagonals = false;
+    strategy = SPEEDRUN_CURVES_ONLY;
+    Serial.println("[NAV] Speed run uses straights and 90 degree turns on the spot only (no curves, no diagonals).");
+#endif
     if (strategy == SPEEDRUN_HYBRID_AUTO) {
         // Plan it both ways and keep whichever is quicker
         float t_curves = planSpeedRun(path, path_len, false);

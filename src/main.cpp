@@ -651,7 +651,7 @@ void setup() {
     Serial.println("[UI] LED solid cyan = ready. A hand at the front sensors starts the choosing:");
     Serial.println("  the LED blinks a stage: Green = Search, Yellow = Speed run, White = Reset + calibrate, Blue = Forget the maze.");
     Serial.println("  A hand before 5 blinks = next stage. Left alone for 5 blinks = that stage is done.");
-    Serial.println("  A speed run then blinks its speed (brighter = faster): a hand = next level, left alone = go.");
+    Serial.println("  A speed run then blinks its speed level's number: a hand = next level, left alone for 10 s = go.");
     Serial.println("  Lifting the robot cancels the choosing.");
     Serial.println("  To halt a run: lift the robot and turn it sideways (or send 'stop' when debugging).");
 }

@@ -124,23 +124,26 @@ Type any of the following commands into the terminal:
 
 ## 4. Hand-Wave Controls & LED Field Guide
 
-The robot has no buttons or switches. Power it on and wait for the LED to turn **solid cyan** (dim cyan means "wait": it is still learning what its sensors see). Then put a hand in front of a group of sensors and take it away again. The robot acts when the hand leaves.
+The robot has no buttons or switches. Only the two **front** sensors are used, and only one sign: a hand in front of them, taken away again.
 
-| Hand at the... | Action | LED while your hand is there |
+Power it on and wait for the LED to turn **solid cyan** (dim cyan means "wait": it is still learning what its sensors see). A hand starts the choosing. The LED then **blinks the colour of a stage**:
+
+| Order | LED blinks | Stage |
 | :--- | :--- | :--- |
-| **Left** sensors | Search run (explore the maze, then return to start) | 🟢 Green |
-| **Right** sensors | Forget the saved maze | 🔵 Blue |
-| **Left and right together** (two hands) | Reset the sensors, then calibrate the IR: it measures, turns round, measures, turns back | ⚪ White |
-| **Front** sensors | Speed run: opens the speed choice (nothing moves yet) | 🟡 Yellow |
+| 1 | 🟢 Green | Search run (explore the maze, then return to start) |
+| 2 | 🟡 Yellow | Speed run |
+| 3 | ⚪ White | Reset the sensors, then calibrate the IR: it measures, turns round, measures, turns back |
+| 4 | 🔵 Blue | Forget the saved maze |
 
-The colour that comes on while your hand is there tells you which sensors saw you. After the hand leaves, the LED blinks rapidly in that colour for 2 seconds and then the action starts.
+* **A hand before 5 blinks have gone by**: the next stage. After blue it goes back to solid cyan with nothing chosen.
+* **Leave it alone for 5 blinks** (2.5 seconds): that stage is carried out.
 
 **Before every run, put the robot in the start cell facing into the maze.** It always assumes that is where it is.
 
 ### Picking the speed of a speed run
-A hand at the front opens the speed choice. The LED is now **yellow, and brighter for a faster level**. After every change it also blinks the level number once through, then stays steady:
+When the yellow stage is confirmed, nothing moves yet. The LED keeps blinking yellow, now **brighter for a faster level**:
 
-| Level (blinks) | Speed | LED |
+| Level | Speed | LED |
 | :--- | :--- | :--- |
 | 1 | 35 % | Very dim |
 | 2 | 50 % | Dim |
@@ -148,17 +151,13 @@ A hand at the front opens the speed choice. The LED is now **yellow, and brighte
 | 4 | 80 % | Bright |
 | 5 | 100 % | Full |
 
-* **Left** sensors: one level slower.
-* **Right** sensors: one level faster.
-* **Front** sensors: go (2 seconds of rapid blinking first).
-
-The robot remembers the level, so the next speed run opens where you left it. Leave the choice alone for 15 seconds, or cancel the rapid blinking, and it closes again (solid cyan). The levels and brightnesses are `GESTURE_SPEED_PERCENTS` and `GESTURE_SPEED_BRIGHTNESS` in `src/config.h`; which kind of speed run a hand starts is `GESTURE_SPEEDRUN_MODE` (hybrid: the robot picks curves or diagonals, whichever is quicker).
+A hand before 5 blinks = the next level (after 5 comes 1 again). Left alone for 5 blinks = go. The robot remembers the level, so the next speed run starts the choice where you left it. The levels and brightnesses are `GESTURE_SPEED_PERCENTS` and `GESTURE_SPEED_BRIGHTNESS` in `src/config.h`; which kind of speed run a hand starts is `GESTURE_SPEEDRUN_MODE` (hybrid: the robot picks curves or diagonals, whichever is quicker).
 
 ### How a competition goes
-1. **Calibrate (both sides).** Robot centred by hand in the start cell, facing into the maze.
-2. **Search (left).** The robot drives to the centre, then explores its way back to the start cell. When it stops, the LED blinks 🟢 green twice if it has found the shortest possible route, or 🟡 yellow twice if a shorter one might still be hiding in cells it has not seen.
-3. **Yellow? Search again.** The map is kept, so the next search goes straight for the unexplored part. If a search goes wrong (crash, or you lift the robot out), nothing is lost: what it learned is saved, and the next search carries on from there. A hand on the right wipes the map if you move to a different maze.
-4. **Speed run (front, set the speed with left / right, front again).** Start at level 1 and go up a level each time it reaches the centre cleanly.
+1. **Calibrate (white).** Robot centred by hand in the start cell, facing into the maze.
+2. **Search (green).** The robot drives to the centre, then explores its way back to the start cell. When it stops, the LED blinks 🟢 green twice if it has found the shortest possible route, or 🟡 yellow twice if a shorter one might still be hiding in cells it has not seen.
+3. **Yellow? Search again.** The map is kept, so the next search goes straight for the unexplored part. If a search goes wrong (crash, or you lift the robot out), nothing is lost: what it learned is saved, and the next search carries on from there. Blue wipes the map if you move to a different maze.
+4. **Speed run (yellow, then the speed).** Start at level 1 and go up a level each time it reaches the centre cleanly.
 
 ### Practising in the 3x3 maze
 Flash the practice build: `pio run -e test3x3 -t upload`. It is the same firmware with the maze size set to 3.
@@ -170,30 +169,28 @@ Flash the practice build: `pio run -e test3x3 -t upload`. It is the same firmwar
 * Flash `competition` (or `main`) again before running a full-size maze.
 
 ### Changing your mind
-* **Hand already on the sensors**: keep it there for more than 3 seconds. Nothing happens.
-* **During the rapid blinking** (2 seconds before anything starts): cover any sensor, or pick the robot up. The LED flashes 🔴 red twice and nothing starts.
+* **While it blinks**: keep giving a hand until it is past blue (solid cyan again), or lift the robot. Nothing is chosen and nothing is changed.
+* **Hand already on the sensors**: the count of blinks waits while your hand is there, and starts again when it leaves.
 
 ### Stopping a run
 A hand in front of the sensors looks like a wall to a moving robot, so waves are ignored during a run. To stop it, **lift the robot and tip it up toward vertical** (nose up, nose down or onto its side, any way): once it is tipped more than 45° out of level it brakes and abandons the run within a tenth of a second. Turning it sideways more than 60° from where it is trying to go does the same. Only the run is lost: the map it has learned is kept, and so is the sensor calibration. Lifting or tipping the robot during the 2 seconds of rapid blinking cancels what you just asked for, and nothing else. It also stops by itself if it drives into something and the wheels stop turning. When debugging with a phone or laptop connected, `stop` on the console works too.
 
 ### Tips
-* The side sensors look sideways (and at 45° forward), so in the start cell a hand goes between the robot and the side wall, or just ahead of the robot's front corner. Bring it within a few centimetres.
-* A hand across the front counts as front even if it also covers the corners.
-* Beside a wall a hand makes the side reading go **down** (it hides the wall), in the open it makes it go up. Both count. Cover the side sensor properly, so the wall behind your hand is hidden.
-* Calibration is refused (red flashes, `[CALIB] REFUSED`) if there is no wall on either side, so one set off by mistake in mid-air changes nothing.
+* Bring the hand within a few centimetres of the front of the robot, then take it right away.
 * Hands are ignored for 2 seconds after power-on, after each run, and after the robot has been turned or carried (dim cyan). Put it down, wait for solid cyan, then use your hand.
-* If hands are missed or seen when nobody was there, adjust `GESTURE_MIN_RISE` in `src/config.h`. `status` on the console prints a `HANDS:` line with each group's reading now and the level a hand must exceed; every hand seen and every action is also printed as a `[UI]` line.
+* If hands are missed or seen when nobody was there, adjust `GESTURE_MIN_RISE` in `src/config.h`. `status` on the console prints a `HANDS:` line with the front reading now and the levels a hand must pass; every hand seen and every stage is also printed as a `[UI]` line.
+* Too little time to react? Raise `GESTURE_BLINK_MS` (one blink) or `GESTURE_CONFIRM_BLINKS`.
+* Calibration is refused (red flashes, `[CALIB] REFUSED`) if there is no wall on either side, so one set off by mistake in mid-air changes nothing.
 * Set `ENABLE_GESTURE_UI` to `0` in `src/config.h` to turn hand control off.
 
 ### LED colors at a glance
 | LED | Meaning |
 | :--- | :--- |
 | 🔵 Solid blue | Booting |
-| 🌐 Solid cyan | Ready for a hand |
+| 🌐 Solid cyan | Ready: a hand at the front starts the choosing |
 | 🌐 Dim cyan | Wait: learning what the sensors see (just powered on, just moved, just finished a run) |
-| 🟢 / 🔵 / ⚪ / 🟡 while a hand is there | Left (search) / right (forget) / both (calibrate) / front (speed run) seen |
-| 🟡 Yellow, dim to bright | Choosing the speed: brighter = faster; it blinks the level after each change |
-| Rapid blinking for 2 s | About to start: cover a sensor to cancel |
+| 🟢 / 🟡 / ⚪ / 🔵 blinking | Search / speed run / reset and calibrate / forget the maze: a hand = next, 5 blinks = do it |
+| 🟡 Yellow blinking, dim to bright | Speed of the speed run: brighter = faster; a hand = next level, 5 blinks = go |
 | 🔴 5x Red flash at boot | Motor driver not responding |
 | 🟡 3x Yellow flash at boot | IMU not found (running on encoder heading) |
 | 🔴 5x Red flash during a run | Run aborted (stall, encoder fault, or lifted and turned) |
@@ -251,7 +248,7 @@ git push -u origin master
 ### Sensor Calibration Check
 Before a run in a new arena:
 1. Place the robot in the starting cell centered between the walls.
-2. Put a hand in front of the left and the right sensors at the same time (LED white), then take them away.
+2. Give a hand at the front until the LED blinks white, then leave it alone for 5 blinks.
 3. Ensure you see **3x Green flashes** indicating baseline calibration is stored in Flash NVS.
 
 ### Built-In Fault Recovery
