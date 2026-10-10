@@ -19,7 +19,7 @@ void motorSetup() {
     mc.setMaxDeceleration(1, 200);
     mc.setMaxDeceleration(2, 200);  // was 1, now 2
 
-    Serial.println("MOTOR SETUP DONE");
+    Serial1.println("MOTOR SETUP DONE");
 }
 
 // These are no longer needed for the Encoder library, 

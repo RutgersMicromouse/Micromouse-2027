@@ -15,7 +15,9 @@ public:
     RobotState  state;
 
     // Hand Passed Values
-    bool isEncoder = false;
+    bool isTof = false;
+
+    void publishState();
 
 
     // (x,y) -> node_id for loop detection

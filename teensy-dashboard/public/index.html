@@ -1,0 +1,180 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Micromouse Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main>
+        <h1>Micromouse Telemetry</h1>
+
+        <p class="backend-status">Backend: <strong id="status">Connecting...</strong></p>
+
+        <details class="dashboard-options">
+            <summary>Options</summary>
+            <div class="options-content">
+                <section class="pid-panel">
+                    <h2>PID Tuning</h2>
+
+                    <div class="pid-controls">
+            <div class="pid-control">
+                <label for="kp-dist">Kp_dist</label>
+                <input id="kp-dist" type="number" value="6.0" step="0.1" min="0" max="15">
+                <button type="button" onclick="setPID('Kp_dist', 'kp-dist')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="ki-dist">Ki_dist</label>
+                <input id="ki-dist" type="number" value="0" step="0.1" min="0" max="5">
+                <button type="button" onclick="setPID('Ki_dist', 'ki-dist')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="kd-dist">Kd_dist</label>
+                <input id="kd-dist" type="number" value="0" step="0.1" min="0" max="5">
+                <button type="button" onclick="setPID('Kd_dist', 'kd-dist')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="kp-angle">Kp_angle</label>
+                <input id="kp-angle" type="number" value="4.1" step="0.1" min="0" max="10">
+                <button type="button" onclick="setPID('Kp_angle', 'kp-angle')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="ki-angle">Ki_angle</label>
+                <input id="ki-angle" type="number" value="0" step="0.1" min="0" max="5">
+                <button type="button" onclick="setPID('Ki_angle', 'ki-angle')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="kd-angle">Kd_angle</label>
+                <input id="kd-angle" type="number" value="0.4" step="0.1" min="0" max="5">
+                <button type="button" onclick="setPID('Kd_angle', 'kd-angle')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="kp-lat">Kp_lat</label>
+                <input id="kp-lat" type="number" value="2.0" step="0.1" min="0" max="10">
+                <button type="button" onclick="setPID('Kp_lat', 'kp-lat')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="kd-lat">Kd_lat</label>
+                <input id="kd-lat" type="number" value="0.4" step="0.1" min="0" max="5">
+                <button type="button" onclick="setPID('Kd_lat', 'kd-lat')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="kp-wall">Kp_wall</label>
+                <input id="kp-wall" type="number" value="0.5" step="0.1" min="0" max="10">
+                <button type="button" onclick="setPID('Kp_wall', 'kp-wall')">Apply</button>
+            </div>
+            <div class="pid-control">
+                <label for="kd-wall">Kd_wall</label>
+                <input id="kd-wall" type="number" value="0" step="0.1" min="0" max="5">
+                <button type="button" onclick="setPID('Kd_wall', 'kd-wall')">Apply</button>
+            </div>
+                    </div>
+
+                    <p id="pid-status"></p>
+                </section>
+
+                <section class="graph-editor">
+                    <h2>Graph Editor</h2>
+
+                    <form class="graph-controls" id="node-form">
+                        <div class="graph-field">
+                            <label for="node-x">Node X</label>
+                            <input id="node-x" type="number" value="0" step="1" required>
+                        </div>
+                        <div class="graph-field">
+                            <label for="node-y">Node Y</label>
+                            <input id="node-y" type="number" value="0" step="1" required>
+                        </div>
+                        <button type="submit">Add node</button>
+
+                        <div class="graph-field">
+                            <label for="edge-from">From node</label>
+                            <select id="edge-from" required disabled></select>
+                        </div>
+                        <div class="graph-field">
+                            <label for="edge-to">To node</label>
+                            <select id="edge-to" required disabled></select>
+                        </div>
+                        <div class="graph-field">
+                            <label for="edge-cost">Edge cost</label>
+                            <input id="edge-cost" type="number" value="1" min="0" step="0.1" required>
+                        </div>
+                        <button id="add-edge" type="button" disabled>Add directed edge</button>
+                        <button id="load-example" class="secondary-button" type="button">Load example</button>
+                        <button id="clear-graph" class="secondary-button" type="button" disabled>Clear graph</button>
+                    </form>
+
+                    <p id="graph-status" role="status" aria-live="polite">Add a node to start building the graph.</p>
+                </section>
+            </div>
+        </details>
+
+        <div class="sensors_box">
+            <section class="sensor-readout" id="Left" aria-label="Left sensor">
+                <h2>LEFT</h2>
+                <output class="sensor-value" id="left-sensor-value" aria-label="Current left sensor value">--</output>
+                <p>AVG 10 <output id="left-sensor-average">--</output></p>
+            </section>
+            <section class="sensor-readout" id="Front" aria-label="Front sensor">
+                <h2>FRONT</h2>
+                <output class="sensor-value" id="front-sensor-value" aria-label="Current front sensor value">--</output>
+                <p>AVG 10 <output id="front-sensor-average">--</output></p>
+            </section>
+            <section class="sensor-readout" id="Right" aria-label="Right sensor">
+                <h2>RIGHT</h2>
+                <output class="sensor-value" id="right-sensor-value" aria-label="Current right sensor value">--</output>
+                <p>AVG 10 <output id="right-sensor-average">--</output></p>
+            </section>
+        </div>
+
+        <div class="workspace-grid">
+            <section class="log-display" id="Serial">
+                <h2>Serial</h2>
+                <pre class="log" id="serial-log">Waiting for Teensy data...</pre>
+                <button class="clear" id="serial-log-clear">Clear</button>
+            </section>
+
+            <section class="graph-panel">
+                <h2>Maze Graph</h2>
+                <div class="graph-view-controls" role="group" aria-label="Graph zoom controls">
+                    <button id="graph-zoom-out" type="button" aria-label="Zoom out" title="Zoom out">−</button>
+                    <output id="graph-zoom-level" aria-live="polite">100%</output>
+                    <button id="graph-zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+                    <button id="graph-zoom-reset" class="secondary-button" type="button">Reset</button>
+                </div>
+                <div class="graph-canvas">
+                    <svg id="maze-graph" viewBox="0 0 800 500" role="img" aria-label="Maze graph visualization">
+                        <defs>
+                            <marker id="edge-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+                                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                <path d="M 0 0 L 10 5 L 0 10 z"></path>
+                            </marker>
+                        </defs>
+                        <text class="graph-empty" x="400" y="250">Your nodes and edges will appear here</text>
+                    </svg>
+                </div>
+            </section>
+
+            <aside class="bot-status-panel" aria-label="Bot status">
+                <section class="bot-status-card">
+                    <h2>Position</h2>
+                    <output id="bot-position">--</output>
+                </section>
+                <section class="bot-status-card">
+                    <h2>Orientation</h2>
+                    <output id="bot-angle">--°</output>
+                    <p>Heading <strong id="bot-heading">--</strong></p>
+                </section>
+                <section class="bot-status-card">
+                    <h2>Current Node</h2>
+                    <output id="bot-node-id">--</output>
+                </section>
+            </aside>
+        </div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

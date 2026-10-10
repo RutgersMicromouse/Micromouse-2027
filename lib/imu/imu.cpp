@@ -28,13 +28,13 @@ double readRawAngle() {
 void imuSetup() {
     Wire.setClock(400000);
     if (!bno.begin_I2C(0x4B)) {
-        Serial.println("No BNO08x detected");
+        Serial1.println("No BNO08x detected");
         while (1);
     }
     bno.enableReport(SH2_ROTATION_VECTOR, 10000); // 100Hz
     delay(500); // let BNO stabilize
     angleOffset = readRawAngle(); // read once to set offset
-    Serial.println("IMU SETUP DONE");
+    Serial1.println("IMU SETUP DONE");
 }
 
 double angle() {
