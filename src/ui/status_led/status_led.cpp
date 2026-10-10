@@ -19,7 +19,10 @@ void begin() {
 }
 
 void set(Color color) {
-    const uint8_t level = RGB_BRIGHTNESS_LEVEL;
+    set(color, RGB_BRIGHTNESS_LEVEL);
+}
+
+void set(Color color, uint8_t level) {
     const uint8_t r = color.red   ? level : 0;
     const uint8_t g = color.green ? level : 0;
     const uint8_t b = color.blue  ? level : 0;

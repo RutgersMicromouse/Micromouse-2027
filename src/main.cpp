@@ -13,7 +13,7 @@
 //   Core 0  operatorTask       console, phone-app buttons, reports, LED, hand waves
 //   Core 0  telemetryTask      the phone app's web page, Telnet, Bluetooth, the status line
 //
-// There are no buttons: power the robot on and control it with hand waves (GestureUI in ui/gestures/gestures.h).
+// There are no buttons: power the robot on and control it with a hand (the menu of GestureUI in ui/gestures/gestures.h).
 // The LED on the ESP32 board shows what it is doing. The text console (Console in ui/console/console.h) is for
 // debugging only and cannot start a run.
 // ==============================================================================
@@ -150,12 +150,21 @@ static String buildAppStatus() {
              !g_imu.isHardwareConnected() ? "MISSING" : (g_imu.isUsingFallback() ? "FAULT" : "OK"),
              (unsigned long)g_imu.getBadReadCount());
 
-    char buf[1500];
+    // What the hand controls are showing on the LED (temporary display in the app, for checking them)
+    char hand_text[80] = "Hand controls are switched off (ENABLE_GESTURE_UI 0)";
+    char hand_color[4] = "000";
+    uint8_t hand_brightness = 0;
+#if ENABLE_GESTURE_UI
+    GestureUI::describeForApp(hand_text, sizeof(hand_text), hand_color, hand_brightness);
+#endif
+
+    char buf[1700];
     snprintf(buf, sizeof(buf),
-             "{\"state\":\"%s\",\"mode\":\"%s\",\"tier\":%d,\"cell\":\"(%d, %d) facing %s\",\"visited\":%d,\"look\":\"%s\",\"why\":\"%s\",\"late\":%u,"
+             "{\"hand\":{\"t\":\"%s\",\"c\":\"%s\",\"b\":%d},\"state\":\"%s\",\"mode\":\"%s\",\"tier\":%d,\"cell\":\"(%d, %d) facing %s\",\"visited\":%d,\"look\":\"%s\",\"why\":\"%s\",\"late\":%u,"
              "\"ir\":[%d,%d,%d,%d,%d,%d],\"walls\":\"%c%c%c\","
              "\"heading\":%.1f,\"vbat\":%.2f,\"encL\":\"%ld (%.0f mm)\",\"encR\":\"%ld (%.0f mm)\","
              "\"motor\":\"%s\",\"imu\":\"%s\",\"supply\":%.1f,\"loop\":%u,\"busy\":%d,\"tune\":[%s],\"acc\":[%s]",
+             hand_text, hand_color, (int)hand_brightness,
              Actions::stateDescription(), Actions::modeName(Actions::getSelectedMode()), (int)Actions::getSpeedTier(),
              (int)pose.cell_x, (int)pose.cell_y, kCompass[pose.current_dir % 4], cells_seen, s_look_text,
              g_navigator->getEdgeNote(), (unsigned int)g_motion_controller.getLateHandovers(),
@@ -639,11 +648,11 @@ void setup() {
 #if !ENABLE_GESTURE_UI
     Serial.printf("[UI] HAND WAVES ARE OFF. A search starts by itself %d s after power-on.\n", (int)AUTO_START_DELAY_S);
 #endif
-    Serial.println("[UI] Wave a hand in front of the front sensors, then pause:");
-    Serial.println("  1 wave  = Search run          2 waves = Speed run (hybrid)");
-    Serial.println("  3 waves = Speed run (diag)    4 waves = Speed run (curves)");
-    Serial.println("  5 waves = Calibrate IR        6 waves = Clear saved maze");
-    Serial.println("  Cover the sensors during the blinking countdown to cancel.");
+    Serial.println("[UI] LED solid cyan = ready. A hand at the front sensors starts the choosing:");
+    Serial.println("  the LED blinks a stage: Green = Search, Yellow = Speed run, White = Reset + calibrate, Blue = Forget the maze.");
+    Serial.println("  A hand before 5 blinks = next stage. Left alone for 5 blinks = that stage is done.");
+    Serial.println("  A speed run then blinks its speed (brighter = faster): a hand = next level, left alone = go.");
+    Serial.println("  Lifting the robot cancels the choosing.");
     Serial.println("  To halt a run: lift the robot and turn it sideways (or send 'stop' when debugging).");
 }
 

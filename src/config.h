@@ -83,6 +83,7 @@
 // If close walls now pin the reading at 4095, step down one line. Recalibrate (5 waves) after any change.
 #define IR_ADC_ATTENUATION     ADC_0db
 // Weak 45° sensors (found 2026-10-08: the right one reads 50-110 against a wall, the left 230-420)
+#define IR_CALIB_90_MIN        100      // At calibration, at least one 90° sensor must read above this, or it is refused (no walls)
 #define IR_CALIB_45_MIN        50       // At calibration, a 45° sensor reading at least this is looking at a wall
 #define IR_CALIB_45_MIN_SHARE  0.15f    // ...provided it is also this share of what the other side predicts for it
 #define IR_45_MIN_WALL_LEVEL  40.0f    // A 45° sensor's "wall" level is never set below this
@@ -105,22 +106,32 @@
 #define PIN_ESP32_RGB_LED_ALT  38
 #define RGB_BRIGHTNESS_LEVEL   40       // Brightness level (0-255, 40 provides vibrant color without glare)
 
-// Hand-Wave Controls (the robot has no buttons: wave a hand in front of the two front IR sensors)
-// A "wave" is the front reading rising clearly above its resting level and dropping back again.
-// TEMPORARILY OFF at the owner's request (2026-10-07) while the robot is being brought up.
-// Set back to 1 to get hand-wave control back. While it is 0 the robot starts by itself, below.
-#define ENABLE_GESTURE_UI       0       // 1 = hand-wave control, 0 = ignore waves
+// Hand Controls (the robot has no buttons: put a hand in front of the left, front or right IR sensors)
+// A hand is a reading rising clearly above its resting level and dropping back again.
+// A hand at the front starts the choosing; the LED blinks each stage's colour, a hand = next
+// stage, left alone for GESTURE_CONFIRM_BLINKS blinks = do it (described in ui/gestures/gestures.h).
+// Back ON at the owner's request (2026-10-10): remote controls are not allowed at competition.
+#define ENABLE_GESTURE_UI       1       // 1 = hand control, 0 = ignore hands
 
 // With waves off: this many seconds after power-on the robot calibrates its IR sensors where it
 // stands and starts a search run, once. 0 = never start by itself. Ignored when waves are on.
 #define AUTO_START_DELAY_S      0       // Off: the START button in the phone app starts the run instead
-#define GESTURE_MIN_RISE        250     // Front reading must rise at least this far above resting level...
+#define GESTURE_MIN_RISE        250     // A reading must rise at least this far above its resting level...
 #define GESTURE_RISE_RATIO      0.6f    // ...and at least this fraction of the resting level (matters when facing a wall)
-#define GESTURE_MAX_WAVE_MS     1500    // A hand held longer than this is not a wave (and cancels the count)
-#define GESTURE_SEQUENCE_GAP_MS 1500    // No new wave for this long = the count is final
-#define GESTURE_REBASE_MS       3000    // Reading stuck high this long = scenery changed, learn a new resting level
-#define GESTURE_WARMUP_MS       2000    // Waves are ignored this long after power-on / after a run ends
-#define GESTURE_LAUNCH_DELAY_MS 2000    // Blinking countdown before the robot moves; cover the sensors to cancel
+#define GESTURE_MIN_DROP        100     // ...or, beside a wall, DROP at least this far below it (the hand hides the wall)...
+#define GESTURE_DROP_RATIO      0.3f    // ...and at least this fraction of the resting level
+#define GESTURE_REBASE_MS       3000    // Reading stuck high this long = scenery changed, learn a new resting level (nothing happens)
+#define GESTURE_WARMUP_MS       2000    // Hands are ignored this long after power-on, after a run ends, and after the robot was moved
+#define GESTURE_STILL_DEG       8.0f    // Heading changing by more than this = the robot is being handled: ignore hands and wait again
+#define GESTURE_LIFTED_DEG      15.0f   // Tipped this far out of level = lifted: cancels what was just asked for, ignores hands
+#define GESTURE_CONFIRM_BLINKS  5       // A stage (or speed level) left alone for this many blinks is carried out
+#define GESTURE_BLINK_MS        500     // One blink, on and off
+// The speed levels a hand can pick for a speed run, as a percentage of the SPEEDRUN_* speeds and
+// accelerations (a hand = the next one, round again after the last), and how bright the LED
+// blinks at each (0-255).
+#define GESTURE_SPEED_PERCENTS   { 35, 50, 65, 80, 100 }
+#define GESTURE_SPEED_BRIGHTNESS {  4, 12, 35, 95, 255 }
+#define GESTURE_SPEEDRUN_MODE    Actions::MODE_HYBRID   // The speed run a hand starts: robot picks curves or diagonals
 
 // Battery Voltage Monitoring
 #define PIN_VSENSE_COM         12       // Computer Battery divider (R40=10k, R39=10k -> 2.0x divider)
@@ -412,6 +423,8 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define ENCODER_FAULT_TICKS        75   // Control ticks (150 ms) one wheel may read zero while the other is moving
 #define HEADING_FAULT_DEG          60.0f // Heading this far off course = crashed or picked up (lift + twist to stop a run)
 #define HEADING_FAULT_TICKS        50   // ...for this many control ticks (100 ms) before the run is aborted
+#define TILT_STOP_DEG              45.0f // Tipped this far out of level = picked up (lift + tip it up to stop a run)
+#define TILT_STOP_TICKS            150  // ...for this many control ticks (0.3 s, 6 tilt readings) before the run is aborted
 
 // ==============================================================================
 // 5. DEFAULT SENSOR THRESHOLDS (5 Sensors)

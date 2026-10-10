@@ -126,6 +126,14 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
   <button class="plain" data-cmd="clear">Forget maze</button>
 </div>
 <div class="card">
+  <div class="dim">Hand controls (temporary check): the LED on the robot is showing</div>
+  <div style="display:flex;align-items:center;gap:12px;margin:8px 0">
+    <div id="handDot" style="width:44px;height:44px;border-radius:50%;border:2px solid #555;background:#000;flex:none"></div>
+    <div><b id="handText">--</b><div class="dim" id="handBright"></div></div>
+  </div>
+  <div class="dim">Cyan = ready (dim = wait). A hand at the front starts the choosing: green = search, yellow = speed run, white = reset sensors and calibrate, blue = forget the maze. A hand before 5 blinks = next; left alone for 5 blinks = do it. A speed run then blinks its speed (brighter = faster) the same way.</div>
+</div>
+<div class="card">
   <div class="step"><span class="num" style="background:#7fb6ff" id="stageLetter">A</span><span id="stageTitle">Stage</span></div>
   <div id="stageRow"></div>
   <div class="dim" id="stageWhat" style="margin-bottom:10px"></div>
@@ -638,6 +646,14 @@ function show(d) {
   }
   if (s.walls) $("walls").textContent =
     (s.walls[0] === "L" ? "LEFT " : "- ") + (s.walls[1] === "F" ? "FRONT " : "- ") + (s.walls[2] === "R" ? "RIGHT" : "-");
+  if (s.hand) {
+    // The colour as on the robot's LED; a dim LED is drawn darker (never quite black, so it still shows)
+    const dark = s.hand.c === "000";
+    $("handDot").style.background = dark ? "#000" : "#" + s.hand.c;
+    $("handDot").style.opacity = dark ? 1 : 0.25 + 0.75 * Math.sqrt(s.hand.b / 255);
+    $("handText").textContent = s.hand.t;
+    $("handBright").textContent = dark ? "LED dark" : "LED brightness " + s.hand.b + " of 255";
+  }
   for (const k of ["heading", "vbat", "encL", "encR", "motor", "imu", "supply", "loop", "cell", "visited", "look", "why", "late"])
     if (s[k] !== undefined) $(k).textContent = s[k];
   // Accelerometer: three values now, then the largest on each axis since the robot was last

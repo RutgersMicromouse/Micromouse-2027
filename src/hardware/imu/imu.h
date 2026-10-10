@@ -31,6 +31,11 @@ public:
     float getGyroZ() const;
     void resetHeading(float initial_heading_deg = 0.0f);
 
+    // How far the robot is tipped out of level, in degrees (0 = standing on the floor as it was
+    // when the heading was last set; about 90 = on its side or on end). 0 while the BNO055 is
+    // missing or in fault. Used to stop a run when the robot is picked up and tipped.
+    float getTiltDeg() const;
+
     // True if a BNO055 answered at boot
     bool isHardwareConnected() const;
 
@@ -65,6 +70,7 @@ private:
     bool initBNO055(uint8_t address);
     bool readBNO055Data(float& heading_deg, float& gyro_z);
     void readAcceleration();
+    void readTilt();
     bool writeRegister(uint8_t reg, uint8_t value);
     bool readRegister(uint8_t reg, uint8_t& value);
     void acceptReading(float raw_h, float raw_gz, bool rate_valid,
@@ -93,6 +99,8 @@ private:
     uint32_t bad_read_total_;
     uint32_t fail_no_answer_ = 0, fail_short_ = 0, fail_bad_value_ = 0, reads_ok_ = 0, slowest_read_us_ = 0;
     bool retry_read_;              // The last scheduled read failed: try again on the next tick
+    float roll_deg_ = 0.0f, pitch_deg_ = 0.0f;              // Latest from the BNO055, see getTiltDeg()
+    float level_roll_deg_ = 0.0f, level_pitch_deg_ = 0.0f;  // What they read with the robot on the floor
     float accel_now_[3] = { 0.0f, 0.0f, 0.0f };   // Display only, see getAcceleration()
     float accel_peak_[3] = { 0.0f, 0.0f, 0.0f };
 };

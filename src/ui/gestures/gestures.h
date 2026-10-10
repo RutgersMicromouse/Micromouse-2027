@@ -1,23 +1,23 @@
 #pragma once
 
-// Hand waves in front of the front IR sensors: counting them, and acting on the count
+// A hand in front of the IR sensors (left, front or right), and what each one makes the robot do
 
 #include "types.h"
 
 // ==============================================================================
-// HAND-WAVE DETECTOR
+// HAND DETECTOR
 // ==============================================================================
 
 #include <stdint.h>
 
-// Counts hand waves in front of the front IR sensors.
+// Notices a hand arriving in front of one group of IR sensors and leaving again.
 //
-// The robot has no buttons, so this is how the operator talks to it. Feed it the front sensor
-// reading regularly; when the operator has finished waving it reports how many waves it saw.
+// The robot has no buttons, so this is how the operator talks to it. Feed it the sensor reading
+// regularly; it reports each hand once, at the moment it leaves.
 //
-// It learns the resting level of the sensor by itself, so it works whether the robot is looking
-// down an open corridor or at a wall: a hand right in front of the sensors always reads brighter
-// than whatever is behind it.
+// It learns the resting level of the sensor by itself, so it works whether the sensor is looking
+// at open floor or at a wall: a hand right in front of a sensor always reads brighter than
+// whatever is behind it.
 class GestureInput {
 public:
     GestureInput();
@@ -25,62 +25,66 @@ public:
     // Forget everything and re-learn the resting level (call at power-on and after every run)
     void reset(uint32_t now_ms);
 
-    // Call every ~20 ms with the front sensor reading.
-    // Returns 0 normally, or the number of waves once the operator has stopped waving.
-    uint8_t update(uint16_t front_reading, uint32_t now_ms);
-
-    // True once per counted wave (for giving the operator a blink of feedback)
-    bool consumeWaveCounted();
+    // Call every ~20 ms with the sensor reading. True once, when a hand that came has left again
+    // (a "hand" that stays longer than GESTURE_REBASE_MS is taken for scenery and never reported).
+    bool update(uint16_t reading, uint32_t now_ms);
 
     // True while something is in front of the sensors
     bool isHandPresent() const { return hand_present_; }
 
-    // Waves counted so far in the sequence that is still in progress
-    uint8_t getPendingCount() const { return wave_count_; }
+    // True while readings are only being used to learn the resting level (hands are ignored)
+    bool isWarmingUp(uint32_t now_ms) const;
 
     // For checking the sensors by eye: what they read with nothing in front, and the reading a
     // hand has to push them above to be noticed
     float getRestingLevel() const { return resting_level_; }
     float getHandLevel() const;
+    float getDropLevel() const;   // ...or drop below, when it is hiding a wall (below zero = cannot happen)
 
 private:
     float resting_level_;       // What the sensor reads with no hand in front
     bool hand_present_;
     uint8_t confirm_samples_;   // Consecutive samples disagreeing with the current state (debounce)
-    uint8_t wave_count_;
-    bool wave_counted_flag_;
     uint32_t started_ms_;
     uint32_t hand_since_ms_;
-    uint32_t last_wave_end_ms_;
 };
 
 // ==============================================================================
-// HAND-WAVE CONTROLS
+// HAND CONTROLS
 // ==============================================================================
 
-// Hand-wave control of the robot (it has no buttons or switches).
+// Hand control of the robot (it has no buttons or switches). Only the two front sensors are
+// used, and only one sign: a hand in front of them, taken away again.
 //
-// Wave a hand in front of the two front sensors, pause, and the robot acts on the count:
+// Solid cyan = ready (dim cyan = wait, it is still learning what it sees). A hand starts the
+// choosing. The LED then blinks the colour of a stage:
 //
-//   1 wave   Search run            (Green)
-//   2 waves  Speed run, hybrid     (Yellow)
-//   3 waves  Speed run, diagonals  (Cyan)
-//   4 waves  Speed run, curves     (Magenta)
-//   5 waves  Calibrate IR sensors  (Yellow while sampling, then green = OK / red = failed)
-//   6 waves  Clear the saved maze  (Blue flashes)
+//   Green    Search run
+//   Yellow   Speed run
+//   White    Reset the sensors, then calibrate the IR
+//   Blue     Forget the saved maze
 //
-// The LED blinks white once per wave it counts, then blinks the count back in the action's color.
-// Before a run it blinks rapidly for GESTURE_LAUNCH_DELAY_MS: get your hand out of the way, or
-// cover the sensors again to cancel. Holding a hand in front mid-count also cancels.
+// A hand before GESTURE_CONFIRM_BLINKS blinks have gone by = the next stage (after blue: back to
+// cyan, nothing chosen). Leave it alone for that many blinks = that stage is done.
+//
+// A speed run then asks for its speed the same way: yellow blinks, brighter for a faster level
+// (GESTURE_SPEED_PERCENTS). A hand = the next level (round again after the last), left alone = go.
+//
+// Lifting or turning the robot at any point cancels the choosing and changes nothing. Hands are
+// ignored while the robot is being moved (it waits until it has stood still for GESTURE_WARMUP_MS).
 namespace GestureUI {
 
 // Start listening (also call after every run so it re-learns what the sensors see at rest)
 void restart();
 
-// Call from the navigation task every ~20 ms while no run is active
+// Call from the operator task every ~20 ms while no run is active
 void update(const IRReadings& ir);
 
-// One line for the debug console: what the front sensors read now, at rest, and need for a hand
+// One line for the debug console: what the sensors read now and what a hand must exceed
 void describe(char* buf, size_t size, const IRReadings& ir);
+
+// For the phone app's hand-control display: what the LED is showing right now, in words, as a
+// colour ("0f0" = green; "000" = dark) and as a brightness (0-255)
+void describeForApp(char* meaning, size_t size, char color_hex[4], uint8_t& brightness);
 
 } // namespace GestureUI

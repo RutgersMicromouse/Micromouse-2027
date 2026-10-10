@@ -295,6 +295,14 @@ bool IRSensors::calibrateInCell(uint16_t sample_count, bool keep_side_centre) {
     Serial.printf("[CALIB] Measured Cell Averages: L90=%d, L45=%d, FL=%d, FR=%d, R45=%d, R90=%d\n",
                   avg_l90, avg_l45, avg_fl, avg_fr, avg_r45, avg_r90);
 
+    // No wall on either side: the robot is not in a cell at all (held in the air, or on a bench).
+    // Refuse, so that a calibration set off by mistake cannot replace a good one. This happened
+    // on 2026-10-10: sides 6 and 17, front 38, and "wall in front" was saved as anything above 15.
+    if (avg_l90 <= IR_CALIB_90_MIN && avg_r90 <= IR_CALIB_90_MIN) {
+        Serial.printf("[CALIB] REFUSED: neither side sensor sees a wall (needs above %d). Nothing was changed.\n", (int)IR_CALIB_90_MIN);
+        return false;
+    }
+
     // The 45° sensors point forward as well as sideways, so depending on where they are mounted
     // they may be looking at the side wall of the NEXT cell, which can have a gap in it. If one
     // of them sees nothing while the other does, borrow from the good side, scaled by how the two

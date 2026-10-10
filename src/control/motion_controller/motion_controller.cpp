@@ -417,7 +417,7 @@ static const TuneItem kTune[MotionController::TUNE_COUNT] = {
     { "enc_a",  "Wheel-speed smoothing (1 = none)",     ENCODER_SPEED_FILTER_ALPHA, 0.02f, 1.0f },
     { "imu_a",  "Heading smoothing (1 = none)",         IMU_FILTER_ALPHA,           0.1f,  1.0f },
     // New value = old value x 180 / the distance the robot really drove for one cell
-    { "dist_k", "Distance scale (raise if it stops short)", 1.0f,                     0.5f,  2.0f },
+    { "dist_k", "Distance scale (raise if it stops short)", 0.96f,                    0.5f,  2.0f },
     // --- Distance loop: mm short of where it should be by now -> extra speed (mm/s)
     { "d_kp",   "Distance loop P",                      3.5f,     0.0f,  20.0f  },
     { "d_ki",   "Distance loop I",                      0.0f,     0.0f,  5.0f   },
@@ -448,7 +448,7 @@ static const TuneItem kTune[MotionController::TUNE_COUNT] = {
     // --- Smooth curves only: scale on the wheel-speed difference fed forward for the turn, on top
     //     of turn_ff (which turns on the spot share). Lower it if curves turn ahead of their plan
     //     and end past their heading, cutting the corner (1 = no change)
-    { "c_ff",   "Curves: turn feedforward scale (lower if curves overshoot)", 1.0f, 0.5f, 1.5f },
+    { "c_ff",   "Curves: turn feedforward scale (lower if curves overshoot)", 0.9f, 0.5f, 1.5f },
     // --- Smooth curves only: effort per mm/s2 of planned change in the wheel-speed difference.
     //     Pushes the turn in at the start of a curve and brakes it at the end, as t_ka does for
     //     turns on the spot, so a fast curve does not coast past its heading (0 = off)

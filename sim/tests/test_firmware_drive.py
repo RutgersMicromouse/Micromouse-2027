@@ -562,6 +562,9 @@ static void bootFirmware() {
     g_ir->begin();
     g_imu->begin();
     g_motion->begin();
+    // The code's distance scale (dist_k) makes up for the real tyres rolling a little larger than
+    // measured. The simulated wheels are exactly the configured size, so here it has to be 1.
+    g_motion->setTune(MotionController::TUNE_DIST_K, 1.0f);
     g_motion->setWallCenteringEnabled(g_wall_centring);
     g_nav = new Navigator(nullptr, nullptr);
     g_nav->begin();

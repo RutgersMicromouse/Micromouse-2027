@@ -10,16 +10,16 @@
 
 #include <Arduino.h>
 
-// Everything the operator can ask the robot to do. Hand waves (GestureUI) are the only way to
-// start any of it.
+// Everything the operator can ask the robot to do. At a competition the hand menu (GestureUI) is
+// the only way to start any of it.
 namespace Actions {
 
-// The four run modes. The number of hand waves that selects each one is its value + 1.
+// The four run modes, in the order the hand menu lists them
 enum RunMode : uint8_t {
-    MODE_SEARCH    = 0, // 1 wave  - Green   - explore the maze, then return to start
-    MODE_HYBRID    = 1, // 2 waves - Yellow  - speed run, robot picks curves or diagonals
-    MODE_DIAGONALS = 2, // 3 waves - Cyan    - speed run, diagonals only
-    MODE_CURVES    = 3, // 4 waves - Magenta - speed run, smooth curves only
+    MODE_SEARCH    = 0, // Green   - explore the maze, then return to start
+    MODE_HYBRID    = 1, // Yellow  - speed run, robot picks curves or diagonals
+    MODE_DIAGONALS = 2, // Cyan    - speed run, diagonals only
+    MODE_CURVES    = 3, // Magenta - speed run, smooth curves only
     MODE_COUNT     = 4
 };
 
@@ -52,6 +52,13 @@ void stopRun();
 // Learn the IR wall levels for this maze. Robot must sit centred in a cell between two side
 // walls. Returns true on success. Blocks for about a second.
 bool calibrateIR(bool keep_side_centre = false);
+
+// The whole calibration, as the app's Calibrate button and a hand on both sides do it: reset the
+// wheel counters and heading ("Reset sensors"), measure where the robot stands, turn round,
+// measure again, and end facing into the maze. Put the robot down
+// centred by hand, facing into the maze. Returns the result in words ("ACK: ..." or "ERR: ...").
+// Blocks for several seconds; a STOP ends it.
+const char* calibrateIRBothWays();
 
 // Forget the maze saved in flash
 void clearSavedMaze();

@@ -192,6 +192,7 @@ private:
     // Safety: one-wheel-dead detection
     uint16_t encoder_fault_ticks_;
     uint16_t heading_fault_ticks_;
+    uint16_t tilt_fault_ticks_ = 0;
     uint16_t encoder_faults_;
 
     // Alignment state

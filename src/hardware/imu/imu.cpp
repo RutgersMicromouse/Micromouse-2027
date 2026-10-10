@@ -8,6 +8,7 @@
 #define BNO055_CHIP_ID_ADDR        0x00
 #define BNO055_PAGE_ID_ADDR        0x07
 #define BNO055_GYRO_DATA_Z_LSB     0x18
+#define BNO055_EULER_ROLL_LSB      0x1C   // Euler roll, then pitch (0x1E), 16 LSB = 1 degree
 #define BNO055_LINEAR_ACCEL_X_LSB  0x28   // Acceleration with gravity removed: X, Y, Z, 100 LSB = 1 m/s2
 #define BNO055_OPR_MODE_ADDR       0x3D
 #define BNO055_PWR_MODE_ADDR       0x3E
@@ -24,6 +25,8 @@
 // two never share a tick, nor the tick a failed heading read is retried on
 #define IMU_ACCEL_DIVIDER          25
 #define IMU_ACCEL_TICK             2
+#define IMU_TILT_DIVIDER           25   // Roll and pitch every 25th control tick (20 Hz), for the tilt stop
+#define IMU_TILT_TICK              3    // ...three ticks after a heading read, so they never share a tick
 #define IMU_MODE_CHECK_DIVIDER     500    // Verify fusion mode once per second
 #define IMU_SETTLE_READS           5      // Reads discarded after re-entering fusion mode
 #define IMU_FROZEN_READS           10     // Unchanged readings during a turn that trigger a mode check
@@ -130,6 +133,9 @@ bool IMU::initBNO055(uint8_t address) {
 bool IMU::readBNO055Data(float& heading_deg, float& gyro_z) {
     // Burst read 4 bytes beginning at 0x18:
     //   0x18/0x19 = Gyro Z LSB/MSB, 0x1A/0x1B = Euler Heading LSB/MSB
+    // (Roll and pitch were once read in the same transfer, 8 bytes: on the robot that took the
+    // share of failed reads from about half to three quarters and 180 degree turns overshot by
+    // 20-55 degrees, 2026-10-10. They have their own, slower read now: readTilt.)
     const uint32_t started_us = micros();
     Wire.beginTransmission(address_);
     Wire.write(BNO055_GYRO_DATA_Z_LSB);
@@ -240,6 +246,10 @@ void IMU::update(float dt_seconds, float encoder_yaw_rate, float linear_speed_mm
         }
     }
 
+    if (hardware_detected_ && !retry_read_ && (poll_counter_ % IMU_TILT_DIVIDER) == IMU_TILT_TICK) {
+        readTilt();
+    }
+
 #if ENABLE_ACCEL_DISPLAY
     if (hardware_detected_ && !retry_read_ && (poll_counter_ % IMU_ACCEL_DIVIDER) == IMU_ACCEL_TICK) {
         readAcceleration();
@@ -312,6 +322,26 @@ void IMU::acceptReading(float raw_h, float raw_gz, bool rate_valid,
     bad_reads_ = 0;
 }
 
+// Roll and pitch (0x1C / 0x1E, 16 LSB per degree): how far the robot is tipped out of level. A
+// failed read, or values that cannot be real (roll beyond 90 degrees, pitch beyond 180), leave
+// the last ones in place and are not counted with the heading reads.
+void IMU::readTilt() {
+    Wire.beginTransmission(address_);
+    Wire.write(BNO055_EULER_ROLL_LSB);
+    if (Wire.endTransmission() != 0) return;
+    if (Wire.requestFrom(address_, (uint8_t)4) != 4 || Wire.available() < 4) return;
+    const uint8_t roll_lsb  = Wire.read();
+    const uint8_t roll_msb  = Wire.read();
+    const uint8_t pitch_lsb = Wire.read();
+    const uint8_t pitch_msb = Wire.read();
+    const int16_t raw_roll  = (int16_t)(((uint16_t)roll_msb << 8) | roll_lsb);
+    const int16_t raw_pitch = (int16_t)(((uint16_t)pitch_msb << 8) | pitch_lsb);
+    if (abs(raw_roll) > 90 * 16 || abs(raw_pitch) > 180 * 16) return;
+    if (raw_roll == -1 && raw_pitch == -1) return; // All ones: the sensor was not driving the bus
+    roll_deg_  = (float)raw_roll / 16.0f;
+    pitch_deg_ = (float)raw_pitch / 16.0f;
+}
+
 // Display only. A failed read just leaves the last values in place; it is not counted with the
 // heading reads, so the health numbers keep meaning what they did.
 void IMU::readAcceleration() {
@@ -344,6 +374,12 @@ float IMU::getHeadingDeg() const {
     return state_.heading_deg;
 }
 
+float IMU::getTiltDeg() const {
+    if (!hardware_detected_ || isUsingFallback()) return 0.0f; // No trustworthy reading: never "tilted"
+    return fmaxf(fabsf(normalizeAngle180(roll_deg_ - level_roll_deg_)),
+                 fabsf(normalizeAngle180(pitch_deg_ - level_pitch_deg_)));
+}
+
 float IMU::getGyroZ() const {
     return state_.gyro_z_deg_s;
 }
@@ -360,6 +396,9 @@ void IMU::resetHeading(float initial_heading_deg) {
             time_since_good_s_ = 0.0f;
         }
         heading_offset_deg_ = normalizeAngle180(bno_now - initial_heading_deg);
+        // The robot is standing on the floor whenever its heading is set: this is "level"
+        level_roll_deg_  = roll_deg_;
+        level_pitch_deg_ = pitch_deg_;
     }
 
     state_.heading_deg = initial_heading_deg;

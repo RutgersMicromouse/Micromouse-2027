@@ -382,6 +382,22 @@ void MotionController::update(float dt_seconds) {
         heading_fault_ticks_ = 0;
     }
 
+    // 5c2. Lifted-and-tipped stop (owner's request, 2026-10-10): the deliberate way to stop a run by
+    // hand. Pick the robot up and tip it toward vertical; the BNO055's roll / pitch says so
+    // whichever way it is turned. Nothing but the run is lost: the map is kept.
+    if (imu_.getTiltDeg() > TILT_STOP_DEG) {
+        tilt_fault_ticks_++;
+        if (tilt_fault_ticks_ > TILT_STOP_TICKS) {
+            Serial.printf("\n[SAFETY ALERT] LIFTED AND TIPPED (%.0f deg out of level). Emergency stop engaged.\n", imu_.getTiltDeg());
+            emergencyStop();
+            safety_stop_ = true;
+            tilt_fault_ticks_ = 0;
+            return;
+        }
+    } else {
+        tilt_fault_ticks_ = 0;
+    }
+
     // 5d. Run Log: planned vs. actual, for tuning (read back with the console command "log")
     if (++log_tick_ >= RUN_LOG_DIVIDER) {
         log_tick_ = 0;

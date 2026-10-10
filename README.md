@@ -24,18 +24,16 @@ Each bot in this repository lives on its own branch, named `release/<bot name>` 
 
 ## Using the robot
 
-There are no buttons. Power it on, then **wave a hand in front of the front sensors**:
+There are no buttons. Power it on, wait for the LED to turn solid cyan, then put a hand in front of a group of sensors and take it away:
 
-| Waves | Action | LED |
+| Hand at the... | Action | LED |
 | :--- | :--- | :--- |
-| 1 | Search run | Green |
-| 2 | Speed run, hybrid | Yellow |
-| 3 | Speed run, diagonals | Cyan |
-| 4 | Speed run, curves | Magenta |
-| 5 | Calibrate IR sensors | Yellow |
-| 6 | Clear the saved maze | Blue |
+| Left sensors | Search run | Green |
+| Right sensors | Clear the saved maze | Blue |
+| Left and right together | Reset sensors and calibrate IR | White |
+| Front sensors | Speed run: opens the speed choice | Yellow |
 
-Always start with the robot in the start cell facing into the maze. The LED blinks the count back, then blinks rapidly for 2 seconds before moving; cover the sensors to cancel. To stop a run, lift the robot and turn it sideways. The map is kept between searches, and speed runs get faster each time one succeeds. Details are in the [operator manual](docs/INSTRUCTIONS.md#4-hand-wave-controls--led-field-guide).
+In the speed choice the LED is yellow, brighter for faster: left = slower, right = faster, front = go. Always start with the robot in the start cell facing into the maze. The LED blinks rapidly for 2 seconds before anything starts; cover a sensor to cancel. To stop a run, lift the robot and tip it up toward vertical (the map is kept). The map is kept between searches. Details are in the [operator manual](docs/INSTRUCTIONS.md#4-hand-wave-controls--led-field-guide).
 
 ## Build and flash
 

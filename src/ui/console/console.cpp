@@ -110,50 +110,8 @@ static void handle(String cmd, Source source) {
     }
     if (cmd == "calib") {
         if (running) { reply("ERR: CANNOT_CALIB_WHILE_RUNNING"); return; }
-        // Two things have to be measured and they need the robot facing opposite ways: the side
-        // walls (90° and 45° sensors) with the way ahead CLEAR, and the "wall in front" level
-        // facing a WALL. So: measure where it stands, turn round, measure the other. Put down
-        // facing along the corridor, centred by hand (the usual way now), it measures the sides,
-        // turns to the back wall for the front level, and turns back. Put down facing the back
-        // wall (the old way), it measures the front level, turns round and measures the sides.
-        // Either way it ends facing into the maze. It stays where it is if a step fails.
-        if (!Actions::calibrateIR()) { reply("ERR: CALIB FAILED (not turning round)"); return; }
-        const bool began_facing_wall = g_ir_sensors.lastCalibrationHadFrontWall();
-        const uint32_t stops_before = stopCount();
-        auto turnRound = [&]() -> bool {
-            MotionCommand turn = {};
-            turn.action = ACTION_TURN_AROUND_180;
-            turn.param_value = 180.0f;
-            turn.max_speed_mm_s = SEARCH_TURN_SPEED_DEG_S;  // deg/s for turns
-            turn.acceleration = SEARCH_TURN_ACCEL_DEG_S2;
-            xQueueSend(g_motion_cmd_queue, &turn, 0);
-            // Wait for the motion task to take the turn up before waiting for it to finish. A fixed
-            // 10 ms was not always enough: once on the robot the second measurement was taken
-            // while the robot had barely begun to turn (L90 read 5).
-            const uint32_t started = millis();
-            while (g_motion_controller.isCommandFinished() && millis() - started < 300) {
-                vTaskDelay(pdMS_TO_TICKS(2));
-            }
-            while (!g_motion_controller.isCommandFinished()) {
-                if (stopCount() != stops_before || millis() - started > 6000) return false;
-                vTaskDelay(pdMS_TO_TICKS(5));
-            }
-            vTaskDelay(pdMS_TO_TICKS(400)); // Let it come to rest, and the readings settle
-            return stopCount() == stops_before;
-        };
-        reply(began_facing_wall ? "Front level measured. Turning round to measure the side walls."
-                                : "Side walls measured. Turning round to measure the front level against the back wall.");
-        if (!turnRound()) { reply("ERR: CALIB stopped during the turn"); return; }
-        // (the robot was centred by hand for the FIRST measurement; the turn has shifted it since)
-        if (!Actions::calibrateIR(true)) { reply("ERR: CALIB FAILED at the second measurement"); return; }
-        if (g_ir_sensors.lastCalibrationHadFrontWall() == began_facing_wall) {
-            reply(began_facing_wall ? "WARNING: a wall in front both ways, so the side walls were measured facing a wall. Calibrate in a cell that is open one way."
-                                    : "NOTE: no wall behind either, so the front level was not measured this time (the earlier one is kept).");
-        }
-        if (!began_facing_wall) {
-            if (!turnRound()) { reply("ERR: CALIB stopped during the turn back"); return; }
-        }
-        reply("ACK: CALIB SUCCESS. Facing into the maze.");
+        // Measures where it stands, turns round, measures again, ends facing into the maze
+        reply(Actions::calibrateIRBothWays());
         return;
     }
     if (cmd == "clear") {
