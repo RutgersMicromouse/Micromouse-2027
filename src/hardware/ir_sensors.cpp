@@ -87,8 +87,20 @@ void IRSensorArray::update() {
 
     // 4. Binary wall presence classification
     readings_.wall_front = readings_.front >= thresh_front_;
-    readings_.wall_left = readings_.front_left >= thresh_side_ && readings_.rear_left >= thresh_side_;
-    readings_.wall_right = readings_.front_right >= thresh_side_ && readings_.rear_right >= thresh_side_;
+
+    // Continuous side wall presence vs. opening classification:
+    // In a micromouse cell, a continuous side wall spans 168 mm along the entire cell.
+    // When centered or stationary in the cell, a real side wall illuminates BOTH the front-side
+    // and rear-side sensors (~49 mm standoff, nominal ~325 ADC).
+    // An opening to an adjacent cell gives open air (> 180 mm distance, ADC < 130).
+    // If either sensor sees open air (< peg_floor_adc), this side is an OPENING, NOT a wall!
+    // Requiring both sensors to confirm presence above peg_floor_adc (and at least one above thresh_side_)
+    // rejects corner pegs and previous/future adjacent walls.
+    const uint16_t peg_floor_adc = (thresh_side_ > 35) ? (thresh_side_ - 35) : 155;
+    readings_.wall_left  = (readings_.front_left >= thresh_side_ && readings_.rear_left >= peg_floor_adc) ||
+                           (readings_.rear_left >= thresh_side_ && readings_.front_left >= peg_floor_adc);
+    readings_.wall_right = (readings_.front_right >= thresh_side_ && readings_.rear_right >= peg_floor_adc) ||
+                           (readings_.rear_right >= thresh_side_ && readings_.front_right >= peg_floor_adc);
 
     // 5. Detect side-wall transitions using the mean signal from each pair.
     uint16_t left_side_signal = (readings_.front_left + readings_.rear_left) / 2;
@@ -109,27 +121,55 @@ void IRSensorArray::update() {
     bool valid_rear_left = readings_.rear_left >= thresh_side_ && readings_.rear_left_mm < WALL_DETECT_DIST_MM;
     bool valid_front_right = readings_.front_right >= thresh_side_ && readings_.front_right_mm < WALL_DETECT_DIST_MM;
     bool valid_rear_right = readings_.rear_right >= thresh_side_ && readings_.rear_right_mm < WALL_DETECT_DIST_MM;
-    bool valid_left_guide = valid_front_left || valid_rear_left;
-    bool valid_right_guide = valid_front_right || valid_rear_right;
 
-    float left_dist = valid_front_left && valid_rear_left
-        ? 0.5f * (readings_.front_left_mm + readings_.rear_left_mm)
-        : valid_front_left ? readings_.front_left_mm : readings_.rear_left_mm;
-    float right_dist = valid_front_right && valid_rear_right
-        ? 0.5f * (readings_.front_right_mm + readings_.rear_right_mm)
-        : valid_front_right ? readings_.front_right_mm : readings_.rear_right_mm;
+    // Both front and rear sensors must confirm the wall on that side to prevent corner posts from corrupting guidance
+    bool valid_left_guide = valid_front_left && valid_rear_left;
+    bool valid_right_guide = valid_front_right && valid_rear_right;
+
+    float left_dist = 0.5f * (readings_.front_left_mm + readings_.rear_left_mm);
+    float right_dist = 0.5f * (readings_.front_right_mm + readings_.rear_right_mm);
 
     if (valid_left_guide && valid_right_guide) {
-        // Positive means the mouse is closer to the left wall and must steer
-        // right; negative means it is closer to the right wall and must steer
-        // left.  This convention is consumed by MotionController.
-        readings_.centering_error = (right_dist - left_dist) / 50.0f;
-    } else if (valid_left_guide) {
-        readings_.centering_error = (nominal_side_dist_mm_ - left_dist) / 25.0f;
-    } else if (valid_right_guide) {
-        readings_.centering_error = (right_dist - nominal_side_dist_mm_) / 25.0f;
+        float dist_diff = right_dist - left_dist;
+        // Narrow deadband to +/- 1.2 mm so robot centers tightly in corridor
+        if (fabsf(dist_diff) < 1.2f) {
+            readings_.centering_error = 0.0f;
+        } else if (dist_diff > 1.2f) {
+            readings_.centering_error = constrain((dist_diff - 1.2f) / 12.0f, 0.0f, 1.0f);
+        } else {
+            readings_.centering_error = constrain((dist_diff + 1.2f) / 12.0f, -1.0f, 0.0f);
+        }
+    } else if (valid_left_guide && !valid_right_guide) {
+        // Single left wall: do not steer into the right opening; maintain straight heading.
+        readings_.centering_error = 0.0f;
+    } else if (valid_right_guide && !valid_left_guide) {
+        // Single right wall: do not steer into the left opening; maintain straight heading.
+        readings_.centering_error = 0.0f;
     } else {
         readings_.centering_error = 0.0f;
+    }
+
+    // Safety proximity repulsion:
+    // Only intervene if chassis is dangerously close to scraping a wall (< 36 mm).
+    // Nominal centered standoff is 49 mm. A 13 mm buffer prevents phantom steering at openings.
+    float min_left = 999.0f;
+    if (valid_front_left) min_left = fminf(min_left, readings_.front_left_mm);
+    if (valid_rear_left)  min_left = fminf(min_left, readings_.rear_left_mm);
+    if (min_left < 36.0f) {
+        float repulse_right = (36.0f - min_left) / 8.0f; // Gently steer away from wall
+        if (repulse_right > readings_.centering_error) {
+            readings_.centering_error = constrain(repulse_right, 0.0f, 1.0f);
+        }
+    }
+
+    float min_right = 999.0f;
+    if (valid_front_right) min_right = fminf(min_right, readings_.front_right_mm);
+    if (valid_rear_right)  min_right = fminf(min_right, readings_.rear_right_mm);
+    if (min_right < 36.0f) {
+        float repulse_left = (36.0f - min_right) / 8.0f; // Gently steer away from wall
+        if (-repulse_left < readings_.centering_error) {
+            readings_.centering_error = constrain(-repulse_left, -1.0f, 0.0f);
+        }
     }
 
     readings_.centering_error = constrain(readings_.centering_error, -1.0f, 1.0f);
@@ -150,6 +190,14 @@ void IRSensorArray::update() {
     readings_.wall_alignment_error_deg = alignment_sides > 0
         ? constrain(alignment_error / alignment_sides, -15.0f, 15.0f)
         : 0.0f;
+}
+
+void IRSensorArray::flushFilter(uint8_t count) {
+    filter_initialized_ = false;
+    for (uint8_t i = 0; i < count; ++i) {
+        update();
+        delayMicroseconds(500);
+    }
 }
 
 bool IRSensorArray::calibrateInCell(uint16_t sample_count) {

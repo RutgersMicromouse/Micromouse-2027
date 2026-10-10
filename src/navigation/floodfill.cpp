@@ -1,8 +1,9 @@
 #include "floodfill.h"
 
-// Ring-buffer queue for high-performance BFS expansion
+// Ring-buffer queue for high-performance BFS expansion (sized to 512 to prevent wrap-around)
 struct CellQueue {
-    Coordinate buffer[TOTAL_CELLS];
+    static constexpr uint16_t QUEUE_CAPACITY = TOTAL_CELLS * 2;
+    Coordinate buffer[QUEUE_CAPACITY];
     uint16_t head;
     uint16_t tail;
 
@@ -10,11 +11,11 @@ struct CellQueue {
     bool isEmpty() const { return head == tail; }
     void push(Coordinate c) {
         buffer[tail] = c;
-        tail = (tail + 1) % TOTAL_CELLS;
+        tail = (tail + 1) % QUEUE_CAPACITY;
     }
     Coordinate pop() {
         Coordinate c = buffer[head];
-        head = (head + 1) % TOTAL_CELLS;
+        head = (head + 1) % QUEUE_CAPACITY;
         return c;
     }
 };
@@ -130,4 +131,20 @@ Direction Floodfill::getNextDirection(int8_t current_x, int8_t current_y, Direct
     }
 
     return best_dir;
+}
+
+void Floodfill::printDistanceMatrix() const {
+    Serial.printf("\n--- FLOOD-FILL DISTANCE MATRIX (%dx%d) ---\n", MAZE_WIDTH, MAZE_HEIGHT);
+    for (int8_t y = MAZE_HEIGHT - 1; y >= 0; --y) {
+        for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
+            if (distance_[x][y] == DIST_INFINITY) {
+                Serial.print("[INF] ");
+            } else if (is_goal_[x][y]) {
+                Serial.print("[ G0] ");
+            } else {
+                Serial.printf("[%3u] ", distance_[x][y]);
+            }
+        }
+        Serial.println();
+    }
 }

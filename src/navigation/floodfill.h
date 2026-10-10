@@ -31,6 +31,9 @@ public:
     // Determine optimal direction to move next
     Direction getNextDirection(int8_t current_x, int8_t current_y, Direction current_heading);
 
+    // Print complete distance matrix to Serial console for real-time verification
+    void printDistanceMatrix() const;
+
 private:
     const Maze& maze_;
     uint16_t distance_[MAZE_WIDTH][MAZE_HEIGHT];

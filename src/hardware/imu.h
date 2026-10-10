@@ -33,6 +33,9 @@ public:
     // Get calibrated yaw rate in degrees per second
     float getYawRateDeg_S() const;
 
+    float getRawYawRateDeg_S() const;
+    float getGyroBiasDeg_S() const;
+
     // Reset heading to a specific angle (e.g. 0.0 or 90.0)
     void resetHeading(float new_heading_deg = 0.0f);
 
@@ -50,11 +53,15 @@ private:
     float accel_scale_g_;
 
     float gyro_bias_z_;
+    float raw_yaw_rate_dps_;
     float heading_deg_;
     float yaw_rate_dps_;
 
     float accel_x_g_;
     float accel_y_g_;
+
+    uint8_t yaw_axis_;
+    float yaw_sign_;
 
     uint32_t poll_tick_;
 };

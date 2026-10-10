@@ -22,6 +22,8 @@ void Maze::reset() {
         setWallKnown(MAZE_WIDTH - 1, y, DIR_EAST);
     }
 
+    // Official Micromouse starting cell (0,0) has a permanent East wall
+    setWall(0, 0, DIR_EAST, true);
 }
 
 uint8_t Maze::knownBitFromDir(Direction dir) {
@@ -66,6 +68,18 @@ void Maze::setWall(int8_t x, int8_t y, Direction dir, bool present) {
     int8_t ny = y + dyFromDir(dir);
     if (!isValidCoordinate(nx, ny)) present = true;
 
+    // Official Micromouse competition rule: starting cell (0,0) East wall is immutable
+    if ((x == 0 && y == 0 && dir == DIR_EAST) ||
+        (x == 1 && y == 0 && dir == DIR_WEST)) {
+        present = true;
+    }
+
+    // Monotonic wall permanence: Once a physical wall is confirmed present,
+    // never erase it due to sensor noise or opening glare
+    if (!present && hasWall(x, y, dir) && isWallKnown(x, y, dir)) {
+        return;
+    }
+
     uint8_t mask = wallBitFromDir(dir);
     if (present) {
         cells_[x][y] |= mask;
@@ -106,7 +120,7 @@ uint8_t Maze::getCellRaw(int8_t x, int8_t y) const {
     return cells_[x][y];
 }
 
-void Maze::printAscii() const {
+void Maze::printAscii(int8_t robot_x, int8_t robot_y, Direction robot_heading) const {
     Serial.printf("\n--- MAZE MAP (%dx%d) ---\n", MAZE_WIDTH, MAZE_HEIGHT);
     for (int8_t y = MAZE_HEIGHT - 1; y >= 0; --y) {
         // Top horizontal walls
@@ -119,7 +133,13 @@ void Maze::printAscii() const {
         // Vertical walls and cell space
         for (int8_t x = 0; x < MAZE_WIDTH; ++x) {
             Serial.print(hasWall(x, y, DIR_WEST) ? "|" : " ");
-            if (isVisited(x, y)) {
+            if (x == robot_x && y == robot_y) {
+                char arrow = '^';
+                if (robot_heading == DIR_EAST) arrow = '>';
+                else if (robot_heading == DIR_SOUTH) arrow = 'v';
+                else if (robot_heading == DIR_WEST) arrow = '<';
+                Serial.printf(" %c ", arrow);
+            } else if (isVisited(x, y)) {
                 Serial.print(" . ");
             } else {
                 Serial.print("   ");
@@ -134,3 +154,4 @@ void Maze::printAscii() const {
     }
     Serial.println("+");
 }
+

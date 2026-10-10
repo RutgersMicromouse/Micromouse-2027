@@ -95,6 +95,9 @@ float WheelEncoders::getRightDistanceMM() const {
 }
 
 float WheelEncoders::getAverageDistanceMM() const {
+    if ((left_dist_mm_ > 0 && right_dist_mm_ < 0) || (left_dist_mm_ < 0 && right_dist_mm_ > 0)) {
+        return 0.5f * (fabsf(left_dist_mm_) + fabsf(right_dist_mm_));
+    }
     return 0.5f * (left_dist_mm_ + right_dist_mm_);
 }
 

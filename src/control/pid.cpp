@@ -47,7 +47,8 @@ void PIDController::reset() {
 float PIDController::update(float target, float feedback, float dt_seconds) {
     float error = target - feedback;
     float ff = target * kf_;
-    return updateError(error, dt_seconds) + ff;
+    float out = updateError(error, dt_seconds) + ff;
+    return constrain(out, out_min_, out_max_);
 }
 
 float PIDController::updateError(float error, float dt_seconds) {

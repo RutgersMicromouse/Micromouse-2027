@@ -51,80 +51,98 @@
 // Motoron Motor Channels
 #define MOTOR_LEFT_CHANNEL     1     // M1A / M1B
 #define MOTOR_RIGHT_CHANNEL    2     // M2A / M2B
-#define MOTOR_MAX_SPEED        300   // Max Motoron speed command (-800 to 800)
-#define MOTOR_COMMAND_SCALE    1.0f // PID output is already limited to Motoron's command range
-#define MOTOR_LEFT_COMPENSATION 1.0f
-#define MOTOR_RIGHT_COMPENSATION 1.0f // Keep both sides on equal command scaling until encoder-calibrated
-#define MOTOR_ACCELERATION_NORMAL 400
+#define MOTOR_MAX_SPEED        350   // Safe max speed command (-800 to 800) on 12V boosted rail
+#define MOTOR_COMMAND_SCALE    1.0f 
+#define MOTOR_LEFT_COMPENSATION 1.0f // Let PID controller handle wheel balance
+#define MOTOR_RIGHT_COMPENSATION 0.91f // 9% trim on right motor to balance physical motor strength
+#define MOTOR_ACCELERATION_NORMAL 0   // 0 = Disable internal Motoron rate-limiting; let software profile control ramps
 
-// Uncomment only when intentionally running the automatic one-wheel-at-a-time test at boot.
-#define CALIBRATE_MOTORS
+// Commented out by default: automatic wheel spin test at boot
+// #define CALIBRATE_MOTORS
+#define MOTOR_BALANCE_TEST_COMMAND       220
+#define MOTOR_BALANCE_TEST_DURATION_MS   1200
+#define MOTOR_BALANCE_MAX_COMPENSATION  1.15f
 
-// Positive software speed must move both wheels forward.  The left motor uses
-// the original positive channel polarity; the right motor is mirror-mounted.
-// Change only the affected value between +1 and -1 after a lifted-wheel test.
+// Motor directional polarity (+1 = forward)
 #define MOTOR_LEFT_DIRECTION   1
 #define MOTOR_RIGHT_DIRECTION  1
-#define MOVING_TURN_STEERING_BOOST 1.20f // Extra steering authority for left and right corrections while moving
-#define PIVOT_FORWARD_WHEEL_BOOST 1.25f // Match the extra authority applied to the reversing pivot wheel
-#define PIVOT_REVERSE_WHEEL_BOOST 1.25f // Extra reverse authority on the inner wheel during either pivot direction
-// During a forward left correction, the right wheel needs extra authority on
-// this chassis.  This is applied only to translating turns, never pivots.
-#define LEFT_TURN_RIGHT_WHEEL_BOOST  1.0f
+#define MOVING_TURN_STEERING_BOOST  1.60f
+#define LEFT_TURN_RIGHT_WHEEL_BOOST 1.0f
+#define LEFT_TURN_LEFT_WHEEL_BOOST  1.25f // Boost weaker left motor in reverse during left turns
+#define LEFT_TURN_RIGHT_WHEEL_TRIM  0.85f // Trim stronger right motor forward during left turns
 
 // -----------------------------------------------------------------------------
 // 3. PHYSICAL ROBOT CONSTANTS
 // -----------------------------------------------------------------------------
-#define CELL_DIMENSION_MM      180.0f  // Standard micromouse cell size
+#define CELL_DIMENSION_MM      170.0f  // Standard micromouse cell size
 #define HALF_CELL_MM           90.0f
 #define WALL_THICKNESS_MM      13.0f
 #define CORRIDOR_WIDTH_MM      167.0f  // 180 - 13 mm
 
-// Drive Mechanics (Pololu Micro Metal Gearmotors + Wheels)
+// Drive Mechanics (Pololu Micro Metal Gearmotors + 40mm Wheels)
 #define WHEEL_DIAMETER_MM      40.15f
 #define WHEEL_CIRCUMFERENCE_MM (WHEEL_DIAMETER_MM * 3.1415926535f)
-#define TRACK_WIDTH_MM         75.0f   // Distance between wheel contact patches
+// Effective kinematic track width calibrated from physical 360° turn test:
+// (75.0mm nominal * 360.0 / 540.0 = 50.00mm). Compensates for tire scrub and physical wheel spacing during pivots.
+#define TRACK_WIDTH_MM         50.00f  // Effective pivot track width between wheel contact patches
 #define SIDE_SENSOR_SPACING_MM 71.5f   // Front-to-rear spacing on each side
 
-// Encoder Resolution: 12 CPR motor shaft, ~50:1 gearbox -> ~600 counts per wheel rev
-// Counts per mm = 600 / (32.0 * PI) ≈ 5.968 counts/mm
-#define ENCODER_TICKS_PER_REV  600.0f
+// Encoder Resolution: Calibrated to 196.0 counts per wheel rev (~1.554 ticks/mm)
+// Compensates for physical tire compression & rolling radius to eliminate distance undervaluing
+#define ENCODER_TICKS_PER_REV  196.0f
 #define TICKS_PER_MM           (ENCODER_TICKS_PER_REV / WHEEL_CIRCUMFERENCE_MM)
 #define MM_PER_TICK            (1.0f / TICKS_PER_MM)
 
 // -----------------------------------------------------------------------------
-// 4. MOTOR BATTERY MONITORING
+// 4. MOTOR BATTERY MONITORING (1S 3.7V LiPo)
 // -----------------------------------------------------------------------------
-// Divider: R1 = 100k, R2 = 33k. Vout = Vin * (33 / 133) = Vin * 0.24812
-// Vin = Vout * (133 / 33) = Vout * 4.0303
+// Divider: R1 = 100k, R2 = 33k. Vin = Vout * (133 / 33) = Vout * 4.0303
 #define BATTERY_DIVIDER_RATIO  ((100.0f + 33.0f) / 33.0f)
 #define ADC_REF_VOLTAGE        3.3f
 #define ADC_RESOLUTION         1023.0f // 10-bit analogRead default
-#define BATTERY_WARN_VOLTAGE   3.6f    // 1-cell LiPo/Li-ion motor battery low warning
-#define BATTERY_CRITICAL_V     3.3f    // 1-cell LiPo/Li-ion motor battery critical threshold
+#define BATTERY_WARN_VOLTAGE   3.55f   // 1S LiPo warning threshold
+#define BATTERY_CRITICAL_V     3.30f   // 1S LiPo critical cut-off threshold
+#define BATTERY_DISCONNECTED_V 1.50f   // Motor switch SW2 is physically turned OFF
 
 // -----------------------------------------------------------------------------
 // 5. MOTION CONTROL LOOP
 // -----------------------------------------------------------------------------
-#define CONTROL_FREQ_HZ        500.0f  // 500 Hz high performance loop
+#define CONTROL_FREQ_HZ        500.0f  // 500 Hz control loop
 #define CONTROL_DT_S           (1.0f / CONTROL_FREQ_HZ) // 0.002 seconds (2 ms)
 
 // Velocity & Acceleration Profiles
-#define SEARCH_SPEED_MM_S      90.0f   // Desired steady exploration crawl speed
-#define FAST_SPEED_MM_S        45.0f   // Keep optimized maze runs at a cautious speed
-#define MAX_SPEED_MM_S         140.0f  // Reduced physical ceiling
-#define MIN_SPEED_MM_S         20.0f
+#define SEARCH_SPEED_MM_S      75.0f   // Deliberate, calm exploration crawl speed
+#define FAST_SPEED_MM_S        280.0f  // Speed-run sprint speed
+#define MAX_SPEED_MM_S         350.0f  // Top physical speed
+#define MIN_SPEED_MM_S         28.0f   // Minimum crawl speed
 
-#define SEARCH_ACCEL_MM_S2     200.0f  // Reach crawl speed promptly to overcome static friction
-#define FAST_ACCEL_MM_S2       500.0f  // Reduced speed-run acceleration
-#define DECEL_MM_S2            120.0f  // Gentle deceleration for slow maze movement
-#define SEARCH_BREAKAWAY_BOOST_COMMAND 4 // Small equal boost to both wheels when a search move starts
-#define SEARCH_BREAKAWAY_BOOST_MS 180 // Limit the breakaway boost to the initial ramp
+#define SEARCH_ACCEL_MM_S2     150.0f  // Smooth linear acceleration for search
+#define FAST_ACCEL_MM_S2       700.0f  // Linear acceleration for speed run
+#define DECEL_MM_S2            240.0f  // Crisp, controlled linear deceleration
 
-#define TURN_SPEED_DEG_S       30.0f   // Deliberately slow in-place pivot turn rate
-#define TURN_MAX_MOTOR_COMMAND 160.0f // Stronger pivot command for reliable corner turns
-#define TURN_ACCEL_DEG_S2      400.0f  // Reduced angular acceleration
-#define TURN_YAW_RATE_DAMPING  0.20f  // Counter-rotates against angular momentum near the target
+// Motor Deadband & Breakaway Kick Parameters
+#define MOTOR_MIN_PWM                  38    // Minimum operational PWM to sustain crawl
+#define MOTOR_RIGHT_STARTUP_OFFSET     0     // Symmetric floor to ensure straight line tracking
+#define MOTOR_KICKSTART_PWM            80    // Breakaway friction pulse
+#define MOTOR_KICKSTART_DURATION_MS    35    // Duration of kickstart pulse (ms)
+#define SEARCH_BREAKAWAY_BOOST_COMMAND 15    // Gentle initial linear motion boost
+#define SEARCH_BREAKAWAY_BOOST_MS      40    // Boost duration (ms)
+
+// Closed-Loop Turn Parameters (Gyro Feedback)
+#define TURN_MAX_MOTOR_COMMAND 115.0f  // Controlled differential motor PWM for turns (prevents floor stall)
+#define TURN_SPEED_DPS         90.0f   // Steady turn yaw rate (deg/s)
+#define TURN_ACCEL_DPS2        260.0f  // Smooth turn angular acceleration (deg/s^2)
+#define TURN_BREAKAWAY_PWM     58.0f   // Breakaway bias to overcome gearbox & tire scrub friction
+#define TURN_KP                2.40f   // Heading error proportional gain
+#define TURN_KI                0.04f   // Heading error integral gain
+#define TURN_KD                0.10f   // Heading error derivative gain
+
+// IMU Gyro Configuration
+// Axis: 0 = X, 1 = Y, 2 = Z (standard horizontal mounting uses Z)
+#define IMU_YAW_AXIS           2
+#define IMU_YAW_SIGN           1.0f    // Change to -1.0f if clockwise/counter-clockwise inverted
+// Turn scaling factor: Calibrated from empirical 540° vs 360° rotation (540.0 / 360.0 = 1.5000)
+#define IMU_GYRO_SCALE_FACTOR  1.5000f
 
 #define ENABLE_IR_WALL_CENTERING
 
@@ -140,16 +158,19 @@
 #define SHARP_MAX_DIST_MM      160.0f  // Physical far-range threshold
 
 // Raw ADC Thresholds (10-bit ADC readings, 3.3V reference)
-#define IR_WALL_DETECT_FRONT   220     // Front wall if raw ADC is at or above this value
-#define IR_WALL_DETECT_SIDE    200     // Side wall if raw ADC is at or above this value
+#define IR_WALL_DETECT_FRONT   210     // Front wall threshold (~80 mm)
+#define IR_WALL_DETECT_SIDE    190     // Side wall threshold
 
 // Millimeter Distance Thresholds
-#define WALL_DETECT_DIST_MM    115.0f  // Side-wall guide validity range
+#define WALL_DETECT_DIST_MM    125.0f  // Side-wall guide validity range
 #define NOMINAL_SIDE_WALL_MM   49.0f   // Distance from side sensor to wall when centered in cell
-#define FRONT_WALL_EARLY_STOP_REMAINING_MM 25.0f
-#define FRONT_WALL_STOP_CONFIRM_MS  40  // Require a persistent close reading to reject sensor noise
-#define IR_FRONT_STOP_DIST     420     // Front raw ADC reading when at front stop distance
 
-// A move is considered complete only after the encoder-measured travel reaches
-// this tolerance.  This compensates for one/two tick quantization error.
-#define MOTION_DISTANCE_TOLERANCE_MM  2.0f
+// Front wall stop thresholds:
+// 310 ADC = ~50 mm distance from sensor to front wall (robot bumper is ~28 mm from wall, axle is centered in cell)
+#define IR_FRONT_STOP_DIST     310     // Cell-center stop threshold when approaching front wall
+#define IR_FRONT_CRITICAL_DIST 365     // Critical proximity threshold (~43 mm from sensor, bumper ~20 mm)
+#define FRONT_WALL_STOP_CONFIRM_MS 10  // Fast confirmation (10 ms = 5 control cycles)
+#define CELL_REACHED_THRESHOLD_MM 35.0f // Traveled distance threshold to confirm cell arrival
+
+// Motion completion tolerance in mm (matches physical encoder quantization)
+#define MOTION_DISTANCE_TOLERANCE_MM  1.5f

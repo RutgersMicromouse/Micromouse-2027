@@ -72,9 +72,9 @@ bool PathOptimizer::generatePath(const Maze& maze, Floodfill& solver, Coordinate
                 turn_seg.value = 90.0f;
             } else {
                 turn_seg.action = ACTION_TURN_AROUND;
-                turn_seg.value = 180.0f;
+                turn_seg.value = -180.0f;
             }
-            turn_seg.speed_mm_s = TURN_SPEED_DEG_S;
+            turn_seg.speed_mm_s = 0.0f;
             turn_seg.end_speed_mm_s = 0.0f;
             segments_[segment_count_++] = turn_seg;
 

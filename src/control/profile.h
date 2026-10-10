@@ -26,6 +26,13 @@ public:
     float getCurrentVelocity() const { return current_vel_; }
     float getTotalDistance() const   { return total_distance_; }
     bool isFinished() const          { return is_finished_; }
+    bool isDecelerating() const {
+        return !is_finished_ && (current_pos_ >= (accel_distance_ + cruise_distance_) ||
+               (total_distance_ - current_pos_ <= decel_distance_ + 2.0f));
+    }
+    float getRemainingDistance() const {
+        return max(0.0f, total_distance_ - current_pos_);
+    }
 
     void stopNow();
 

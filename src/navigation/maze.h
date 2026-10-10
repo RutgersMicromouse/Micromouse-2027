@@ -30,7 +30,7 @@ public:
     static bool isValidCoordinate(int8_t x, int8_t y);
 
     // Print ASCII representation of known walls to Serial console
-    void printAscii() const;
+    void printAscii(int8_t robot_x = -1, int8_t robot_y = -1, Direction robot_heading = DIR_INVALID) const;
 
 private:
     uint8_t cells_[MAZE_WIDTH][MAZE_HEIGHT];

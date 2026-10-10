@@ -17,6 +17,7 @@ public:
     void update();
 
     float getVoltage() const;
+    bool isMotorSwitchOn() const;
     bool isLow() const;
     bool isCritical() const;
 

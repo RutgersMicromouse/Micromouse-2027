@@ -28,12 +28,13 @@ public:
 
     // High-Level Motion Primitives (Blocking with real-time update loop)
     bool moveForward(float distance_mm, float max_speed = SEARCH_SPEED_MM_S,
-                     float end_speed = 0.0f, bool allow_centering = true);
+                     float end_speed = 0.0f, bool allow_centering = true,
+                     float wall_alignment_gain = 0.5f);
 
     bool moveForwardCells(int num_cells, float max_speed = SEARCH_SPEED_MM_S,
                           float end_speed = 0.0f, bool allow_centering = true);
 
-    bool turnInPlace(float angle_deg, float turn_speed = TURN_SPEED_DEG_S);
+    bool turnInPlace(float angle_deg);
 
     bool alignFrontWall(float approach_speed = 80.0f, uint16_t timeout_ms = 1500);
 
@@ -57,9 +58,9 @@ private:
 
     float target_heading_deg_;
     float start_distance_mm_;
+    float wall_alignment_gain_;
     bool centering_enabled_;
     bool linear_motion_active_;
-    bool heading_turn_active_;
     bool search_motion_active_;
     uint32_t linear_motion_start_ms_;
 

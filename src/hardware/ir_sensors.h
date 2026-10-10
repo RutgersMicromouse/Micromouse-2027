@@ -22,6 +22,9 @@ public:
     // High frequency update (called every control tick, e.g. 250 - 500 Hz)
     void update();
 
+    // Flush low-pass filter and refresh readings with fresh physical samples
+    void flushFilter(uint8_t count = 4);
+
     // Auto-calibration in a known starting cell (Left, Right, and Front walls)
     bool calibrateInCell(uint16_t sample_count = 100);
 

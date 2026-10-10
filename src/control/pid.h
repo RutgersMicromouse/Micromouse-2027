@@ -24,6 +24,8 @@ public:
     float getProportional() const { return p_term_; }
     float getIntegral() const     { return i_term_; }
     float getDerivative() const   { return d_term_; }
+    float getIntegrator() const   { return integrator_; }
+    void resetIntegrator()        { integrator_ = 0.0f; i_term_ = 0.0f; }
 
 private:
     float kp_;

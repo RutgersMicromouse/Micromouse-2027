@@ -62,7 +62,7 @@ Micromouse-2027/
    - Updates encoders, gyroscope yaw integration, analog IR distance sensors, and motor battery voltage.
    - Closed-loop linear velocity PID tracking desired velocity from the trapezoidal motion profiler.
    - Angular heading PID fusing target heading, IMU gyro rate, and IR wall-centering error.
-   - The default PlatformIO environment is `teensy40-debug-3x3`: manual 3x3 maze mapping with motors and IMU disabled. The motor battery can remain off; power the Teensy and IR sensors from USB/component power. Use `pio run -e teensy40` for the regular 16x16 build.
+   - The default PlatformIO environment is `teensy40`, configured for the regular 16x16 maze build. Use `pio run -e teensy40-debug-3x3` for manual 3x3 maze mapping with motors and IMU disabled. The motor battery can remain off in that debug environment; power the Teensy and IR sensors from USB/component power.
 2. **Autonomous Maze Exploration**:
    - Wavefront BFS floodfill dynamically updates distances to the center cells for the configured maze size.
    - Preferential straight-line movement tie-breaker minimizes turn overhead.

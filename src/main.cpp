@@ -16,13 +16,12 @@ bool continuous_telemetry = false;
 uint32_t last_telemetry_time = 0;
 
 // uncomment individual ones to activate
-//#define DEBUG_MANUAL_MAZE_BUILD_MODE
-//#define SENSOR_DISTANCE_DIAGNOSTIC_MODE
-//#define DEBUG_IR_SENSOR_STREAM
-// Uncomment to run autonomous left-hand-rule maze following instead of gesture selection.
+// #define DEBUG_MANUAL_MAZE_BUILD_MODE
+// #define SENSOR_DISTANCE_DIAGNOSTIC_MODE
+// #define DEBUG_IR_SENSOR_STREAM
+// #define DEBUG_IMU_STREAM
 // #define DEBUG_LEFT_WALL_FOLLOW
-// Uncomment to alternate 90-degree in-place left/right turns every five seconds.
-#define DEBUG_ALTERNATING_TURNS
+// #define DEBUG_ALTERNATING_TURNS
 
 void printBanner() {
     Serial.println("\n========================================================");
@@ -43,6 +42,7 @@ void printHelp() {
     Serial.println("  [d] - Toggle Real-Time Diagnostic Stream");
     Serial.printf("  [m] - Print %dx%d Maze ASCII Map\n", MAZE_WIDTH, MAZE_HEIGHT);
     Serial.println("  [t] - Test 90-deg in-place turn");
+    Serial.println("  [3] - Test 360-deg in-place turn");
     Serial.println("  [w] - Test 1-cell forward move");
     Serial.println("  [1] - Test left wheel only (lift robot first)");
     Serial.println("  [2] - Test right wheel only (lift robot first)");
@@ -65,6 +65,10 @@ void testSingleWheel(bool right) {
     delay(250);
     motors.stop(true);
     delay(100);
+    encoders.reset();
+    int32_t start_l = encoders.getLeftTicks();
+    int32_t start_r = encoders.getRightTicks();
+
     motors.setSpeeds(left_command, right_command);
     delay(1000);
     const int16_t left_speed = motors.getLeftCurrentSpeed();
@@ -74,20 +78,27 @@ void testSingleWheel(bool right) {
     delay(100);
     motors.stop(true);
 
-    Serial.printf("[MOTOR TEST] %s result: Motoron speed L=%d R=%d, status=0x%04X, no-power=%s, fault=%s\n",
+    int32_t delta_l = encoders.getLeftTicks() - start_l;
+    int32_t delta_r = encoders.getRightTicks() - start_r;
+
+    Serial.printf("[MOTOR TEST] %s result: Motoron L=%d R=%d status=0x%04X | Encoders delta: L=%ld R=%ld | mm: L=%.1f R=%.1f\n",
                   right ? "Right" : "Left",
-                  left_speed,
-                  right_speed,
-                  status,
-                  status & (1 << MOTORON_STATUS_FLAG_NO_POWER) ? "YES" : "no",
-                  status & (1 << MOTORON_STATUS_FLAG_MOTOR_FAULTING) ? "YES" : "no");
+                  left_speed, right_speed, status,
+                  (long)delta_l, (long)delta_r,
+                  (float)delta_l * MM_PER_TICK, (float)delta_r * MM_PER_TICK);
     motors.stop(true);
     Serial.printf("[MOTOR TEST] %s wheel test complete; motors stopped.\n",
                   right ? "Right" : "Left");
 }
 
 void runMotorCalibration() {
-    Serial.println("\n[MOTOR CAL] Automatic one-wheel-at-a-time test starts in 3 seconds; keep the robot lifted.");
+    if (!motors.isConnected()) {
+        Serial.println("[MOTOR CAL] Motor controller is not connected; speed balance test cancelled.");
+        return;
+    }
+
+    Serial.println("\n[MOTOR CAL] Simultaneous wheel speed test starts in 3 seconds.");
+    Serial.println("[MOTOR CAL] Secure the robot with both wheels lifted clear of the floor.");
     Serial.printf("[MOTOR CAL] Motor battery reading: %.2f V\n", battery.getVoltage());
     for (int i = 0; i < 3; ++i) {
         digitalWrite(PIN_STATUS_LED, HIGH);
@@ -96,14 +107,47 @@ void runMotorCalibration() {
         delay(500);
     }
 
-    Serial.println("[MOTOR CAL] Starting left wheel test.");
-    testSingleWheel(false);
-    Serial.println("[MOTOR CAL] Left wheel test returned; both channels are stopped.");
-    delay(1000);
-    Serial.println("[MOTOR CAL] Starting right wheel test.");
-    testSingleWheel(true);
+    encoders.reset();
+    const int32_t start_left_ticks = encoders.getLeftTicks();
+    const int32_t start_right_ticks = encoders.getRightTicks();
+    Serial.printf("[MOTOR CAL] Spinning both wheels at command %d for %lu ms.\n",
+                  MOTOR_BALANCE_TEST_COMMAND,
+                  (unsigned long)MOTOR_BALANCE_TEST_DURATION_MS);
+    motors.setSpeeds(MOTOR_BALANCE_TEST_COMMAND, MOTOR_BALANCE_TEST_COMMAND);
+    const uint32_t start_time = millis();
+    while (millis() - start_time < MOTOR_BALANCE_TEST_DURATION_MS) {
+        delay(5);
+    }
+
+    const uint32_t elapsed_ms = millis() - start_time;
+    const int32_t left_tick_delta = encoders.getLeftTicks() - start_left_ticks;
+    const int32_t right_tick_delta = encoders.getRightTicks() - start_right_ticks;
+    motors.stop(false);
+    delay(100);
     motors.stop(true);
-    Serial.println("[MOTOR CAL] Automatic test complete; continuing startup.");
+    encoders.reset();
+
+    const float elapsed_seconds = elapsed_ms * 0.001f;
+    const float left_ticks_per_second = fabsf(left_tick_delta) / elapsed_seconds;
+    const float right_ticks_per_second = fabsf(right_tick_delta) / elapsed_seconds;
+    Serial.printf("[MOTOR CAL] Encoder rates: left=%ld ticks/s right=%ld ticks/s (ticks L=%ld R=%ld).\n",
+                  (long)left_ticks_per_second,
+                  (long)right_ticks_per_second,
+                  (long)left_tick_delta,
+                  (long)right_tick_delta);
+
+    if (left_tick_delta <= 0 || right_tick_delta <= 0) {
+        Serial.printf("[MOTOR CAL] Invalid forward encoder movement (L=%ld, R=%ld); keeping configured motor balance.\n",
+                      (long)left_tick_delta,
+                      (long)right_tick_delta);
+    } else if (left_tick_delta < 20 || right_tick_delta < 20) {
+        Serial.println("[MOTOR CAL] Too few encoder ticks to calibrate reliably; keeping configured motor balance.");
+    } else if (!motors.calibrateWheelSpeedBalance(left_ticks_per_second,
+                                                  right_ticks_per_second)) {
+        Serial.println("[MOTOR CAL] Invalid encoder rates; keeping configured motor balance.");
+    }
+
+    Serial.println("[MOTOR CAL] Startup wheel test complete.");
 }
 
 void runLeftWallFollowDebugStep() {
@@ -123,18 +167,23 @@ void runLeftWallFollowDebugStep() {
                   readings.front_right,
                   readings.rear_right);
 
-    if (front_blocked && !right_blocked) {
-        Serial.println("[LEFT WALL DEBUG] Front blocked, right open; turn right.");
-        if (!motion.turnInPlace(-90.0f, TURN_SPEED_DEG_S)) return;
+    if (!left_blocked && !right_blocked) {
+        Serial.println("[LEFT WALL DEBUG] Both side openings are clear; turn right first.");
+        if (!motion.turnInPlace(-90.0f)) return;
     } else if (!left_blocked) {
         Serial.println("[LEFT WALL DEBUG] Turn left.");
-        if (!motion.turnInPlace(90.0f, TURN_SPEED_DEG_S)) return;
-    } else if (front_blocked && right_blocked) {
+        if (!motion.turnInPlace(90.0f)) return;
+    } else if (front_blocked && !right_blocked) {
+        Serial.println("[LEFT WALL DEBUG] Front blocked, right open; turn right.");
+        if (!motion.turnInPlace(-90.0f)) return;
+    } else if (front_blocked) {
         Serial.println("[LEFT WALL DEBUG] Dead end; turn around.");
-        if (!motion.turnInPlace(180.0f, TURN_SPEED_DEG_S)) return;
+        if (!motion.turnInPlace(-90.0f)) return;
+        delay(50);
+        if (!motion.turnInPlace(-90.0f)) return;
     }
 
-    if (!motion.moveForward(CELL_DIMENSION_MM, SEARCH_SPEED_MM_S, 0.0f, true)) {
+    if (!motion.moveForward(CELL_DIMENSION_MM, SEARCH_SPEED_MM_S, 0.0f, true, 0.7f)) {
         Serial.println("[LEFT WALL DEBUG] Forward move failed; waiting for the next stage-1 selection.");
     } else {
         Serial.println("[LEFT WALL DEBUG] One cell complete; waiting for the next stage-1 selection.");
@@ -156,10 +205,11 @@ void runAlternatingTurnDebug() {
 
     while (true) {
         const float angle_deg = turn_right ? -90.0f : 90.0f;
-        Serial.printf("[TURN DEBUG] Turning %s 90 degrees.\n",
-                      turn_right ? "right" : "left");
+        Serial.printf("[TURN DEBUG] Closed-loop turning %s 90 degrees (Target: %+.1f deg).\n",
+                      turn_right ? "right" : "left",
+                      angle_deg);
 
-        if (!motion.turnInPlace(angle_deg, TURN_SPEED_DEG_S)) {
+        if (!motion.turnInPlace(angle_deg)) {
             motion.emergencyStop();
             Serial.println("[TURN DEBUG] Turn failed; test halted.");
             while (true) {
@@ -171,6 +221,45 @@ void runAlternatingTurnDebug() {
         digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
         turn_right = !turn_right;
         delay(5000);
+    }
+}
+
+void updateImuDebugStream() {
+    static uint32_t last_update_micros = 0;
+    static uint32_t last_print_ms = 0;
+    static float previous_heading_deg = 0.0f;
+    static float accumulated_heading_deg = 0.0f;
+
+    const uint32_t now_micros = micros();
+    if (last_update_micros == 0) {
+        last_update_micros = now_micros;
+        previous_heading_deg = imu.getHeadingDeg();
+        return;
+    }
+
+    const float dt_seconds = (now_micros - last_update_micros) * 1e-6f;
+    last_update_micros = now_micros;
+    encoders.update(dt_seconds);
+    imu.update(dt_seconds,
+               encoders.getEncoderYawRateDeg_S(),
+               encoders.getForwardSpeedMM_S());
+
+    if (millis() - last_print_ms >= 100) {
+        last_print_ms = millis();
+        const float heading_deg = imu.getHeadingDeg();
+        float heading_delta_deg = heading_deg - previous_heading_deg;
+        if (heading_delta_deg > 180.0f) heading_delta_deg -= 360.0f;
+        if (heading_delta_deg <= -180.0f) heading_delta_deg += 360.0f;
+        accumulated_heading_deg += heading_delta_deg;
+        previous_heading_deg = heading_deg;
+
+        Serial.printf("[IMU DEBUG] connected=%s heading=%+.1fdeg total=%+.1fdeg yaw=%+.1fdps raw=%+.1fdps bias=%+.1fdps\n",
+                      imu.isConnected() ? "YES" : "NO",
+                      heading_deg,
+                      accumulated_heading_deg,
+                      imu.getYawRateDeg_S(),
+                      imu.getRawYawRateDeg_S(),
+                      imu.getGyroBiasDeg_S());
     }
 }
 
@@ -270,6 +359,11 @@ void handleSerialCommands() {
             motion.turnInPlace(90.0f);
             break;
 
+        case '3':
+            Serial.println("[CMD] Testing In-Place Turn (360 deg)...");
+            motion.turnInPlace(-360.0f);
+            break;
+
         case 'w':
         case 'W':
             Serial.println("[CMD] Testing Forward 1 Cell (180 mm)...");
@@ -311,7 +405,9 @@ void gestureModeSelector() {
 
         int hand_count = 0;
         uint32_t gesture_start = 0;
+#ifdef DEBUG_IR_SENSOR_STREAM
         uint32_t last_selector_debug_time = 0;
+#endif
 
         while (hand_count == 0) {
             handleSerialCommands();
@@ -362,14 +458,19 @@ void gestureModeSelector() {
             digitalWrite(PIN_STATUS_LED, HIGH); delay(200);
             digitalWrite(PIN_STATUS_LED, LOW);  delay(200);
         }
-        delay(1000);
+        delay(600);
+
+        if (hand_count == 1 || hand_count == 2) {
+            // Re-zero gyro bias, heading, and navigation pose while resting stationary in start cell
+            imu.calibrateStaticBias(150);
+            imu.resetHeading(0.0f);
+            motion.setTargetHeading(0.0f);
+            encoders.reset();
+            navigator.reset();
+        }
 
         if (hand_count == 1) {
-#ifdef DEBUG_LEFT_WALL_FOLLOW
-            runLeftWallFollowDebugStep();
-#else
-            navigator.exploreOneCell();
-#endif
+            navigator.exploreToCenter();
         } else if (hand_count == 2) {
             if (navigator.exploreToCenter()) {
                 delay(1500);
@@ -542,6 +643,15 @@ void setup() {
 
     printBanner();
 
+#ifdef DEBUG_IMU_STREAM
+    encoders.begin();
+    const bool imu_ready = imu.begin();
+    Serial.printf("[IMU DEBUG] Stream active; IMU %s. Hold still until bias calibration completes, then rotate 90 degrees clockwise and counterclockwise.\n",
+                  imu_ready ? "ready" : "NOT DETECTED");
+    Serial.println("[IMU DEBUG] Compare the total heading change for each rotation; motors and calibration test are disabled.");
+    return;
+#endif
+
     // Initialize all motion and sensor hardware
     motion.begin();
 
@@ -572,6 +682,12 @@ void setup() {
 }
 
 void loop() {
+#ifdef DEBUG_IMU_STREAM
+    updateImuDebugStream();
+    delay(2);
+    return;
+#endif
+
 #ifdef DEBUG_ALTERNATING_TURNS
     delay(5);
     return;

@@ -1,10 +1,6 @@
 #include "navigator.h"
 
-// Comment this out to stop instead of trying an available opening when the
-// current wall map contains no route to the goal.
-#define ENABLE_NO_ROUTE_OPENING_RECOVERY
-
-// Comment this out to silence per-step sensor and route-decision diagnostics.
+// Per-step sensor and route-decision diagnostics.
 #define DEBUG_NAV_DECISIONS
 
 Navigator navigator;
@@ -48,8 +44,8 @@ bool Navigator::advanceManualCell() {
 }
 
 void Navigator::scanAndBuildCellManual() {
-    // 1. Refresh IR sensor readings; heading is controlled only by serial turn commands.
-    ir_sensors.update();
+    // 1. Refresh IR sensor readings with flush; heading is controlled only by serial turn commands.
+    ir_sensors.flushFilter(4);
 
     // 3. Map relative walls to absolute compass directions based on current_heading_
     Direction front_dir = current_heading_;
@@ -74,6 +70,9 @@ void Navigator::scanAndBuildCellManual() {
 }
 
 void Navigator::scanCurrentCell() {
+    // Flush IR filter so readings reflect the current stationary position and heading
+    ir_sensors.flushFilter(4);
+
     // Determine absolute wall directions from robot's current heading
     Direction front_dir = current_heading_;
     Direction left_dir  = turnLeft(current_heading_);
@@ -83,6 +82,16 @@ void Navigator::scanCurrentCell() {
     bool left_wall  = ir_sensors.hasLeftWall();
     bool right_wall = ir_sensors.hasRightWall();
     DistanceSensors readings = ir_sensors.getReadings();
+
+    // Front-side open-space confirmation:
+    // If a front-side sensor reads open space (< IR_WALL_DETECT_SIDE),
+    // the forward portion of that side is unequivocally open.
+    if (readings.front_left < IR_WALL_DETECT_SIDE) {
+        left_wall = false;
+    }
+    if (readings.front_right < IR_WALL_DETECT_SIDE) {
+        right_wall = false;
+    }
 
     maze_.setWall(current_pos_.x, current_pos_.y, front_dir, front_wall);
     maze_.setWall(current_pos_.x, current_pos_.y, left_dir,  left_wall);
@@ -109,30 +118,9 @@ Navigator::StepResult Navigator::stepExplore() {
     // 2. Recalculate floodfill distance map
     solver_.recalculate();
 
-#ifdef DEBUG_NAV_DECISIONS
-    DistanceSensors readings = ir_sensors.getReadings();
-    Serial.printf("[NAV DEBUG] Front: raw=%u (wall if >=%u), distance=%.1fmm, sensor=%s; mapped=%s\n",
-                  readings.front,
-                  static_cast<unsigned int>(IR_WALL_DETECT_FRONT),
-                  readings.front_mm,
-                  ir_sensors.hasFrontWall() ? "WALL" : "OPEN",
-                  maze_.hasWall(current_pos_.x, current_pos_.y, current_heading_) ? "WALL" : "OPEN");
-
-    const int8_t debug_turns[4] = {0, 1, -1, 2};
-    const char* debug_names[4] = {"straight", "right", "left", "reverse"};
-    for (int i = 0; i < 4; ++i) {
-        Direction candidate = relativeToAbsolute(current_heading_, debug_turns[i]);
-        int8_t nx = current_pos_.x + dxFromDir(candidate);
-        int8_t ny = current_pos_.y + dyFromDir(candidate);
-        bool in_bounds = Maze::isValidCoordinate(nx, ny);
-        bool mapped_wall = maze_.hasWall(current_pos_.x, current_pos_.y, candidate);
-        uint16_t distance = in_bounds ? solver_.getDistance(nx, ny) : DIST_INFINITY;
-        Serial.printf("[NAV DEBUG] Candidate %s dir=%d: map=%s, neighbor=(%d,%d) %s, flood-distance=%u\n",
-                      debug_names[i], candidate, mapped_wall ? "WALL" : "OPEN",
-                      nx, ny, in_bounds ? "inside" : "outside",
-                      static_cast<unsigned int>(distance));
-    }
-#endif
+    // Visual confirmation: Print evolving ASCII map and distance matrix at each step
+    maze_.printAscii(current_pos_.x, current_pos_.y, current_heading_);
+    solver_.printDistanceMatrix();
 
     // 3. Check if we have arrived at the goal
     if (solver_.isAtGoal(current_pos_.x, current_pos_.y)) {
@@ -140,76 +128,92 @@ Navigator::StepResult Navigator::stepExplore() {
         return StepResult::GoalReached;
     }
 
-    // 4. Flood-fill already prefers straight movement when it has the lowest
-    // cost.  Do not override it in open cells, or the mouse can drive away
-    // from a shorter branch simply because it happened to enter heading north.
-    Direction next_dir = DIR_INVALID;
-    const char* decision_source = "flood-fill";
-    if (next_dir == DIR_INVALID) {
+    // 4. Decision: strictly 100% determined by Floodfill shortest-path gradient
+    uint16_t curr_dist = solver_.getDistance(current_pos_.x, current_pos_.y);
+    Serial.printf("[FLOODFILL] Cell (%d,%d), Heading=%d, Dist-to-Goal=%u\n",
+                  current_pos_.x, current_pos_.y, current_heading_, curr_dist);
+
+    const int8_t debug_turns[4] = {0, 1, -1, 2};
+    const char* debug_names[4] = {"STRAIGHT", "RIGHT", "LEFT", "REVERSE"};
+    for (int i = 0; i < 4; ++i) {
+        Direction candidate = relativeToAbsolute(current_heading_, debug_turns[i]);
+        int8_t nx = current_pos_.x + dxFromDir(candidate);
+        int8_t ny = current_pos_.y + dyFromDir(candidate);
+        bool in_bounds = Maze::isValidCoordinate(nx, ny);
+        bool mapped_wall = maze_.hasWall(current_pos_.x, current_pos_.y, candidate);
+        if (mapped_wall) {
+            Serial.printf("  Candidate %s (dir %d): WALL [BLOCKED]\n", debug_names[i], candidate);
+        } else if (!in_bounds) {
+            Serial.printf("  Candidate %s (dir %d): OUT OF BOUNDS\n", debug_names[i], candidate);
+        } else {
+            uint16_t d = solver_.getDistance(nx, ny);
+            Serial.printf("  Candidate %s (dir %d -> %d,%d): DIST = %u%s\n",
+                          debug_names[i], candidate, nx, ny, d,
+                          (d == DIST_INFINITY) ? " [UNREACHABLE]" : "");
+        }
+    }
+
+    Direction next_dir = solver_.getNextDirection(current_pos_.x, current_pos_.y, current_heading_);
+
+    // Front sensor safety check: if robot intended to drive straight into an unmapped front wall,
+    // update the map immediately, recalculate floodfill, and re-query
+    if (next_dir == current_heading_ && ir_sensors.hasFrontWall()) {
+        Serial.println("[FLOODFILL] Physical front wall confirmed ahead; updating map & re-running floodfill.");
+        maze_.setWall(current_pos_.x, current_pos_.y, current_heading_, true);
+        solver_.recalculate();
         next_dir = solver_.getNextDirection(current_pos_.x, current_pos_.y, current_heading_);
     }
 
     if (next_dir == DIR_INVALID) {
-#ifdef ENABLE_NO_ROUTE_OPENING_RECOVERY
-        const int8_t turn_preference[4] = {0, 1, -1, 2};
-        for (uint8_t pass = 0; pass < 2 && next_dir == DIR_INVALID; ++pass) {
-            for (int i = 0; i < 4; ++i) {
-                Direction candidate = relativeToAbsolute(current_heading_, turn_preference[i]);
-                int8_t nx = current_pos_.x + dxFromDir(candidate);
-                int8_t ny = current_pos_.y + dyFromDir(candidate);
-
-                if (!maze_.hasWall(current_pos_.x, current_pos_.y, candidate) &&
-                    Maze::isValidCoordinate(nx, ny) &&
-                    (pass != 0 || !maze_.isVisited(nx, ny))) {
-                    next_dir = candidate;
-                    break;
-                }
-            }
-        }
-
-        if (next_dir != DIR_INVALID) {
-            decision_source = "open-opening recovery";
-            Serial.printf("[NAV] No route to goal in current map; recovery trying open %s opening.\n",
-                          maze_.isVisited(current_pos_.x + dxFromDir(next_dir),
-                                          current_pos_.y + dyFromDir(next_dir))
-                              ? "previously visited"
-                              : "unvisited");
-        } else
-#endif
-        {
-#ifdef DEBUG_NAV_DECISIONS
-            Serial.println("[NAV DEBUG] Decision: STOP; no mapped opening has a reachable flood-fill distance.");
-#endif
-            Serial.printf("[NAV] No route to goal in current wall map from cell (%d,%d), heading=%d, walls=0x%02X, distance=%u\n",
-                          current_pos_.x, current_pos_.y, current_heading_,
-                          static_cast<unsigned int>(maze_.getCellRaw(current_pos_.x, current_pos_.y) & WALL_MASK),
-                          static_cast<unsigned int>(solver_.getDistance(current_pos_.x, current_pos_.y)));
-            motion.emergencyStop();
-            return StepResult::NoRoute;
-        }
+        Serial.printf("[NAV ERROR] No route to goal in current wall map from cell (%d,%d), heading=%d, distance=%u\n",
+                      current_pos_.x, current_pos_.y, current_heading_, curr_dist);
+        motion.emergencyStop();
+        return StepResult::NoRoute;
     }
 
-#ifdef DEBUG_NAV_DECISIONS
-    Serial.printf("[NAV DEBUG] Decision: move %s (absolute dir=%d), source=%s\n",
-                  next_dir == current_heading_ ? "straight" : "turn then forward",
-                  next_dir, decision_source);
-#endif
+    int8_t target_nx = current_pos_.x + dxFromDir(next_dir);
+    int8_t target_ny = current_pos_.y + dyFromDir(next_dir);
+    uint16_t target_dist = solver_.getDistance(target_nx, target_ny);
+    Serial.printf("[FLOODFILL 100%% SOLVER DECISION] Move %s (dir %d -> %d,%d, target flood-distance=%u)\n",
+                  next_dir == current_heading_ ? "STRAIGHT" : "TURN",
+                  next_dir, target_nx, target_ny, target_dist);
+
 
     // 5. Determine relative turn needed
     int8_t turn_code = (next_dir - current_heading_ + 4) & 0x03;
 
-    if (turn_code == 1) {
-        // 90° Turn Right
-        if (!motion.turnInPlace(-90.0f, TURN_SPEED_DEG_S)) return StepResult::MotionFailed;
-    } else if (turn_code == 3) {
-        // 90° Turn Left
-        if (!motion.turnInPlace(90.0f, TURN_SPEED_DEG_S)) return StepResult::MotionFailed;
-    } else if (turn_code == 2) {
-        // 180° Turn Around
-        if (!motion.turnInPlace(180.0f, TURN_SPEED_DEG_S)) return StepResult::MotionFailed;
-    }
+    if (turn_code != 0) {
+        Serial.printf("[NAV] Executing %s (turn_code=%d) from heading %d to heading %d...\n",
+                      (turn_code == 1) ? "90-deg RIGHT turn" :
+                      (turn_code == 3) ? "90-deg LEFT turn" : "180-deg TURN AROUND",
+                      turn_code, current_heading_, next_dir);
+        if (turn_code == 1) {
+            // 90° Turn Right
+            motion.turnInPlace(-90.0f);
+        } else if (turn_code == 3) {
+            // 90° Turn Left
+            motion.turnInPlace(90.0f);
+        } else if (turn_code == 2) {
+            // 180° Turn Around: two consecutive proven 90° right turns
+            motion.turnInPlace(-90.0f);
+            delay(50);
+            motion.turnInPlace(-90.0f);
+        }
 
-    current_heading_ = next_dir;
+        current_heading_ = next_dir;
+
+        // Post-turn settling pause: brief, crisp stabilization before immediate forward motion
+        delay(25);
+        ir_sensors.flushFilter(4);
+
+        // Post-turn sensor check (informational; moveForward will brake safely if an obstacle is encountered)
+        if (ir_sensors.getFront() >= 500) {
+            Serial.printf("[NAV] Post-turn notice: front sensor close (raw=%u, %.1f mm) facing heading %d.\n",
+                          ir_sensors.getFront(), ir_sensors.getFrontMM(), current_heading_);
+        }
+    } else {
+        current_heading_ = next_dir;
+    }
 
     // 6. Move forward 1 cell
     if (!motion.moveForward(CELL_DIMENSION_MM, SEARCH_SPEED_MM_S, 0.0f, true)) {
@@ -218,25 +222,55 @@ Navigator::StepResult Navigator::stepExplore() {
         return StepResult::MotionFailed;
     }
 
+    // Settling pause after cell arrival: allows chassis to stop completely,
+    // sensors to stabilize, and heading to align before scanning the new cell.
+    delay(100);
+    ir_sensors.flushFilter(8);
+
     // Update coordinates
     current_pos_.x += dxFromDir(current_heading_);
     current_pos_.y += dyFromDir(current_heading_);
+
+    Serial.printf("[NAV] Arrived at Cell (%d, %d), facing %d\n",
+                  current_pos_.x, current_pos_.y, current_heading_);
 
     return StepResult::Continue;
 }
 
 bool Navigator::exploreToCenter() {
     Serial.println("\n[NAV] =======================================");
-    Serial.println("[NAV] Starting Center Exploration Run...");
+    Serial.println("[NAV] Starting Center Exploration Run (Stage 1)...");
     Serial.println("[NAV] =======================================");
 
     solver_.setGoalToCenter();
     solver_.recalculate();
 
+    // Diagnostic in-place 360-degree turn in the start square (0, 0)
+    // before moving forward with the Stage 1 search algorithm.
+    if (current_pos_.x == 0 && current_pos_.y == 0) {
+        Serial.println("\n[DIAGNOSTIC] Executing 360-degree in-place turn in start square (0, 0)...");
+        digitalWrite(PIN_STATUS_LED, HIGH);
+        delay(400);
+
+        motion.turnInPlace(-360.0f);
+
+        digitalWrite(PIN_STATUS_LED, LOW);
+        delay(250);
+
+        // Stabilize start cell heading and sensors facing North (0.0 deg)
+        imu.resetHeading(0.0f);
+        motion.setTargetHeading(0.0f);
+        encoders.reset();
+        ir_sensors.flushFilter(8);
+
+        Serial.println("[DIAGNOSTIC] 360-degree turn complete! Proceeding with Stage 1 search forward...\n");
+    }
+
     while (!solver_.isAtGoal(current_pos_.x, current_pos_.y)) {
         StepResult result = stepExplore();
         if (result == StepResult::GoalReached) break;
         if (result != StepResult::Continue) return false;
+        delay(60); // Deliberate square-by-square cadence
     }
 
     // Goal reached! Scan the center cell walls
@@ -277,6 +311,7 @@ bool Navigator::exploreToStart() {
         StepResult result = stepExplore();
         if (result == StepResult::GoalReached) break;
         if (result != StepResult::Continue) return false;
+        delay(60); // Deliberate square-by-square cadence
     }
 
     Serial.println("[NAV] Successfully Returned to Start (0, 0)!");
@@ -284,9 +319,16 @@ bool Navigator::exploreToStart() {
     // Turn to face North in start cell
     if (current_heading_ != DIR_NORTH) {
         int8_t turn_code = (DIR_NORTH - current_heading_ + 4) & 0x03;
-        bool turned = (turn_code == 1) ? motion.turnInPlace(-90.0f) :
-                      (turn_code == 3) ? motion.turnInPlace(90.0f) :
-                                         motion.turnInPlace(180.0f);
+        bool turned = false;
+        if (turn_code == 1) {
+            turned = motion.turnInPlace(-90.0f);
+        } else if (turn_code == 3) {
+            turned = motion.turnInPlace(90.0f);
+        } else if (turn_code == 2) {
+            turned = motion.turnInPlace(-90.0f);
+            delay(50);
+            turned = turned && motion.turnInPlace(-90.0f);
+        }
         if (!turned) return false;
         current_heading_ = DIR_NORTH;
     }
@@ -324,11 +366,11 @@ bool Navigator::runFastSpeed() {
                 return false;
             }
         } else if (seg.action == ACTION_TURN_LEFT) {
-            if (!motion.turnInPlace(seg.value, TURN_SPEED_DEG_S)) return false;
+            if (!motion.turnInPlace(seg.value)) return false;
         } else if (seg.action == ACTION_TURN_RIGHT) {
-            if (!motion.turnInPlace(seg.value, TURN_SPEED_DEG_S)) return false;
+            if (!motion.turnInPlace(seg.value)) return false;
         } else if (seg.action == ACTION_TURN_AROUND) {
-            if (!motion.turnInPlace(seg.value, TURN_SPEED_DEG_S)) return false;
+            if (!motion.turnInPlace(seg.value)) return false;
         } else if (seg.action == ACTION_STOP) {
             motion.emergencyStop();
             break;

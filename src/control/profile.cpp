@@ -1,4 +1,5 @@
 #include "profile.h"
+#include "config.h"
 
 TrapezoidalProfile::TrapezoidalProfile()
     : total_distance_(0.0f),
@@ -83,13 +84,13 @@ void TrapezoidalProfile::update(float dt_seconds) {
     } else {
         // Decelerating
         current_vel_ -= decel_ * dt_seconds;
-        float floor_speed = (end_speed_ > 0.0f) ? end_speed_ : 20.0f;
+        float floor_speed = (end_speed_ > 0.0f) ? end_speed_ : 0.0f;
         if (current_vel_ < floor_speed) current_vel_ = floor_speed;
     }
 
     current_pos_ += current_vel_ * dt_seconds;
 
-    if (current_pos_ >= total_distance_) {
+    if (current_pos_ >= total_distance_ || (end_speed_ <= 0.0f && current_vel_ <= 0.0f && current_pos_ >= (total_distance_ - 10.0f))) {
         current_pos_ = total_distance_;
         current_vel_ = end_speed_;
         is_finished_ = true;
@@ -101,7 +102,7 @@ void TrapezoidalProfile::updateWithFeedback(float dt_seconds, float measured_dis
 
     current_pos_ = constrain(fabsf(measured_distance), 0.0f, total_distance_);
     const float remaining = total_distance_ - current_pos_;
-    if (remaining <= 0.001f) {
+    if (remaining <= 0.5f || (end_speed_ <= 0.0f && remaining <= MOTION_DISTANCE_TOLERANCE_MM && current_vel_ <= 8.0f)) {
         current_pos_ = total_distance_;
         current_vel_ = end_speed_;
         is_finished_ = true;
