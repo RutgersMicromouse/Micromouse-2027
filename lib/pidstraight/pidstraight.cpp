@@ -4,12 +4,12 @@
 
 namespace {
     // Variable Settings
-    double max_speed = 100;
+    double max_speed = 90;
 
     // PID for distance
-    double Kp_dist  = 6.0;
+    double Kp_dist  = 3.0;
     double Ki_dist  = 0;
-    double Kd_dist  = 0;
+    double Kd_dist  = 2.0;
 
 
     // PID for angle offset
@@ -18,10 +18,9 @@ namespace {
     double Kd_angle = 0.4;
 
     // PID for lateral correction
-    double Kp_lat = 2.00;
-    double Kd_lat = 0.4;
-
-    double lat_error_old = 0;
+    double Kp_lat = 0.03;
+    double Ki_lat = 0.0;
+    double Kd_lat = 0.01;
 
     // TOF
     double Kp_wall = 0.5;
@@ -117,6 +116,8 @@ void pidForward(double distance, bool isTof = false) {
     double error_angle_old   = error_angle;
     double error_deriv_angle = 0;
     double angleOut          = 0;
+    double lat_error_old = 0;
+    double lat_error_integral = 0;
 
 
     // Stall detection state
@@ -193,14 +194,11 @@ void pidForward(double distance, bool isTof = false) {
 
 
         // ── Guard: wall too close ──────────────────────────────────────────
-        if (front() > 0 && front() < 20 && micros() > sampleTime + 100000UL) { // only checks after .1 seconds
+        if (front() > 0 && front() < 50 && micros() > sampleTime + 10000UL) { // only checks after .1 seconds
             Serial.println("STOP: front wall guard triggered");
             Serial.print("  front():    "); Serial.println(front());
             Serial.print("  avg_enc:    "); Serial.println(avg_enc);
             Serial.print("  error_dist: "); Serial.println(error_dist);
-            digitalWrite(LED_BUILTIN, HIGH);  delay(200);
-            delay(3000);
-            digitalWrite(LED_BUILTIN, LOW); delay(200);
             setLeftPWM(0); setRightPWM(0);
             return;
         }
@@ -245,29 +243,43 @@ void pidForward(double distance, bool isTof = false) {
 
         // ── Lateral correction ──────────────────────────────────────
         double lateral_error = 0;
+        
 
         // only use wall if valid
         int leftDist = left();
         int rightDist = right();
-        if (leftDist > 0 && rightDist > 0) {
-            leftDist = leftDist % 180;
-            rightDist = rightDist % 180;
-            lateral_error =
-                leftDist - (rightDist + leftDist) / 2;
+
+
+        bool validWalls = (leftDist > 0 && rightDist > 0 && leftDist < 100 && rightDist < 100);
+
+        if (validWalls) {
+            lateral_error = (leftDist - rightDist) / 2.0;
+
+            lat_error_integral += lateral_error * dt;
+            lat_error_integral =
+                constrain(lat_error_integral, -50.0, 50.0);
         }
 
-        double lat_deriv =
-            (lateral_error - lat_error_old) / dt;
+        double lat_deriv = 0;
 
-        if (!isfinite(lat_deriv))
+        if (validWalls) {
+            lat_deriv = (lateral_error - lat_error_old) / dt;
+        }
+
+        if (!isfinite(lat_deriv)) {
             lat_deriv = 0;
+        }
 
-        double lateralOut = Kp_lat * lateral_error + Kd_lat * lat_deriv;
+        double lateralOut =
+            Kp_lat * lateral_error
+            + Ki_lat * lat_error_integral
+            + Kd_lat * lat_deriv;
 
-        // steering correction in degrees
-        lateralOut = constrain(lateralOut, -8, 8);
+        lateralOut = constrain(lateralOut, -8.0, 8.0);
 
-        lat_error_old = lateral_error;
+        if (validWalls) {
+            lat_error_old = lateral_error;
+        }
 
 
 

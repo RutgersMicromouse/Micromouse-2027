@@ -401,6 +401,23 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
             isCentered == true;
         } else {
             Serial1.print("Left: "); Serial1.print(left()); Serial1.print(" | Front: "); Serial1.print(front()); Serial1.print(" | Right: "); Serial1.println(right());
+            
+            std::vector<Direction> forks;
+
+            for (int i = 0; i < 4; ++i)
+            {
+                if (i != static_cast<int>(state.heading)) {
+                    
+                }
+            }
+
+            // left is 90 degrees CCW
+    // Direction leftDir = static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4);
+    // if (left() > WALL_THRESHOLD_MM) {
+    //     // Serial1.println(static_cast<int>(leftDir));
+    //     exits.push_back(leftDir);
+    // }
+            
             if (front() > WALL_THRESHOLD_MM) {
                 Serial1.println("Move forward");
                 pidForward(CELL_SIZE_MM, isTof);
