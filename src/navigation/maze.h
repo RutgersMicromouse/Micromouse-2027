@@ -5,7 +5,7 @@
 #include "types.h"
 
 // =============================================================================
-// 16x16 Micromouse Maze Representation
+// Configurable-size Micromouse maze representation
 // Wall Bitflags: NORTH=0x01, EAST=0x02, SOUTH=0x04, WEST=0x08, VISITED=0x10
 // =============================================================================
 
@@ -26,7 +26,7 @@ public:
 
     uint8_t getCellRaw(int8_t x, int8_t y) const;
 
-    // Check if cell coordinate is inside the 16x16 maze bounds
+    // Check if cell coordinate is inside the configured maze bounds
     static bool isValidCoordinate(int8_t x, int8_t y);
 
     // Print ASCII representation of known walls to Serial console

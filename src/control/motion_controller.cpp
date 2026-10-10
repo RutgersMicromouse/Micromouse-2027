@@ -7,14 +7,17 @@ MotionController::MotionController()
       start_distance_mm_(0.0f),
       centering_enabled_(true),
       linear_motion_active_(false),
+      heading_turn_active_(false),
+      search_motion_active_(false),
+      linear_motion_start_ms_(0),
       last_tick_micros_(0)
 {
     // Linear Velocity PID: (Kp, Ki, Kd, Kf)
     // Motoron takes speed commands up to ±800
-    pid_linear_vel_.setGains(1.2f, 0.08f, 0.02f, 0.75f);
+    pid_linear_vel_.setGains(2.0f, 0.0f, 0.0f, 0.0f);
     pid_linear_vel_.setOutputLimits(-MOTOR_MAX_SPEED, MOTOR_MAX_SPEED);
 
-    pid_angular_heading_.setGains(4.5f, 0.02f, 0.25f, 0.0f);
+    pid_angular_heading_.setGains(1.05f, 0.0f, 0.0f, 0.0f);
     pid_angular_heading_.setOutputLimits(-MOTOR_MAX_SPEED * 0.7f, MOTOR_MAX_SPEED * 0.7f);
 }
 
@@ -97,9 +100,15 @@ void MotionController::update(float dt_seconds)
     // 3. Linear Speed Control
     float desired_vel = linear_profile_.getCurrentVelocity();
     float current_vel = encoders.getForwardSpeedMM_S();
-    float linear_cmd = pid_linear_vel_.update(desired_vel, current_vel, dt_seconds);
+    float linear_cmd = heading_turn_active_
+        ? 0.0f
+        : pid_linear_vel_.update(desired_vel, current_vel, dt_seconds);
     if (desired_vel > 0.0f && linear_cmd < 0.0f) {
         linear_cmd = 0.0f;
+    }
+    if (search_motion_active_ && desired_vel > 0.0f &&
+        millis() - linear_motion_start_ms_ < SEARCH_BREAKAWAY_BOOST_MS) {
+        linear_cmd += SEARCH_BREAKAWAY_BOOST_COMMAND;
     }
 
     // 4. Angular Heading & Wall Centering Control
@@ -121,16 +130,21 @@ void MotionController::update(float dt_seconds)
 #endif
 
     float angular_cmd = pid_angular_heading_.updateError(heading_error, dt_seconds);
+    if (heading_turn_active_) {
+        angular_cmd -= TURN_YAW_RATE_DAMPING * imu.getYawRateDeg_S();
+    }
 
     // A pivot has no requested translation.  Cap its differential motor
     // command explicitly; TURN_SPEED_DEG_S alone is a timeout parameter.
     if (!linear_motion_active_) {
         angular_cmd = constrain(angular_cmd, -TURN_MAX_MOTOR_COMMAND, TURN_MAX_MOTOR_COMMAND);
+    } else if (desired_vel > 0.0f) {
+        angular_cmd *= MOVING_TURN_STEERING_BOOST;
     }
 
     // Heading correction must not reverse a wheel during a forward translation.
     if (desired_vel > 0.0f && linear_cmd > 0.0f) {
-        float max_steering_cmd = 0.25f * linear_cmd;
+        float max_steering_cmd = 0.35f * linear_cmd;
         angular_cmd = constrain(angular_cmd, -max_steering_cmd, max_steering_cmd);
     }
 
@@ -143,6 +157,32 @@ void MotionController::update(float dt_seconds)
     }
     int16_t left_motor_pwm = (int16_t)(linear_cmd - angular_cmd);
     int16_t right_motor_pwm = (int16_t)(linear_cmd + right_angular_cmd);
+    if (!linear_motion_active_) {
+        if (left_motor_pwm > 0) {
+            left_motor_pwm = (int16_t)constrain(
+                left_motor_pwm * PIVOT_FORWARD_WHEEL_BOOST,
+                0.0f,
+                (float)MOTOR_MAX_SPEED);
+        }
+        if (right_motor_pwm > 0) {
+            right_motor_pwm = (int16_t)constrain(
+                right_motor_pwm * PIVOT_FORWARD_WHEEL_BOOST,
+                0.0f,
+                (float)MOTOR_MAX_SPEED);
+        }
+        if (left_motor_pwm < 0) {
+            left_motor_pwm = (int16_t)constrain(
+                left_motor_pwm * PIVOT_REVERSE_WHEEL_BOOST,
+                (float)-MOTOR_MAX_SPEED,
+                0.0f);
+        }
+        if (right_motor_pwm < 0) {
+            right_motor_pwm = (int16_t)constrain(
+                right_motor_pwm * PIVOT_REVERSE_WHEEL_BOOST,
+                (float)-MOTOR_MAX_SPEED,
+                0.0f);
+        }
+    }
 
 #ifdef DEBUG_MOTOR_COMMAND_STREAM
     static uint32_t last_motor_debug_time = 0;
@@ -163,7 +203,8 @@ void MotionController::update(float dt_seconds)
 #endif
 
     // If profile is finished and zero velocity requested, stop active driving
-    if (linear_profile_.isFinished() && angular_profile_.isFinished() && fabsf(desired_vel) < 1.0f)
+    if (!heading_turn_active_ && linear_profile_.isFinished() &&
+        angular_profile_.isFinished() && fabsf(desired_vel) < 1.0f)
     {
         motors.stop(true);
     }
@@ -185,6 +226,8 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
 
     float start_speed = encoders.getForwardSpeedMM_S();
     linear_profile_.start(distance_mm, start_speed, end_speed, max_speed, SEARCH_ACCEL_MM_S2, DECEL_MM_S2);
+    search_motion_active_ = max_speed <= SEARCH_SPEED_MM_S;
+    linear_motion_start_ms_ = millis();
     linear_motion_active_ = true;
     last_tick_micros_ = micros();
 
@@ -193,6 +236,7 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
     uint32_t timeout_ms = (uint32_t)((fabsf(distance_mm) / (max_speed * 0.4f)) * 1000.0f) + 1200;
 
     bool stopped_early = false;
+    uint32_t close_front_wall_since = 0;
     while (!linear_profile_.isFinished())
     {
         uint32_t now = micros();
@@ -203,16 +247,23 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
             update(dt);
         }
 
-        // Emergency front-wall collision avoidance.  Near the requested end
-        // point a wall is normal: the mouse should stop with its axle at the
-        // cell centre, not stop 20--60 mm short of it.
-        const float remaining_mm = fabsf(distance_mm) - fabsf(encoders.getAverageDistanceMM());
-        if (ir_sensors.hasFrontWall() && ir_sensors.getFrontMM() <= FRONT_WALL_STOP_MM &&
-            remaining_mm > FRONT_WALL_EARLY_STOP_REMAINING_MM)
-        {
-            Serial.println("[MOTION] Early Front Wall Stop Triggered!");
-            stopped_early = true;
-            break;
+        const float remaining_mm =
+            fabsf(distance_mm) - fabsf(encoders.getAverageDistanceMM());
+        const bool unexpected_close_wall =
+            ir_sensors.getFront() >= IR_FRONT_STOP_DIST &&
+            remaining_mm > FRONT_WALL_EARLY_STOP_REMAINING_MM;
+        if (unexpected_close_wall) {
+            if (close_front_wall_since == 0) {
+                close_front_wall_since = millis();
+            } else if (millis() - close_front_wall_since >= FRONT_WALL_STOP_CONFIRM_MS) {
+                Serial.printf("[MOTION] Close front wall detected (raw=%u, %.1f mm); stopping before contact.\n",
+                              ir_sensors.getFront(),
+                              ir_sensors.getFrontMM());
+                stopped_early = true;
+                break;
+            }
+        } else {
+            close_front_wall_since = 0;
         }
 
         if (millis() - start_time > timeout_ms)
@@ -230,6 +281,7 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
         delay(20); // Settle
     }
     linear_motion_active_ = false;
+    search_motion_active_ = false;
     return !stopped_early && linear_profile_.isFinished() &&
            fabsf(encoders.getAverageDistanceMM()) >= (fabsf(distance_mm) - MOTION_DISTANCE_TOLERANCE_MM);
 }
@@ -244,6 +296,7 @@ bool MotionController::turnInPlace(float angle_deg, float turn_speed)
 {
     centering_enabled_ = false;
     linear_motion_active_ = false;
+    heading_turn_active_ = true;
     motors.stop(true);
     delay(30);
 
@@ -276,14 +329,16 @@ bool MotionController::turnInPlace(float angle_deg, float turn_speed)
         while (err <= -180.0f)
             err += 360.0f;
 
-        // Settling condition: angle error < 1.0 deg and yaw rate < 5 dps
-        if (fabsf(err) < 1.0f && fabsf(imu.getYawRateDeg_S()) < 5.0f && (millis() - start_time > 150))
+        // Stop once the target is close and the robot is rotating slowly.
+        if (fabsf(err) < 3.0f && fabsf(imu.getYawRateDeg_S()) < 12.0f &&
+            (millis() - start_time > 150))
         {
             reached_target = true;
             break;
         }
     }
 
+    heading_turn_active_ = false;
     motors.stop(true);
     delay(30);
     if (!reached_target) {
@@ -329,6 +384,7 @@ bool MotionController::alignFrontWall(float approach_speed, uint16_t timeout_ms)
 void MotionController::emergencyStop()
 {
     linear_motion_active_ = false;
+    heading_turn_active_ = false;
     linear_profile_.stopNow();
     angular_profile_.stopNow();
     motors.stop(true);

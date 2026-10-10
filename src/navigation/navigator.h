@@ -19,8 +19,10 @@ public:
     void reset();
 
     void scanAndBuildCellManual();
+    void applyManualTurn(int8_t quarter_turns);
+    bool advanceManualCell();
     
-    // Exploration to Center (7,7)-(8,8)
+    // Exploration to the maze center
     bool exploreToCenter();
 
     // Perform at most one exploration cell step, then return to the caller.

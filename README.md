@@ -29,10 +29,10 @@ Firmware repository for the **Ratatouieee** micromouse bot, engineered for the R
 
 ```
 Micromouse-2027/
-    ├── platformio.ini               # PlatformIO Teensy 4.0 build configuration
+    ├── platformio.ini               # PlatformIO Teensy 4.0 and 3x3 debug build configurations
 ├── include/
 │   ├── config.h                 # Global hardware pins, dimensions, rates, and thresholds
-│   ├── maze_constants.h         # Standard 16x16 maze bitmasks and direction utilities
+│   ├── maze_constants.h         # Maze dimensions, bitmasks, and direction utilities
 │   └── types.h                  # Common structs (Coordinate, Pose, SensorReadings, Profiles)
 ├── src/
 │   ├── main.cpp                 # Boot sequence, gesture mode selector, serial console
@@ -47,7 +47,7 @@ Micromouse-2027/
 │   │   ├── profile.h / .cpp      # Real-time trapezoidal / S-curve motion profiling
 │   │   └── motion_controller.h/.cpp # 500 Hz closed-loop motion controller
 │   └── navigation/
-│       ├── maze.h / .cpp         # 16x16 bitpacked maze map
+│       ├── maze.h / .cpp         # Configurable-size bitpacked maze map
 │       ├── floodfill.h / .cpp    # Wavefront floodfill solver (Center & Start goals)
 │       ├── optimizer.h / .cpp    # High-speed path generator (multi-cell straight sprints)
 │       └── navigator.h / .cpp    # High-level state machine (explore, map, return, speed run)
@@ -62,8 +62,9 @@ Micromouse-2027/
    - Updates encoders, gyroscope yaw integration, analog IR distance sensors, and motor battery voltage.
    - Closed-loop linear velocity PID tracking desired velocity from the trapezoidal motion profiler.
    - Angular heading PID fusing target heading, IMU gyro rate, and IR wall-centering error.
+   - The default PlatformIO environment is `teensy40-debug-3x3`: manual 3x3 maze mapping with motors and IMU disabled. The motor battery can remain off; power the Teensy and IR sensors from USB/component power. Use `pio run -e teensy40` for the regular 16x16 build.
 2. **Autonomous Maze Exploration**:
-   - Wavefront BFS floodfill dynamically updates distances to center `(7,7)-(8,8)`.
+   - Wavefront BFS floodfill dynamically updates distances to the center cells for the configured maze size.
    - Preferential straight-line movement tie-breaker minimizes turn overhead.
    - In-cell front wall squaring nulls longitudinal and angular odometry drift.
 3. **Optimized Speed Run**:
@@ -87,7 +88,10 @@ Hold your hand in front of the front sensor at boot:
 - `a`: Full Autonomous Run
 - `c`: In-Cell Sensor Auto-Calibration
 - `d`: Toggle Real-Time Diagnostic Telemetry Stream
-- `m`: Print 16x16 ASCII Maze Map
+- `m`: Print ASCII Maze Map
 - `t`: Test 90° In-Place Turn
 - `w`: Test 1-Cell Forward Move (180 mm)
 - `s`: Emergency Stop
+
+### Manual Maze Debug Build (`teensy40-debug-3x3`):
+Open the Serial Monitor at 115200 baud and set its line ending to Newline or Both NL & CR. The debug build does not initialize or use the IMU, and waits for a command before each scan. Physically move the robot first, then enter `s` to record one straight cell, `r` for 90° clockwise, `l` for 90° counterclockwise, or `ll` for 180°, and press Enter. The turn commands update the logical heading while keeping the current cell; `s` advances the logical position by one cell. These commands apply only to the manual debug build; in the regular build, `r` still means Return to Start.

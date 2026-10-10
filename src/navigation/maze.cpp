@@ -107,7 +107,7 @@ uint8_t Maze::getCellRaw(int8_t x, int8_t y) const {
 }
 
 void Maze::printAscii() const {
-    Serial.println("\n--- MAZE MAP (16x16) ---");
+    Serial.printf("\n--- MAZE MAP (%dx%d) ---\n", MAZE_WIDTH, MAZE_HEIGHT);
     for (int8_t y = MAZE_HEIGHT - 1; y >= 0; --y) {
         // Top horizontal walls
         for (int8_t x = 0; x < MAZE_WIDTH; ++x) {

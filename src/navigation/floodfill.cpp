@@ -28,11 +28,15 @@ Floodfill::Floodfill(const Maze& maze)
 
 void Floodfill::setGoalToCenter() {
     memset(is_goal_, 0, sizeof(is_goal_));
-    // Standard 16x16 center square
-    is_goal_[7][7] = true;
-    is_goal_[7][8] = true;
-    is_goal_[8][7] = true;
-    is_goal_[8][8] = true;
+    const int8_t min_x = (MAZE_WIDTH - 1) / 2;
+    const int8_t max_x = MAZE_WIDTH / 2;
+    const int8_t min_y = (MAZE_HEIGHT - 1) / 2;
+    const int8_t max_y = MAZE_HEIGHT / 2;
+    for (int8_t x = min_x; x <= max_x; ++x) {
+        for (int8_t y = min_y; y <= max_y; ++y) {
+            is_goal_[x][y] = true;
+        }
+    }
 }
 
 void Floodfill::setGoalToStart() {

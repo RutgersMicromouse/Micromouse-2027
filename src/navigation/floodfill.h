@@ -7,7 +7,7 @@
 
 // =============================================================================
 // Wavefront Floodfill Maze Solver
-// Supports Center Goal (7,7)-(8,8), Start Goal (0,0), and Custom Waypoints
+// Supports center, start, and custom waypoint goals
 // =============================================================================
 
 class Floodfill {

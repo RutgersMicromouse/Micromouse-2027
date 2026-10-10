@@ -51,14 +51,23 @@
 // Motoron Motor Channels
 #define MOTOR_LEFT_CHANNEL     1     // M1A / M1B
 #define MOTOR_RIGHT_CHANNEL    2     // M2A / M2B
-#define MOTOR_MAX_SPEED        800   // Max Motoron speed command (-800 to 800)
+#define MOTOR_MAX_SPEED        300   // Max Motoron speed command (-800 to 800)
 #define MOTOR_COMMAND_SCALE    1.0f // PID output is already limited to Motoron's command range
-#define MOTOR_RIGHT_COMPENSATION 1.0f // Keep both motor channels on the same command scale
+#define MOTOR_LEFT_COMPENSATION 1.0f
+#define MOTOR_RIGHT_COMPENSATION 1.0f // Keep both sides on equal command scaling until encoder-calibrated
+#define MOTOR_ACCELERATION_NORMAL 400
+
+// Uncomment only when intentionally running the automatic one-wheel-at-a-time test at boot.
+#define CALIBRATE_MOTORS
+
 // Positive software speed must move both wheels forward.  The left motor uses
 // the original positive channel polarity; the right motor is mirror-mounted.
 // Change only the affected value between +1 and -1 after a lifted-wheel test.
 #define MOTOR_LEFT_DIRECTION   1
-#define MOTOR_RIGHT_DIRECTION  -1
+#define MOTOR_RIGHT_DIRECTION  1
+#define MOVING_TURN_STEERING_BOOST 1.20f // Extra steering authority for left and right corrections while moving
+#define PIVOT_FORWARD_WHEEL_BOOST 1.25f // Match the extra authority applied to the reversing pivot wheel
+#define PIVOT_REVERSE_WHEEL_BOOST 1.25f // Extra reverse authority on the inner wheel during either pivot direction
 // During a forward left correction, the right wheel needs extra authority on
 // this chassis.  This is applied only to translating turns, never pivots.
 #define LEFT_TURN_RIGHT_WHEEL_BOOST  1.0f
@@ -101,18 +110,21 @@
 #define CONTROL_DT_S           (1.0f / CONTROL_FREQ_HZ) // 0.002 seconds (2 ms)
 
 // Velocity & Acceleration Profiles
-#define SEARCH_SPEED_MM_S      45.0f   // Slow but high enough to overcome drivetrain friction
-#define FAST_SPEED_MM_S        140.0f  // Reduced speed-run velocity
-#define MAX_SPEED_MM_S         200.0f  // Reduced physical ceiling
+#define SEARCH_SPEED_MM_S      90.0f   // Desired steady exploration crawl speed
+#define FAST_SPEED_MM_S        45.0f   // Keep optimized maze runs at a cautious speed
+#define MAX_SPEED_MM_S         140.0f  // Reduced physical ceiling
 #define MIN_SPEED_MM_S         20.0f
 
-#define SEARCH_ACCEL_MM_S2     120.0f  // Gentle acceleration for wall following
+#define SEARCH_ACCEL_MM_S2     200.0f  // Reach crawl speed promptly to overcome static friction
 #define FAST_ACCEL_MM_S2       500.0f  // Reduced speed-run acceleration
-#define DECEL_MM_S2            360.0f  // Controlled deceleration
+#define DECEL_MM_S2            120.0f  // Gentle deceleration for slow maze movement
+#define SEARCH_BREAKAWAY_BOOST_COMMAND 4 // Small equal boost to both wheels when a search move starts
+#define SEARCH_BREAKAWAY_BOOST_MS 180 // Limit the breakaway boost to the initial ramp
 
 #define TURN_SPEED_DEG_S       30.0f   // Deliberately slow in-place pivot turn rate
-#define TURN_MAX_MOTOR_COMMAND 100.0f  // Safe pivot-command limit for initial tests
+#define TURN_MAX_MOTOR_COMMAND 160.0f // Stronger pivot command for reliable corner turns
 #define TURN_ACCEL_DEG_S2      400.0f  // Reduced angular acceleration
+#define TURN_YAW_RATE_DAMPING  0.20f  // Counter-rotates against angular momentum near the target
 
 #define ENABLE_IR_WALL_CENTERING
 
@@ -134,13 +146,10 @@
 // Millimeter Distance Thresholds
 #define WALL_DETECT_DIST_MM    115.0f  // Side-wall guide validity range
 #define NOMINAL_SIDE_WALL_MM   49.0f   // Distance from side sensor to wall when centered in cell
-#define FRONT_WALL_STOP_MM     60.0f   // Stop with additional clearance from a front wall
+#define FRONT_WALL_EARLY_STOP_REMAINING_MM 25.0f
+#define FRONT_WALL_STOP_CONFIRM_MS  40  // Require a persistent close reading to reject sensor noise
 #define IR_FRONT_STOP_DIST     420     // Front raw ADC reading when at front stop distance
 
 // A move is considered complete only after the encoder-measured travel reaches
 // this tolerance.  This compensates for one/two tick quantization error.
 #define MOTION_DISTANCE_TOLERANCE_MM  2.0f
-// Do not classify the expected wall at the end of a cell as a collision.  A
-// front sensor placed forward of the axle normally reads about this close when
-// the axle is centered in a walled cell.
-#define FRONT_WALL_EARLY_STOP_REMAINING_MM  25.0f

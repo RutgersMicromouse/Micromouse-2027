@@ -85,15 +85,14 @@ void IMUDriver::update(float dt_seconds, float encoder_yaw_rate, float linear_sp
         accel_x_g_ = (float)lsm6_.a.x * accel_scale_g_;
         accel_y_g_ = (float)lsm6_.a.y * accel_scale_g_;
 
-        // Zero-Velocity Update (ZUPT):
-        // When robot is physically stopped (linear velocity < 3 mm/s and encoder rate < 0.5 deg/s),
-        // slowly adapt bias to cancel any thermal drift
+        // Zero-Velocity Update (ZUPT): adapt bias when encoder readings indicate
+        // that the robot is stationary.
         bool is_stopped = (fabsf(linear_speed_mm_s) < 3.0f) && (fabsf(encoder_yaw_rate) < 0.5f);
         if (is_stopped) {
             gyro_bias_z_ = 0.995f * gyro_bias_z_ + 0.005f * raw_gz_dps;
         }
 
-        // Integrate yaw rate into heading
+        // Integrate yaw rate into heading.
         heading_deg_ += yaw_rate_dps_ * dt_seconds;
 
         // Complementary drift correction using differential wheel odometry

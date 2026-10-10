@@ -37,10 +37,10 @@ bool MotorController::begin() {
 
     // Configure motor settings:
     // Configure max acceleration & deceleration to ensure smooth current draw from 12V regulator
-    motoron_.setMaxAcceleration(MOTOR_LEFT_CHANNEL, 400);
-    motoron_.setMaxDeceleration(MOTOR_LEFT_CHANNEL, 400);
-    motoron_.setMaxAcceleration(MOTOR_RIGHT_CHANNEL, 400);
-    motoron_.setMaxDeceleration(MOTOR_RIGHT_CHANNEL, 400);
+    motoron_.setMaxAcceleration(MOTOR_LEFT_CHANNEL, MOTOR_ACCELERATION_NORMAL);
+    motoron_.setMaxDeceleration(MOTOR_LEFT_CHANNEL, MOTOR_ACCELERATION_NORMAL);
+    motoron_.setMaxAcceleration(MOTOR_RIGHT_CHANNEL, MOTOR_ACCELERATION_NORMAL);
+    motoron_.setMaxDeceleration(MOTOR_RIGHT_CHANNEL, MOTOR_ACCELERATION_NORMAL);
 
     // Clear any pending error flags
     motoron_.clearMotorFault();
@@ -54,7 +54,7 @@ bool MotorController::begin() {
 void MotorController::setSpeeds(int16_t left_speed, int16_t right_speed) {
     if (!is_initialized_) return;
 
-    left_speed = scaledMotorCommand(left_speed, 1.0f);
+    left_speed = scaledMotorCommand(left_speed, MOTOR_LEFT_COMPENSATION);
     right_speed = scaledMotorCommand(right_speed, MOTOR_RIGHT_COMPENSATION);
 
     motoron_.setSpeed(MOTOR_LEFT_CHANNEL, MOTOR_LEFT_DIRECTION * left_speed);
@@ -65,7 +65,7 @@ void MotorController::setSpeeds(int16_t left_speed, int16_t right_speed) {
 
 void MotorController::setLeftSpeed(int16_t speed) {
     if (!is_initialized_) return;
-    speed = scaledMotorCommand(speed, 1.0f);
+    speed = scaledMotorCommand(speed, MOTOR_LEFT_COMPENSATION);
     motoron_.setSpeed(MOTOR_LEFT_CHANNEL, MOTOR_LEFT_DIRECTION * speed);
 }
 

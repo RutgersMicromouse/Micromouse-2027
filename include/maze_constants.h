@@ -6,8 +6,12 @@
 // Micromouse Maze Constants & Direction Utilities
 // =============================================================================
 
+#ifndef MAZE_WIDTH
 #define MAZE_WIDTH             16
+#endif
+#ifndef MAZE_HEIGHT
 #define MAZE_HEIGHT            16
+#endif
 #define TOTAL_CELLS            (MAZE_WIDTH * MAZE_HEIGHT)
 #define DIST_INFINITY          0xFFFF
 
