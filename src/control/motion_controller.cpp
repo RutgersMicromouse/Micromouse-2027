@@ -5,7 +5,7 @@ MotionController motion;
 MotionController::MotionController()
     : target_heading_deg_(0.0f),
       start_distance_mm_(0.0f),
-      wall_alignment_gain_(0.5f),
+      wall_alignment_gain_(0.65f),
       centering_enabled_(true),
       linear_motion_active_(false),
       search_motion_active_(false),
@@ -111,6 +111,15 @@ void MotionController::update(float dt_seconds)
     // Sustain crawl speed only during accel/cruise, but allow complete taper down to 0 during deceleration
     if (!linear_profile_.isDecelerating() && desired_vel > 0.0f && linear_cmd < MOTOR_MIN_PWM) {
         linear_cmd = MOTOR_MIN_PWM;
+    }
+    // Anti-stall crawl floor: if decelerating toward target but physical speed drops near stall (< 10 mm/s)
+    // while remaining distance is significant, sustain minimum operational command so it doesn't freeze in the cell
+    if (linear_profile_.isDecelerating() && desired_vel > 0.0f && current_vel < 10.0f) {
+        float traveled_dist = fabsf(encoders.getAverageDistanceMM());
+        float rem = fabsf(linear_profile_.getTotalDistance()) - traveled_dist;
+        if (rem > MOTION_DISTANCE_TOLERANCE_MM && linear_cmd < MOTOR_MIN_PWM) {
+            linear_cmd = MOTOR_MIN_PWM;
+        }
     }
     if (search_motion_active_ && desired_vel > 0.0f && !linear_profile_.isDecelerating() &&
         millis() - linear_motion_start_ms_ < SEARCH_BREAKAWAY_BOOST_MS) {
@@ -223,6 +232,7 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
 
     bool reached_cell_front_wall = false;
     bool emergency_stopped = false;
+    uint8_t front_stop_confirm_count = 0;
 
     while (!linear_profile_.isFinished())
     {
@@ -243,15 +253,27 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
             break;
         }
 
+        // 1b. Settled arrival: if within tolerance and chassis has come to physical rest
+        if (traveled_mm >= (fabsf(distance_mm) - MOTION_DISTANCE_TOLERANCE_MM) && encoders.getForwardSpeedMM_S() < 3.0f && millis() - start_time > 400) {
+            break;
+        }
+
         // 2. Front wall arrival stop:
         // When approaching a front wall, stop at cell center standoff (~50 mm from wall).
+        // Requires persistent 2-cycle confirmation to reject optical glint / noise spikes.
         if (front_adc >= IR_FRONT_STOP_DIST || front_adc >= IR_FRONT_CRITICAL_DIST) {
             if (traveled_mm >= CELL_REACHED_THRESHOLD_MM) {
-                Serial.printf("[MOTION] Front wall reached (raw=%u, %.1f mm at traveled=%.1f mm). Cell arrival confirmed!\n",
-                              front_adc, ir_sensors.getFrontMM(), traveled_mm);
-                reached_cell_front_wall = true;
-                break;
+                if (front_stop_confirm_count == 0) {
+                    front_stop_confirm_count = 1;
+                } else {
+                    Serial.printf("[MOTION] Front wall confirmed (raw=%u, %.1f mm at traveled=%.1f mm). Cell arrival confirmed!\n",
+                                  front_adc, ir_sensors.getFrontMM(), traveled_mm);
+                    reached_cell_front_wall = true;
+                    break;
+                }
             }
+        } else {
+            front_stop_confirm_count = 0;
         }
 
         if (millis() - start_time > timeout_ms)
@@ -262,6 +284,7 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
         }
     }
 
+    bool profile_finished = linear_profile_.isFinished();
     linear_profile_.stopNow();
     motors.stop(true);
     delay(60); // Settle
@@ -273,7 +296,12 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
     float final_traveled_mm = fabsf(encoders.getAverageDistanceMM());
     uint16_t final_front_adc = ir_sensors.getFront();
 
-    bool dist_ok = linear_profile_.isFinished() ||
+    if (emergency_stopped) {
+        Serial.printf("[MOTION] Move aborted due to timeout (traveled=%.1f mm).\n", final_traveled_mm);
+        return false;
+    }
+
+    bool dist_ok = profile_finished ||
                    (final_traveled_mm >= (fabsf(distance_mm) - MOTION_DISTANCE_TOLERANCE_MM));
     bool wall_ok = reached_cell_front_wall || 
                    (final_front_adc >= IR_WALL_DETECT_FRONT && final_traveled_mm >= CELL_REACHED_THRESHOLD_MM);
@@ -287,11 +315,6 @@ bool MotionController::moveForward(float distance_mm, float max_speed, float end
 
     if (wall_ok || dist_ok) {
         return true;
-    }
-
-    if (emergency_stopped) {
-        Serial.printf("[MOTION] Move aborted due to timeout (traveled=%.1f mm).\n", final_traveled_mm);
-        return false;
     }
 
     return false;
@@ -314,7 +337,7 @@ bool MotionController::turnInPlace(float angle_deg)
     linear_profile_.stopNow();
     angular_profile_.stopNow();
     motors.stop(true);
-    delay(20);
+    delay(35);
 
     const float start_heading = imu.getHeadingDeg();
     float prev_heading = start_heading;
@@ -369,6 +392,7 @@ bool MotionController::turnInPlace(float angle_deg)
 
             // 4. Hard Safety Bounding:
             // Physical wheel travel CANNOT exceed target angle by more than 1.5 degrees.
+            // This strictly guarantees that the robot never overshoots into a 270-degree rotation.
             if (fabsf(enc_accumulated_rotation) >= target_abs_angle + 1.5f) {
                 break;
             }
@@ -393,7 +417,7 @@ bool MotionController::turnInPlace(float angle_deg)
             }
 
             // Condition B: Chassis has completed turning and come to physical rest (yaw rate < 4 dps)
-            if (millis() - start_time > 200 && abs_err <= 4.0f && fabsf(current_yaw_rate) < 4.0f) {
+            if (millis() - start_time > 200 && abs_err <= 3.5f && fabsf(current_yaw_rate) < 4.0f) {
                 break; // Target achieved and robot has come to rest; proceed immediately
             }
 
@@ -417,16 +441,16 @@ bool MotionController::turnInPlace(float angle_deg)
 
             // Feedforward + Breakaway friction assist + Rate damping + Position trim
             float ff = target_yaw_rate * 0.30f;
-            // Disable breakaway friction PWM once within 4.5 degrees so it cannot overshoot
-            float friction_pwm = (fabsf(current_yaw_rate) < 18.0f && abs_err > 4.5f)
+            // Disable breakaway friction PWM once within 3.0 degrees so it cannot overshoot
+            float friction_pwm = (fabsf(current_yaw_rate) < 18.0f && abs_err > 3.0f)
                 ? (current_turn_sign * TURN_BREAKAWAY_PWM) : 0.0f;
             float rate_correction = 0.26f * rate_error;
             float pos_trim = constrain(current_turn_sign * fminf(abs_err, 35.0f) * 0.50f, -25.0f, 25.0f);
 
             float steer_cmd = ff + friction_pwm + rate_correction + pos_trim;
 
-            // Anti-stall guarantee: when not yet moving and angle error is significant, sustain breakaway command
-            if (abs_err > 5.0f && fabsf(current_yaw_rate) < 12.0f) {
+            // Anti-stall guarantee: sustain breakaway command until within 3.5 degrees of target
+            if (abs_err > 3.5f && fabsf(current_yaw_rate) < 12.0f) {
                 if (fabsf(steer_cmd) < TURN_BREAKAWAY_PWM) {
                     steer_cmd = current_turn_sign * TURN_BREAKAWAY_PWM;
                 }

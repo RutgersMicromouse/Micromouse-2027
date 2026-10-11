@@ -117,19 +117,29 @@ void IRSensorArray::update() {
     prev_right_side_ = right_side_signal;
 
     // 6. Estimate lateral offset from paired side-wall distances.
-    bool valid_front_left = readings_.front_left >= thresh_side_ && readings_.front_left_mm < WALL_DETECT_DIST_MM;
-    bool valid_rear_left = readings_.rear_left >= thresh_side_ && readings_.rear_left_mm < WALL_DETECT_DIST_MM;
-    bool valid_front_right = readings_.front_right >= thresh_side_ && readings_.front_right_mm < WALL_DETECT_DIST_MM;
-    bool valid_rear_right = readings_.rear_right >= thresh_side_ && readings_.rear_right_mm < WALL_DETECT_DIST_MM;
+    const uint16_t guide_floor_adc = (thresh_side_ > 35) ? (thresh_side_ - 35) : 155;
 
-    // Both front and rear sensors must confirm the wall on that side to prevent corner posts from corrupting guidance
-    bool valid_left_guide = valid_front_left && valid_rear_left;
-    bool valid_right_guide = valid_front_right && valid_rear_right;
+    // Both front and rear sensors must confirm wall presence to reject isolated corner posts.
+    // Requiring at least one sensor >= thresh_side_ and the other >= guide_floor_adc accommodates
+    // slight chassis yaw angles without losing wall tracking.
+    bool valid_left_guide = ((readings_.front_left >= thresh_side_ && readings_.rear_left >= guide_floor_adc) ||
+                             (readings_.rear_left >= thresh_side_ && readings_.front_left >= guide_floor_adc)) &&
+                            readings_.front_left_mm < WALL_DETECT_DIST_MM &&
+                            readings_.rear_left_mm < WALL_DETECT_DIST_MM;
+
+    bool valid_right_guide = ((readings_.front_right >= thresh_side_ && readings_.rear_right >= guide_floor_adc) ||
+                              (readings_.rear_right >= thresh_side_ && readings_.front_right >= guide_floor_adc)) &&
+                             readings_.front_right_mm < WALL_DETECT_DIST_MM &&
+                             readings_.rear_right_mm < WALL_DETECT_DIST_MM;
 
     float left_dist = 0.5f * (readings_.front_left_mm + readings_.rear_left_mm);
     float right_dist = 0.5f * (readings_.front_right_mm + readings_.rear_right_mm);
 
+    float ref_dist = (nominal_side_dist_mm_ >= 38.0f && nominal_side_dist_mm_ <= 60.0f)
+                     ? nominal_side_dist_mm_ : NOMINAL_SIDE_WALL_MM;
+
     if (valid_left_guide && valid_right_guide) {
+        // Dual-wall centering: balance lateral distance between left and right walls
         float dist_diff = right_dist - left_dist;
         // Narrow deadband to +/- 1.2 mm so robot centers tightly in corridor
         if (fabsf(dist_diff) < 1.2f) {
@@ -139,12 +149,44 @@ void IRSensorArray::update() {
         } else {
             readings_.centering_error = constrain((dist_diff + 1.2f) / 12.0f, -1.0f, 0.0f);
         }
+
+        // Dynamically track nominal center distance in symmetric corridors
+        float current_nominal = 0.5f * (left_dist + right_dist);
+        if (current_nominal >= 40.0f && current_nominal <= 58.0f) {
+            nominal_side_dist_mm_ = 0.98f * nominal_side_dist_mm_ + 0.02f * current_nominal;
+        }
     } else if (valid_left_guide && !valid_right_guide) {
-        // Single left wall: do not steer into the right opening; maintain straight heading.
-        readings_.centering_error = 0.0f;
+        // Single left wall: maintain nominal standoff (ref_dist ~49mm) from left wall.
+        // If left_dist < ref_dist (too close to left): error > 0 -> positive centering_error -> steers RIGHT.
+        // If left_dist > ref_dist (too far from left): error < 0 -> negative centering_error -> steers LEFT.
+        if (left_dist < 80.0f) {
+            float err_left = ref_dist - left_dist;
+            if (fabsf(err_left) < 1.0f) {
+                readings_.centering_error = 0.0f;
+            } else if (err_left > 1.0f) {
+                readings_.centering_error = constrain((err_left - 1.0f) / 7.0f, 0.0f, 1.0f);
+            } else {
+                readings_.centering_error = constrain((err_left + 1.0f) / 7.0f, -1.0f, 0.0f);
+            }
+        } else {
+            readings_.centering_error = 0.0f;
+        }
     } else if (valid_right_guide && !valid_left_guide) {
-        // Single right wall: do not steer into the left opening; maintain straight heading.
-        readings_.centering_error = 0.0f;
+        // Single right wall: maintain nominal standoff (ref_dist ~49mm) from right wall.
+        // If right_dist < ref_dist (too close to right): error < 0 -> negative centering_error -> steers LEFT.
+        // If right_dist > ref_dist (too far from right): error > 0 -> positive centering_error -> steers RIGHT.
+        if (right_dist < 80.0f) {
+            float err_right = right_dist - ref_dist;
+            if (fabsf(err_right) < 1.0f) {
+                readings_.centering_error = 0.0f;
+            } else if (err_right > 1.0f) {
+                readings_.centering_error = constrain((err_right - 1.0f) / 7.0f, 0.0f, 1.0f);
+            } else {
+                readings_.centering_error = constrain((err_right + 1.0f) / 7.0f, -1.0f, 0.0f);
+            }
+        } else {
+            readings_.centering_error = 0.0f;
+        }
     } else {
         readings_.centering_error = 0.0f;
     }
@@ -153,8 +195,8 @@ void IRSensorArray::update() {
     // Only intervene if chassis is dangerously close to scraping a wall (< 36 mm).
     // Nominal centered standoff is 49 mm. A 13 mm buffer prevents phantom steering at openings.
     float min_left = 999.0f;
-    if (valid_front_left) min_left = fminf(min_left, readings_.front_left_mm);
-    if (valid_rear_left)  min_left = fminf(min_left, readings_.rear_left_mm);
+    if (readings_.front_left >= thresh_side_) min_left = fminf(min_left, readings_.front_left_mm);
+    if (readings_.rear_left >= thresh_side_)  min_left = fminf(min_left, readings_.rear_left_mm);
     if (min_left < 36.0f) {
         float repulse_right = (36.0f - min_left) / 8.0f; // Gently steer away from wall
         if (repulse_right > readings_.centering_error) {
@@ -163,8 +205,8 @@ void IRSensorArray::update() {
     }
 
     float min_right = 999.0f;
-    if (valid_front_right) min_right = fminf(min_right, readings_.front_right_mm);
-    if (valid_rear_right)  min_right = fminf(min_right, readings_.rear_right_mm);
+    if (readings_.front_right >= thresh_side_) min_right = fminf(min_right, readings_.front_right_mm);
+    if (readings_.rear_right >= thresh_side_)  min_right = fminf(min_right, readings_.rear_right_mm);
     if (min_right < 36.0f) {
         float repulse_left = (36.0f - min_right) / 8.0f; // Gently steer away from wall
         if (-repulse_left < readings_.centering_error) {
@@ -177,12 +219,12 @@ void IRSensorArray::update() {
     // A yawed robot sees different distances at the front and rear sensors.
     float alignment_error = 0.0f;
     uint8_t alignment_sides = 0;
-    if (valid_front_left && valid_rear_left) {
+    if (valid_left_guide) {
         alignment_error += atan2f(readings_.front_left_mm - readings_.rear_left_mm,
                                   SIDE_SENSOR_SPACING_MM) * (180.0f / 3.1415926535f);
         ++alignment_sides;
     }
-    if (valid_front_right && valid_rear_right) {
+    if (valid_right_guide) {
         alignment_error -= atan2f(readings_.front_right_mm - readings_.rear_right_mm,
                                   SIDE_SENSOR_SPACING_MM) * (180.0f / 3.1415926535f);
         ++alignment_sides;

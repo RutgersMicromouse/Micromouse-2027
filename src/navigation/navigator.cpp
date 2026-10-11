@@ -165,8 +165,48 @@ Navigator::StepResult Navigator::stepExplore() {
     }
 
     if (next_dir == DIR_INVALID) {
-        Serial.printf("[NAV ERROR] No route to goal in current wall map from cell (%d,%d), heading=%d, distance=%u\n",
-                      current_pos_.x, current_pos_.y, current_heading_, curr_dist);
+        Serial.printf("[FLOODFILL] No direct gradient to goal from cell (%d,%d) (dist=%u). Initiating exploration recovery...\n",
+                      current_pos_.x, current_pos_.y, curr_dist);
+
+        // Pass 0: Try unvisited open neighbors (Straight, Right, Left, Turn Around)
+        // Pass 1: Backtrack into any accessible visited neighbor (Reverse, Right, Left, Straight)
+        const int8_t pass0_prefs[4] = {0, 1, -1, 2};
+        const int8_t pass1_prefs[4] = {2, 1, -1, 0};
+
+        for (int i = 0; i < 4; ++i) {
+            Direction cand = relativeToAbsolute(current_heading_, pass0_prefs[i]);
+            if (!maze_.hasWall(current_pos_.x, current_pos_.y, cand)) {
+                int8_t nx = current_pos_.x + dxFromDir(cand);
+                int8_t ny = current_pos_.y + dyFromDir(cand);
+                if (Maze::isValidCoordinate(nx, ny) && !maze_.isVisited(nx, ny)) {
+                    next_dir = cand;
+                    Serial.printf("[FLOODFILL RECOVERY] Found unvisited corridor in direction %d -> (%d,%d)\n",
+                                  next_dir, nx, ny);
+                    break;
+                }
+            }
+        }
+
+        if (next_dir == DIR_INVALID) {
+            for (int i = 0; i < 4; ++i) {
+                Direction cand = relativeToAbsolute(current_heading_, pass1_prefs[i]);
+                if (!maze_.hasWall(current_pos_.x, current_pos_.y, cand)) {
+                    int8_t nx = current_pos_.x + dxFromDir(cand);
+                    int8_t ny = current_pos_.y + dyFromDir(cand);
+                    if (Maze::isValidCoordinate(nx, ny)) {
+                        next_dir = cand;
+                        Serial.printf("[FLOODFILL RECOVERY] Backtracking through direction %d -> (%d,%d)\n",
+                                      next_dir, nx, ny);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (next_dir == DIR_INVALID) {
+        Serial.printf("[NAV ERROR] Robot is physically trapped on all 4 sides at cell (%d,%d)!\n",
+                      current_pos_.x, current_pos_.y);
         motion.emergencyStop();
         return StepResult::NoRoute;
     }
@@ -245,37 +285,28 @@ bool Navigator::exploreToCenter() {
     solver_.setGoalToCenter();
     solver_.recalculate();
 
-    // Diagnostic in-place 360-degree turn in the start square (0, 0)
-    // before moving forward with the Stage 1 search algorithm.
-    if (current_pos_.x == 0 && current_pos_.y == 0) {
-        Serial.println("\n[DIAGNOSTIC] Executing 360-degree in-place turn in start square (0, 0)...");
-        digitalWrite(PIN_STATUS_LED, HIGH);
-        delay(400);
+    ir_sensors.flushFilter(8);
 
-        motion.turnInPlace(-360.0f);
-
-        digitalWrite(PIN_STATUS_LED, LOW);
-        delay(250);
-
-        // Stabilize start cell heading and sensors facing North (0.0 deg)
-        imu.resetHeading(0.0f);
-        motion.setTargetHeading(0.0f);
-        encoders.reset();
-        ir_sensors.flushFilter(8);
-
-        Serial.println("[DIAGNOSTIC] 360-degree turn complete! Proceeding with Stage 1 search forward...\n");
-    }
 
     while (!solver_.isAtGoal(current_pos_.x, current_pos_.y)) {
         StepResult result = stepExplore();
         if (result == StepResult::GoalReached) break;
-        if (result != StepResult::Continue) return false;
+        if (result != StepResult::Continue) {
+            Serial.printf("[NAV] Exploration paused at cell (%d,%d) due to result code %d.\n",
+                          current_pos_.x, current_pos_.y, (int)result);
+            return false;
+        }
         delay(60); // Deliberate square-by-square cadence
     }
 
     // Goal reached! Scan the center cell walls
     scanCurrentCell();
     maze_.printAscii();
+
+    Serial.println("\n[NAV SUCCESS] =======================================");
+    Serial.printf("[NAV SUCCESS] CENTER GOAL REACHED at cell (%d, %d)!\n", current_pos_.x, current_pos_.y);
+    Serial.println("[NAV SUCCESS] Center exploration Stage 1 complete.");
+    Serial.println("[NAV SUCCESS] =======================================\n");
 
     // Success indicator: blink LED rapidly
     for (int i = 0; i < 6; ++i) {

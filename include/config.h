@@ -170,7 +170,7 @@
 #define IR_FRONT_STOP_DIST     310     // Cell-center stop threshold when approaching front wall
 #define IR_FRONT_CRITICAL_DIST 365     // Critical proximity threshold (~43 mm from sensor, bumper ~20 mm)
 #define FRONT_WALL_STOP_CONFIRM_MS 10  // Fast confirmation (10 ms = 5 control cycles)
-#define CELL_REACHED_THRESHOLD_MM 35.0f // Traveled distance threshold to confirm cell arrival
+#define CELL_REACHED_THRESHOLD_MM 110.0f // Traveled distance threshold (>=110mm) to confirm cell arrival before front wall stop
 
-// Motion completion tolerance in mm (matches physical encoder quantization)
-#define MOTION_DISTANCE_TOLERANCE_MM  1.5f
+// Motion completion tolerance in mm (matches physical encoder quantization & rolling settling)
+#define MOTION_DISTANCE_TOLERANCE_MM  5.0f

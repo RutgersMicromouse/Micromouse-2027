@@ -29,7 +29,7 @@ public:
     // High-Level Motion Primitives (Blocking with real-time update loop)
     bool moveForward(float distance_mm, float max_speed = SEARCH_SPEED_MM_S,
                      float end_speed = 0.0f, bool allow_centering = true,
-                     float wall_alignment_gain = 0.5f);
+                     float wall_alignment_gain = 0.65f);
 
     bool moveForwardCells(int num_cells, float max_speed = SEARCH_SPEED_MM_S,
                           float end_speed = 0.0f, bool allow_centering = true);
