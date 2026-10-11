@@ -60,6 +60,11 @@ public:
     // Fraction of the SPEEDRUN_* speeds and accelerations the next speed run uses (speed tiers)
     void setSpeedScale(float scale) { speed_scale_ = scale; }
 
+    // Millimetres added to every straight of a speed run (negative = shorter), set by hand when
+    // the robot stops past or short of the cell centres. See Actions::adjustStraightTrim.
+    void setStraightTrimMm(float trim_mm) { straight_trim_mm_ = trim_mm; }
+    float getStraightTrimMm() const { return straight_trim_mm_; }
+
     // After a search: true if the shortest possible route to the centre runs only through cells
     // the robot has seen, i.e. no further exploring can find a shorter one
     bool isBestRouteExplored() const { return best_route_explored_; }
@@ -112,6 +117,7 @@ private:
     void saveMazeIfChanged();
 
     float speed_scale_;
+    float straight_trim_mm_ = 0.0f;
     bool best_route_explored_;
     bool maze_changed_;          // New cells seen since the map was last written to flash
 

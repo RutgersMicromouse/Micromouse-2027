@@ -70,8 +70,11 @@ float Navigator::planSpeedRun(const Coordinate* path, uint8_t path_len, bool use
     // Emits the pending straight, ending at `exit_speed`
     auto driveStraight = [&](float exit_speed) {
         if (pending > 1.0f) {
-            pushSubCommand(ACTION_MOVE_DISTANCE, pending, cruise, accel, true, speed, exit_speed);
-            time_s += moveTime(pending, cruise, accel, speed, exit_speed);
+            // (the hand-set trim: a few millimetres more or less on every straight, never so much
+            // that a straight all but disappears)
+            const float length = fmaxf(pending + straight_trim_mm_, pending * 0.5f);
+            pushSubCommand(ACTION_MOVE_DISTANCE, length, cruise, accel, true, speed, exit_speed);
+            time_s += moveTime(length, cruise, accel, speed, exit_speed);
         }
         pending = 0.0f;
         speed = exit_speed;

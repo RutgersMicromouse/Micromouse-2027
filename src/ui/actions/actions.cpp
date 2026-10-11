@@ -1,4 +1,5 @@
 #include <functional>
+#include <Preferences.h>
 #include "robot.h"
 #include "ui/status_led/status_led.h"
 #include "ui/actions/actions.h"
@@ -231,6 +232,40 @@ bool setMazeSize(uint8_t size) {
     (void)size;
     return false; // This build is fixed at one size
 #endif
+}
+
+static int s_straight_trim_mm = 0;
+
+int getStraightTrim() {
+    return s_straight_trim_mm;
+}
+
+void loadStraightTrim() {
+    Preferences prefs;
+    if (prefs.begin("hand_cfg", true)) {
+        s_straight_trim_mm = constrain(prefs.getInt("trim", 0), -STRAIGHT_TRIM_LIMIT_MM, STRAIGHT_TRIM_LIMIT_MM);
+        prefs.end();
+    }
+    g_navigator->setStraightTrimMm((float)s_straight_trim_mm);
+    if (s_straight_trim_mm != 0) {
+        Serial.printf("[UI] Straight trim from flash: %+d mm on every speed-run straight.\n", s_straight_trim_mm);
+    }
+}
+
+int adjustStraightTrim(int delta_mm) {
+    if (isRunActive()) return s_straight_trim_mm;
+    s_straight_trim_mm = constrain(s_straight_trim_mm + delta_mm, -STRAIGHT_TRIM_LIMIT_MM, STRAIGHT_TRIM_LIMIT_MM);
+    {
+        NavigatorLock lock;
+        g_navigator->setStraightTrimMm((float)s_straight_trim_mm);
+    }
+    Preferences prefs;
+    if (prefs.begin("hand_cfg", false)) {
+        prefs.putInt("trim", s_straight_trim_mm);
+        prefs.end();
+    }
+    Serial.printf("[UI] Straight trim is now %+d mm on every speed-run straight (saved).\n", s_straight_trim_mm);
+    return s_straight_trim_mm;
 }
 
 uint8_t getSpeedTier() {

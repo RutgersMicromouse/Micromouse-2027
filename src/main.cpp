@@ -625,6 +625,7 @@ void setup() {
     // 5. Initialize Navigator
     g_navigator = new Navigator(g_motion_cmd_queue, nullptr);
     g_navigator->begin();
+    Actions::loadStraightTrim();
 
     // 6. Wireless links
 #if ENABLE_BLE_DEBUG
@@ -649,7 +650,7 @@ void setup() {
     Serial.printf("[UI] HAND WAVES ARE OFF. A search starts by itself %d s after power-on.\n", (int)AUTO_START_DELAY_S);
 #endif
     Serial.println("[UI] LED solid cyan = ready. A hand at the front sensors starts the choosing:");
-    Serial.println("  the LED blinks a stage: Green = Search, Yellow = Speed run, White = Reset + calibrate, Blue = Forget the maze.");
+    Serial.println("  the LED blinks a stage: Green = Search, Yellow = Speed run, White = Reset + calibrate, Magenta = Straight trim, Blue = Forget the maze.");
     Serial.println("  A hand before 5 blinks = next stage. Left alone for 5 blinks = that stage is done.");
     Serial.println("  A speed run then blinks its speed level's number: a hand = next level, left alone for 10 s = go.");
     Serial.println("  Lifting the robot cancels the choosing.");

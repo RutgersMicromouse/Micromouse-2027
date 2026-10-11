@@ -133,6 +133,8 @@
 // place in the list (1 blink = the first), and at the brightness given here (0-255).
 #define GESTURE_SPEED_PERCENTS   { 35, 50, 65, 80, 100 }
 #define GESTURE_SPEED_BRIGHTNESS { 15, 30, 60, 120, 255 }
+#define STRAIGHT_TRIM_STEP_MM    5       // The hand-set straight trim moves by this much each time it is chosen...
+#define STRAIGHT_TRIM_LIMIT_MM   60      // ...and never beyond this either way
 #define GESTURE_SPEEDRUN_MODE    Actions::MODE_HYBRID   // The speed run a hand starts: robot picks curves or diagonals
 
 // Battery Voltage Monitoring

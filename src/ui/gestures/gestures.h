@@ -62,6 +62,7 @@ private:
 //   Green    Search run
 //   Yellow   Speed run
 //   White    Reset the sensors, then calibrate the IR
+//   Magenta  Straight distance trim (speed-run straights 5 mm shorter or longer)
 //   Blue     Forget the saved maze
 //
 // A hand before GESTURE_CONFIRM_BLINKS blinks have gone by = the next stage (after blue: back to
@@ -72,6 +73,11 @@ private:
 // and blinks it again. A hand = the next level (round again after the last). Left alone for
 // GESTURE_SPEED_WAIT_MS it blinks rapidly for GESTURE_SPEED_GO_MS (a hand even then = next
 // level) and goes.
+//
+// The straight trim asks what to do in the same manner, in magenta: 1 blink = 5 mm shorter (the
+// robot stops past the cell centres), 2 blinks = 5 mm longer (it stops short), 5 blinks = reset
+// the trim to 0. A hand = the next of the three. Each time shorter or longer is chosen the trim
+// moves another STRAIGHT_TRIM_STEP_MM; it is kept in flash.
 //
 // Lifting or turning the robot at any point cancels the choosing and changes nothing. Hands are
 // ignored while the robot is being moved (it waits until it has stood still for GESTURE_WARMUP_MS).

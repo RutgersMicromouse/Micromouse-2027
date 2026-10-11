@@ -75,6 +75,15 @@ uint8_t getSpeedTier();
 // without re-flashing. 0 = use the tier as usual.
 void setNextSpeedRunPercent(uint8_t percent);
 
+// Straight trim: millimetres added to (or, negative, taken off) every straight of a speed run.
+// For when the robot stops past the cell centres (make it negative) or short of them (positive).
+// adjustStraightTrim changes it by `delta_mm`, keeps it within STRAIGHT_TRIM_LIMIT_MM, saves it
+// in flash and returns the new value; refused (returns the old value) during a run.
+// loadStraightTrim reads the saved value at power-on.
+int adjustStraightTrim(int delta_mm);
+int getStraightTrim();
+void loadStraightTrim();
+
 // Speed-run turn test (stage F): drives one turn shape as a speed run would, at `percent` of the
 // SPEEDRUN_* speeds. Shapes: "left", "right" (one smooth 90 degree curve), "uleft", "uright" (two
 // in a row, a U-turn), "zigleft", "zigright" (a diagonal: 45 in, 45 out), "veeleft", "veeright"

@@ -103,10 +103,11 @@ float GestureInput::getDropLevel() const {
 namespace GestureUI {
 
 // What can be chosen, in the order the LED goes through them
-enum Stage : uint8_t { STAGE_SEARCH = 0, STAGE_SPEED_RUN, STAGE_CALIBRATE, STAGE_FORGET_MAZE, STAGE_COUNT };
+// (forgetting the maze is kept last, so that it is never passed on the way to anything else)
+enum Stage : uint8_t { STAGE_SEARCH = 0, STAGE_SPEED_RUN, STAGE_CALIBRATE, STAGE_STRAIGHT_TRIM, STAGE_FORGET_MAZE, STAGE_COUNT };
 
-static const char* const kStageName[STAGE_COUNT] = { "SEARCH", "SPEED RUN", "RESET SENSORS + CALIBRATE", "FORGET THE MAZE" };
-static const StatusLED::Color kStageColor[STAGE_COUNT] = { StatusLED::GREEN, StatusLED::YELLOW, StatusLED::WHITE, StatusLED::BLUE };
+static const char* const kStageName[STAGE_COUNT] = { "SEARCH", "SPEED RUN", "RESET SENSORS + CALIBRATE", "STRAIGHT DISTANCE TRIM", "FORGET THE MAZE" };
+static const StatusLED::Color kStageColor[STAGE_COUNT] = { StatusLED::GREEN, StatusLED::YELLOW, StatusLED::WHITE, StatusLED::MAGENTA, StatusLED::BLUE };
 
 static const uint8_t kSpeedPercents[]   = GESTURE_SPEED_PERCENTS;
 static const uint8_t kSpeedBrightness[] = GESTURE_SPEED_BRIGHTNESS;
@@ -122,12 +123,18 @@ static const uint32_t LEVEL_GAP_MS   = 1000; // Dark pause before the number is 
 enum Mode : uint8_t {
     MODE_READY,     // Solid cyan: nothing is being chosen. A hand starts the stages.
     MODE_STAGE,     // Blinking a stage's colour: a hand = next stage, left alone = that stage
-    MODE_SPEED      // Blinking yellow at a speed level's brightness: a hand = next level, left alone = go
+    MODE_SPEED,     // Blinking the speed level's number in yellow: a hand = next level, left alone = go
+    MODE_TRIM       // Blinking magenta once (-5 mm), twice (+5 mm) or 5 times (reset): a hand = the next, left alone = do it
 };
 
 static GestureInput s_input;                  // The front sensors
 static Mode s_mode = MODE_READY;
 static uint8_t s_stage = STAGE_SEARCH;
+// The three things the straight trim stage offers, and how many blinks show each
+enum TrimChoice : uint8_t { TRIM_SHORTER = 0, TRIM_LONGER, TRIM_RESET, TRIM_CHOICES };
+static const uint8_t kTrimBlinks[TRIM_CHOICES] = { 1, 2, 5 };
+static const char* const kTrimName[TRIM_CHOICES] = { "-5 mm", "+5 mm", "RESET to 0" };
+static uint8_t s_trim_choice = TRIM_SHORTER;
 static uint8_t s_speed_level = 0;             // Place in kSpeedPercents; kept from one speed run to the next
 static uint32_t s_blink_start_ms = 0;         // When the blinks of the present stage / level began
 static float s_still_heading_deg = 0.0f;      // Heading when the robot was last seen to move
@@ -171,6 +178,11 @@ static void startBlinking(Mode mode, uint32_t now_ms) {
     s_blink_start_ms = now_ms;
     if (mode == MODE_STAGE) {
         Serial.printf("[UI] Stage: %s. A hand = next, leave it for %d blinks = do it.\n", kStageName[s_stage], (int)GESTURE_CONFIRM_BLINKS);
+    } else if (mode == MODE_TRIM) {
+        Serial.printf("[UI] Straight trim: %s (now %+d mm). A hand = the other one, leave it for %d s = change it.\n",
+                      s_trim_choice == TRIM_SHORTER ? "1 blink = 5 mm SHORTER (it stops past the centre)"
+                      : (s_trim_choice == TRIM_LONGER ? "2 blinks = 5 mm LONGER (it stops short)" : "5 blinks = RESET the trim to 0"),
+                      Actions::getStraightTrim(), (int)((GESTURE_SPEED_WAIT_MS + GESTURE_SPEED_GO_MS) / 1000));
     } else {
         Serial.printf("[UI] Speed level %d of %d (%d%%). A hand = next level, leave it for %d s = go.\n",
                       (int)s_speed_level + 1, (int)SPEED_LEVELS, (int)kSpeedPercents[s_speed_level],
@@ -185,6 +197,18 @@ static void confirm(uint32_t now_ms) {
         Actions::selectMode(GESTURE_SPEEDRUN_MODE);
         Actions::setNextSpeedRunPercent(kSpeedPercents[s_speed_level]);
         Actions::launchSelectedRun();
+    } else if (s_mode == MODE_TRIM) {
+        const int change = (s_trim_choice == TRIM_SHORTER) ? -STRAIGHT_TRIM_STEP_MM
+                         : (s_trim_choice == TRIM_LONGER)  ?  STRAIGHT_TRIM_STEP_MM
+                                                           : -Actions::getStraightTrim(); // Reset: take off all there is
+        const int trim = Actions::adjustStraightTrim(change);
+        Serial.printf("[UI] Confirmed: straight trim %s. Trim is now %+d mm.\n", kTrimName[s_trim_choice], trim);
+        StatusLED::flash(StatusLED::GREEN, 2, 150);
+    } else if (s_stage == STAGE_STRAIGHT_TRIM) {
+        Serial.println("[UI] Confirmed: STRAIGHT DISTANCE TRIM. Now which way.");
+        s_trim_choice = TRIM_SHORTER;
+        startBlinking(MODE_TRIM, now_ms); // The same way the speed is chosen
+        return;
     } else if (s_stage == STAGE_SPEED_RUN) {
         Serial.println("[UI] Confirmed: SPEED RUN. Now the speed.");
         startBlinking(MODE_SPEED, now_ms); // Nothing moves yet: the speed is chosen next, the same way
@@ -257,7 +281,8 @@ void update(const IRReadings& ir) {
             show(READY_COLOR, WAIT_BRIGHTNESS, "WAIT: settling, hands are ignored");
             return;
         } else {
-            show(READY_COLOR, RGB_BRIGHTNESS_LEVEL, "READY: a hand at the front starts the choosing");
+            snprintf(meaning, sizeof(meaning), "READY: a hand at the front starts the choosing (straight trim %+d mm)", Actions::getStraightTrim());
+            show(READY_COLOR, RGB_BRIGHTNESS_LEVEL, meaning);
             return;
         }
     } else if (hand_came_and_went) {
@@ -265,6 +290,9 @@ void update(const IRReadings& ir) {
         if (s_mode == MODE_SPEED) {
             s_speed_level = (s_speed_level + 1) % SPEED_LEVELS;
             startBlinking(MODE_SPEED, now_ms);
+        } else if (s_mode == MODE_TRIM) {
+            s_trim_choice = (s_trim_choice + 1) % TRIM_CHOICES;
+            startBlinking(MODE_TRIM, now_ms);
         } else if (s_stage + 1 < STAGE_COUNT) {
             s_stage++;
             startBlinking(MODE_STAGE, now_ms);
@@ -279,28 +307,32 @@ void update(const IRReadings& ir) {
     if (s_input.isHandPresent()) s_blink_start_ms = now_ms;
     const uint32_t since_ms = now_ms - s_blink_start_ms;
 
-    if (s_mode == MODE_SPEED) {
-        // The speed is not rushed: the level is shown as its number in blinks, a pause, and again,
-        // for GESTURE_SPEED_WAIT_MS after the last hand. Then a rapid blink says "going", and a
-        // hand during that still counts as "next level".
-        const StatusLED::Color color = kStageColor[STAGE_SPEED_RUN];
-        const uint8_t brightness = kSpeedBrightness[s_speed_level];
+    if (s_mode == MODE_SPEED || s_mode == MODE_TRIM) {
+        // A choice shown as a number of blinks, a pause, and again, and not rushed: it stays for
+        // GESTURE_SPEED_WAIT_MS after the last hand. Then a rapid blink says "doing it", and a
+        // hand during that still counts as "the next one".
+        const bool speed = (s_mode == MODE_SPEED);
+        const uint8_t blinks = speed ? s_speed_level + 1 : kTrimBlinks[s_trim_choice];
+        const StatusLED::Color color = kStageColor[speed ? STAGE_SPEED_RUN : STAGE_STRAIGHT_TRIM];
+        const uint8_t brightness = speed ? kSpeedBrightness[s_speed_level] : RGB_BRIGHTNESS_LEVEL;
+        char what[40];
+        if (speed) snprintf(what, sizeof(what), "SPEED level %d of %d (%d%%)", (int)s_speed_level + 1, (int)SPEED_LEVELS, (int)kSpeedPercents[s_speed_level]);
+        else       snprintf(what, sizeof(what), "STRAIGHTS %s (now %+d)", kTrimName[s_trim_choice], Actions::getStraightTrim());
+
         if (since_ms >= (uint32_t)GESTURE_SPEED_WAIT_MS + GESTURE_SPEED_GO_MS) {
             confirm(now_ms);
             return;
         }
         if (since_ms >= (uint32_t)GESTURE_SPEED_WAIT_MS) {
-            snprintf(meaning, sizeof(meaning), "SPEED level %d (%d%%): GOING. A hand now = next level instead",
-                     (int)s_speed_level + 1, (int)kSpeedPercents[s_speed_level]);
+            snprintf(meaning, sizeof(meaning), "%s: DOING IT. A hand now = the next one", what);
             show(((since_ms / 100) % 2 == 0) ? color : StatusLED::OFF, brightness, meaning);
             return;
         }
-        const uint32_t pattern_ms = (uint32_t)(s_speed_level + 1) * LEVEL_BLINK_MS + LEVEL_GAP_MS;
+        const uint32_t pattern_ms = (uint32_t)blinks * LEVEL_BLINK_MS + LEVEL_GAP_MS;
         const uint32_t t = since_ms % pattern_ms;
         const bool lit = s_input.isHandPresent() ||
-                         (t < (uint32_t)(s_speed_level + 1) * LEVEL_BLINK_MS && (t % LEVEL_BLINK_MS) < LEVEL_BLINK_MS / 2);
-        snprintf(meaning, sizeof(meaning), "SPEED level %d of %d (%d%%). Hand = next level. Goes in %d s",
-                 (int)s_speed_level + 1, (int)SPEED_LEVELS, (int)kSpeedPercents[s_speed_level],
+                         (t < (uint32_t)blinks * LEVEL_BLINK_MS && (t % LEVEL_BLINK_MS) < LEVEL_BLINK_MS / 2);
+        snprintf(meaning, sizeof(meaning), "%s. Hand = next. Done in %d s", what,
                  (int)((GESTURE_SPEED_WAIT_MS + GESTURE_SPEED_GO_MS - since_ms + 999) / 1000));
         show(lit ? color : StatusLED::OFF, brightness, meaning);
         return;
