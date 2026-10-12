@@ -18,6 +18,8 @@
 //                            a speed passes if every turn ends within LADDER_TURN_TOLERANCE_DEG, and the
 //                            fastest that passed becomes the speed of every turn on the spot
 //   2 Straights              the limits test in a closed corridor; its best level becomes the speed ceiling
+//   (step 3 goes on after its speed reaches the ceiling: it then lifts the curve speed cap,
+//    LADDER_CURVE_CAP_STEP_MM_S at a time, for as long as runs stay clean)
 //   3 Curves, 5x5            speed runs with smooth curves in the 5x5 maze
 //   4 Diagonals, 5x5         the same with diagonals and V turns
 //   5 Everything, 8x8        the full move set in a half-size maze

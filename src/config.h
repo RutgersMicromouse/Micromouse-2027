@@ -218,7 +218,9 @@ extern float g_turn_speed_scale;                // 1 = the speed the turns were 
 // taken faster than this: the robot brakes into each curve and speeds up again after it. On the
 // robot (2026-10-08) curves ended 4° past their heading at 175 mm/s, 8° at 210, 18° at 245 and
 // 27° at 262. Raise it once curves at this speed end on their heading.
-#define SPEEDRUN_CURVE_MAX_MM_S       180.0f
+extern float g_curve_speed_cap_mm_s;            // Starts at SPEEDRUN_CURVE_CAP_START_MM_S; the checklist's curves step raises it while runs stay clean (Ladder)
+#define SPEEDRUN_CURVE_CAP_START_MM_S 180.0f   // What the cap was fixed at (found on the robot on 2026-10-08, with the heading loop weak)
+#define SPEEDRUN_CURVE_MAX_MM_S       g_curve_speed_cap_mm_s
 #define SPEEDRUN_TURN_SPEED_DEG_S     SEARCH_TURN_SPEED_DEG_S   // Speedrun in-place turn speed (deg/s): the search's, which the turn tuning was done at; NOT scaled with the run's speed [450]
 #define SPEEDRUN_TURN_ACCEL_DEG_S2    SEARCH_TURN_ACCEL_DEG_S2  // Speedrun in-place turn accel (deg/s^2), likewise [2200]
 
@@ -486,6 +488,8 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define LADDER_WALK_OK_MM            1.0f    // ...and stops at the first that leaves a turn walking less than this
 #define LADDER_TURN_PERCENTS         { 100, 125, 150, 175, 200, 250 } // Step 1 tries the turns at these shares of the tuned turn speed, in order
 #define LADDER_SEARCH_STEP_PERCENT   15      // "ladder search": each clean search is followed by one this much faster
+#define LADDER_CURVE_CAP_STEP_MM_S   40.0f   // Step 3, once its speed has reached the ceiling: each clean run lifts the curve speed cap by this,
+                                             //   up to SPEEDRUN_CURVE_SPEED_MM_S at that ceiling; the first run that is not clean puts it back one
 #define LADDER_START_PERCENT         20      // Steps 3 to 5: the first speed run is at this share of full speed...
 #define LADDER_STEP_PERCENT          10      // ...and each clean one is followed by one this much faster
 // What the robot itself calls a clean speed run (steps 3 to 5). Its own size is what turns a side

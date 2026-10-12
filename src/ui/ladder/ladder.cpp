@@ -36,6 +36,7 @@ static bool running_ = false;         // A checklist speed run is under way
 static bool waiting_ = false;         // (kept for the app: a run is waiting to be judged; the robot now judges at once)
 static int16_t undo_best_ = -1;       // Best speed before the robot's last "clean", so the owner can overrule it (-1 = nothing to undo)
 static uint8_t undo_trial_ = 0;
+static float cap_clean_ = 0.0f;       // Step 3: the curve speed cap of the last clean run, to go back to (0 = it has not been raised)
 static bool search_running_ = false;  // A search-speed trial is under way
 static uint8_t search_trial_ = 0;     // Its speed, percent of the bring-up search speed (0 = none started yet)
 static uint8_t search_best_ = 0;      // The fastest search speed judged clean so far in this session
@@ -61,6 +62,7 @@ static void save() {
     prefs.begin("ladder", false);
     prefs.putUChar("cur", current_);
     prefs.putBytes("best", best_, sizeof(best_));
+    prefs.putFloat("cap", g_curve_speed_cap_mm_s);
     prefs.end();
 }
 
@@ -79,6 +81,7 @@ void begin() {
     prefs.begin("ladder", true);
     current_ = min((int)prefs.getUChar("cur", 0), STEPS);
     prefs.getBytes("best", best_, sizeof(best_));
+    g_curve_speed_cap_mm_s = constrain(prefs.getFloat("cap", SPEEDRUN_CURVE_CAP_START_MM_S), SPEEDRUN_CURVE_CAP_START_MM_S, SPEEDRUN_CURVE_SPEED_MM_S);
     prefs.end();
     applyMoveSet();
 }
@@ -300,11 +303,29 @@ void verdict(bool clean) {
         undo_trial_ = trial_;
         best_[current_] = trial_;
         save();
+        if (trial_ >= ceiling && current_ == 2) {
+            // Curves: the straights are as fast as they may go, but the curves themselves are held
+            // to a cap. Lift it a step and run again, until a run is not clean or there is no more.
+            const float most = SPEEDRUN_CURVE_SPEED_MM_S * (float)ceiling / 100.0f;
+            if (g_curve_speed_cap_mm_s < most - 1.0f) {
+                cap_clean_ = g_curve_speed_cap_mm_s;
+                g_curve_speed_cap_mm_s = fminf(g_curve_speed_cap_mm_s + LADDER_CURVE_CAP_STEP_MM_S, most);
+                save();
+                Serial.printf("[LADDER] Clean at %d%% with curves at %.0f mm/s. Next: ladder run, the same speed with curves at %.0f mm/s.\n",
+                              (int)trial_, cap_clean_, g_curve_speed_cap_mm_s);
+                return;
+            }
+        }
         if (trial_ >= ceiling) { finish(trial_); return; } // Nothing faster is allowed: this is its top speed
         trial_ = min((int)trial_ + LADDER_STEP_PERCENT, (int)ceiling);
         Serial.printf("[LADDER] Clean at %d%%. Next: ladder run, at %d%%.\n", (int)best_[current_], (int)trial_);
         return;
     }
+    if (best_[current_] > 0 && current_ == 2 && cap_clean_ > 0.0f) {
+        Serial.printf("[LADDER] Not clean with curves at %.0f mm/s: back to %.0f, the last that was clean.\n", g_curve_speed_cap_mm_s, cap_clean_);
+        g_curve_speed_cap_mm_s = cap_clean_;
+    }
+    cap_clean_ = 0.0f;
     if (best_[current_] > 0) {
         Serial.printf("[LADDER] Not clean at %d%%: stepping back to %d%%, the last clean speed.\n", (int)trial_, (int)best_[current_]);
         finish(best_[current_]);
@@ -320,6 +341,8 @@ void reset() {
     memset(best_, 0, sizeof(best_));
     trial_ = 0;
     waiting_ = running_ = false;
+    g_curve_speed_cap_mm_s = SPEEDRUN_CURVE_CAP_START_MM_S;
+    cap_clean_ = 0.0f;
     save();
     applyMoveSet();
     Actions::setSpeedLimitPercent(100);

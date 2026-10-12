@@ -4,6 +4,8 @@
 float g_turn_speed_scale = 1.0f;
 // See config.h (SEARCH_SPEED_DEFAULT_MM_S): scales the search's straight speeds; its acceleration goes with the square
 float g_search_speed_scale = 1.0f;
+// See config.h (SPEEDRUN_CURVE_MAX_MM_S): the most a speed run's smooth curves are taken at
+float g_curve_speed_cap_mm_s = SPEEDRUN_CURVE_CAP_START_MM_S;
 
 // Start-up, starting and stopping runs, and sending moves. The search stepping is in
 // navigator_search.cpp and the speed-run planner in navigator_speedrun.cpp.
