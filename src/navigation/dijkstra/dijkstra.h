@@ -46,8 +46,18 @@ public:
         bool has_parent;
     };
 
+    // Optimistic = plan as the search does: anything not yet seen counts as open and usable.
+    // The result is the quickest route there COULD be (straights and diagonals cost less than
+    // corners), which the search uses to decide what is still worth looking at. Off (the
+    // default) = only what the robot has seen and driven through: what a speed run may use.
+    void setOptimistic(bool on) { optimistic_ = on; }
+
 private:
+    bool open(int8_t x, int8_t y, Direction d) const { return optimistic_ ? !maze_.hasWall(x, y, d) : maze_.isKnownOpen(x, y, d); }
+    bool usable(int8_t x, int8_t y) const { return optimistic_ || maze_.isVisited(x, y); }
+
     const Maze& maze_;
+    bool optimistic_ = false;
 };
 
 // Which way one cell is from its neighbour

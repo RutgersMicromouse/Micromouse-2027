@@ -19,6 +19,7 @@ public:
     // Set destination goals: Center (7,7 - 8,8) or Start (0,0)
     void setGoalToCenter();
     void setGoalToStart();
+    void setGoalToCell(int8_t x, int8_t y);   // One cell the search wants a look at
 
     // Recompute floodfill distance matrix
     void recalculate();

@@ -73,6 +73,10 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
     front_fix_done_ = false;
 #endif
 
+    // On the way back, the cell it went to look at has now been seen (from here, or in passing):
+    // pick the next one, or head for the start
+    if (state_ == NAV_STATE_RETURNING_TO_START && detour_active_ && maze_.isVisited(detour_.x, detour_.y)) chooseReturnGoal();
+
     // 2. Work out which way to go next
     const bool at_goal = floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y);
     static Coordinate path[256];
@@ -100,6 +104,13 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
             if (floodfill_.isAtGoal(cur_x, cur_y)) break;
         }
 
+        if (path_len < 2 && detour_active_) {
+            // The cell it wanted a look at turns out to be walled off: no more of those, go home
+            detours_left_ = 0;
+            chooseReturnGoal();
+            step(ir, preview);
+            return;
+        }
         if (path_len < 2) {
             // The map says the robot is walled in. Mazes are never built like that, so the map is
             // wrong: first drop the walls that rest on a single reading, then, if that is not
@@ -165,14 +176,15 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         if (state_ == NAV_STATE_EXPLORING_TO_CENTER) {
             // Centre reached: now explore back to the start cell
             Serial.printf("[NAV] Centre reached at (%d, %d). Exploring back to the start.\n", pose_.cell_x, pose_.cell_y);
-            floodfill_.setGoalToStart();
-            floodfill_.recalculate();
             state_ = NAV_STATE_RETURNING_TO_START;
+            detours_left_ = SEARCH_RETURN_DETOURS;
+            chooseReturnGoal();
             step(ir, preview);
             return;
         }
 
         // Back in the start cell: the search is over
+        detour_active_ = false;
         floodfill_.setGoalToCenter();
         floodfill_.recalculate();
         best_route_explored_ = checkBestRouteExplored();

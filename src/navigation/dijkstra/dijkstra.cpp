@@ -185,12 +185,12 @@ uint8_t Dijkstra::findFastestPath(int8_t start_x, int8_t start_y, Direction star
         for (uint8_t L = 1; L <= 15; ++L) {
             int8_t px = x + dx * (L - 1);
             int8_t py = y + dy * (L - 1);
-            if (!maze_.isKnownOpen(px, py, (Direction)h)) break;
+            if (!open(px, py, (Direction)h)) break;
 
             int8_t nx = x + dx * L;
             int8_t ny = y + dy * L;
             if (nx < 0 || nx >= 16 || ny < 0 || ny >= 16) break;
-            if (!maze_.isVisited(nx, ny)) break;
+            if (!usable(nx, ny)) break;
 
             float sprint_cost = cost + 1.0f + 0.35f * (float)(L - 1);
             ParentEdge parent = { x, y, h, 1, L, 0, true };
@@ -205,12 +205,12 @@ uint8_t Dijkstra::findFastestPath(int8_t start_x, int8_t start_y, Direction star
 
             for (uint8_t m_step = 1; m_step <= 15; ++m_step) {
                 uint8_t s_dir = (m_step % 2 == 1) ? h : d1;
-                if (!maze_.isKnownOpen(cur_x, cur_y, (Direction)s_dir)) break;
+                if (!open(cur_x, cur_y, (Direction)s_dir)) break;
 
                 cur_x += DX[s_dir];
                 cur_y += DY[s_dir];
                 if (cur_x < 0 || cur_x >= 16 || cur_y < 0 || cur_y >= 16) break;
-                if (!maze_.isVisited(cur_x, cur_y)) break;
+                if (!usable(cur_x, cur_y)) break;
 
                 if (m_step >= 2) {
                     float diag_cost = cost + 1.8f + (float)(m_step - 1) * 0.5f;
@@ -236,12 +236,12 @@ uint8_t Dijkstra::findFastestPath(int8_t start_x, int8_t start_y, Direction star
                     s_dir = ((m_idx / 2) % 2 == 0) ? d_c1 : d_c2;
                 }
 
-                if (!maze_.isKnownOpen(cur_x, cur_y, (Direction)s_dir)) break;
+                if (!open(cur_x, cur_y, (Direction)s_dir)) break;
 
                 cur_x += DX[s_dir];
                 cur_y += DY[s_dir];
                 if (cur_x < 0 || cur_x >= 16 || cur_y < 0 || cur_y >= 16) break;
-                if (!maze_.isVisited(cur_x, cur_y)) break;
+                if (!usable(cur_x, cur_y)) break;
 
                 uint8_t m_count = m_idx + 1;
                 if (m_count >= 5 && m_count % 2 == 1) {

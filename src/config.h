@@ -324,6 +324,7 @@ extern float g_turn_speed_scale;                // 1 = the speed the turns were 
 // runs, is made standing still at a cell centre. 1 brings back the curves, diagonals and V turns
 // of the speed-run planner; the two search flags below bring back the search's curves.
 #define ENABLE_SMOOTH_CURVES    0
+#define SEARCH_RETURN_DETOURS   30      // On the way back from the centre: at most this many unseen cells of the quickest possible route are gone to first (0 = straight home)
 #define SEARCH_TRAPPED_LOOKS    4       // Walled in on every side even on a fresh map: look again this many times before giving up
 #define ENABLE_SEARCH_LOOKAHEAD 0       // (what Navigator::setSearchCurves starts at; the checklist switches it on)
                                         // 0 = always decide at the cell centre and turn on the spot [1 with smooth curves]

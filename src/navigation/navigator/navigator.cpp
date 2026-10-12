@@ -117,24 +117,43 @@ void Navigator::saveMazeIfChanged() {
     }
 }
 
-// Follows the floodfill from the start cell to the centre with unexplored cells treated as open.
-// If that route never leaves explored cells, no shorter route can be hiding in the unknown.
-bool Navigator::checkBestRouteExplored() {
-    int8_t x = 0, y = 0;
-    Direction heading = DIR_NORTH;
-    for (int i = 0; i < 255; ++i) {
-        if (!maze_.isVisited(x, y)) return false;
-        if (floodfill_.isAtGoal(x, y)) return true;
-        Direction next = floodfill_.getNextDirection(x, y, heading);
-        if (next == DIR_INVALID) return false;
-        if (!maze_.isKnownOpen(x, y, next)) return false; // The way on has never actually been seen open
-        heading = next;
-        if (next == DIR_NORTH) y++;
-        else if (next == DIR_EAST)  x++;
-        else if (next == DIR_SOUTH) y--;
-        else if (next == DIR_WEST)  x--;
+// The quickest route there could be from the start cell to the centre, with everything not yet
+// seen counted as open: quickest by the speed-run planner's own costs, where a straight or a
+// diagonal is cheaper than the same cells taken as corners, so it is the route a speed run would
+// WANT, not merely the one with the fewest cells. Returns the cell on it nearest the centre
+// that the robot has not been in yet. False if there is none: nothing quicker can be hiding.
+bool Navigator::findUnprovenCell(Coordinate& cell) {
+    static Coordinate route[256];
+    dijkstra_.setOptimistic(true);
+    const uint8_t length = dijkstra_.findFastestPathToCenter(0, 0, DIR_NORTH, route, 255);
+    dijkstra_.setOptimistic(false);
+    for (int i = (int)length - 1; i >= 0; --i) {
+        if (!maze_.isVisited(route[i].x, route[i].y)) { cell = route[i]; return true; }
     }
     return false;
+}
+
+// True when the quickest possible route runs only through cells the robot has seen
+bool Navigator::checkBestRouteExplored() {
+    Coordinate cell;
+    return !findUnprovenCell(cell);
+}
+
+// The return leg's target. While the quickest possible route still has cells nobody has looked
+// at, the robot goes and looks at the nearest of them first, so that one search is more often
+// enough; after SEARCH_RETURN_DETOURS of those, or when there are none left, it heads for the start.
+void Navigator::chooseReturnGoal() {
+    Coordinate cell;
+    detour_active_ = detours_left_ > 0 && findUnprovenCell(cell);
+    if (detour_active_) {
+        detours_left_--;
+        detour_ = cell;
+        floodfill_.setGoalToCell(cell.x, cell.y);
+        Serial.printf("[NAV] On the way back: first a look at (%d, %d), which the quickest possible route runs through.\n", cell.x, cell.y);
+    } else {
+        floodfill_.setGoalToStart();
+    }
+    floodfill_.recalculate();
 }
 
 void Navigator::stop() {
@@ -143,6 +162,7 @@ void Navigator::stop() {
         saveMazeIfChanged();
     }
     state_ = NAV_STATE_IDLE;
+    detour_active_ = false;
     search_phase_ = PHASE_AT_CENTRE;
     single_step_ = false;
     step_paused_ = false;
@@ -233,6 +253,7 @@ void Navigator::clearSavedMaze() {
     pose_.cell_y = 0;
     pose_.current_dir = DIR_NORTH;
     state_ = NAV_STATE_IDLE;
+    detour_active_ = false;
     search_phase_ = PHASE_AT_CENTRE;
     maze_changed_ = false;
     best_route_explored_ = false;

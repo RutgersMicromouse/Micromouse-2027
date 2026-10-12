@@ -41,6 +41,11 @@ void Floodfill::setGoalToStart() {
     is_goal_[0][0] = true;
 }
 
+void Floodfill::setGoalToCell(int8_t x, int8_t y) {
+    memset(is_goal_, 0, sizeof(is_goal_));
+    is_goal_[x][y] = true;
+}
+
 bool Floodfill::isAtGoal(int8_t x, int8_t y) const {
     if (x < 0 || x >= MAZE_WIDTH || y < 0 || y >= MAZE_HEIGHT) return false;
     return is_goal_[x][y];

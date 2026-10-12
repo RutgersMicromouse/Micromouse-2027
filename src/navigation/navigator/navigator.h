@@ -130,6 +130,8 @@ private:
     bool curve_cell_was_known_;
 
     bool checkBestRouteExplored();
+    bool findUnprovenCell(Coordinate& cell);   // A cell on the quickest possible route that has not been seen yet
+    void chooseReturnGoal();                   // On the way back: the next such cell, or the start cell
     void saveMazeIfChanged();
 
     float speed_scale_;
@@ -145,6 +147,9 @@ private:
     bool step_allowed_;          // The next move has been asked for and not yet sent
     bool step_paused_;           // Standing at a cell centre, waiting to be asked
 
+    bool detour_active_ = false;  // The way back is aimed at detour_, not yet at the start cell
+    Coordinate detour_ = { 0, 0 };
+    uint8_t detours_left_ = 0;    // How many more such cells this return leg may go and look at
     uint8_t trap_recovery_;      // How far "walled in" recovery has gone: 0 none, 1 weak walls dropped, 2 map wiped
 
     void stepAtCellEdge(const IRReadings& ir, const WallPreview& preview);
