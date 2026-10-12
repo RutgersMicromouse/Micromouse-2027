@@ -147,6 +147,20 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
   </div>
   <div class="dim" style="margin-top:8px">Tap a letter to work on that stage. Going back to a finished stage un-finishes it and the ones after it.</div>
 </div>
+<div class="card">
+  <div class="step"><span class="num" style="background:#3ddc84">&#10003;</span>Checklist: each kind of move at its fastest clean speed</div>
+  <table id="ladderList" style="width:100%;border-collapse:collapse;margin-bottom:8px"></table>
+  <div id="ladderNote" style="margin-bottom:10px;font-weight:700"></div>
+  <pre id="ladderSetup" style="margin:0 0 10px;padding:8px;background:#07090c;border-radius:8px;font-size:11px;line-height:1.35;overflow-x:auto"></pre>
+  <div class="row" style="margin-bottom:8px">
+    <button data-cmd="ladder run">Run this step</button>
+    <button class="plain" data-cmd="ladder">Say where it stands</button>
+  </div>
+  <div class="row" id="ladderVerdict">
+    <button style="background:#ff5d5d;color:#fff" data-cmd="ladder fail">It touched something: not clean</button>
+  </div>
+  <div class="dim" style="margin-top:8px">The robot judges every step itself (step 2 needs a closed corridor of 4 cells; for another length type "ladder run 3" below). Steps 3 to 5 are speed runs: it measures its room at the sides and in front, how much it tipped, and the posts on diagonals, and says clean or not in the output. Clean = the next run is faster. Not clean = the step is finished at the last clean speed. If it called a run clean and you saw it touch, press the red button. A speed run never uses a move whose step is not finished. "ladder reset" in the command box starts over.</div>
+</div>
 <div class="dim" style="margin:-4px 0 12px">Calibrate: robot in the start cell, centred by hand, FACING INTO THE MAZE (way ahead clear, wall behind). It measures the side walls, turns to the back wall to measure the front level, and turns back. START calibrates where it stands, then searches to the centre and back.</div>
 
 <div class="card">
@@ -174,6 +188,7 @@ h2{font-size:14px;color:#8f9aaa;text-transform:uppercase;letter-spacing:.08em;ma
   <div class="row3">
     <label class="pick"><input type="radio" name="mazeSize" value="3"> 3x3</label>
     <label class="pick"><input type="radio" name="mazeSize" value="5"> 5x5</label>
+    <label class="pick"><input type="radio" name="mazeSize" value="8"> 8x8</label>
     <label class="pick"><input type="radio" name="mazeSize" value="16"> 16x16</label>
   </div>
   <div class="dim" style="margin-top:10px">Each size keeps its own map.</div>
@@ -412,6 +427,77 @@ const STAGES = [
   ["Search straights", "No wobble, set up for turns, in every wall arrangement."],
   ["Speed-run turns", "U-turns, lefts, rights and V turns, set up one type at a time."],
   ["Speed-run straights", "Straight out of a turn, no wobble, at several speeds."]];
+// What to build and do for the step that is open (the same words as tools/web_dashboard/index.html)
+const LADDER_SETUP = [`Walls to build (hardest case: a dead end, the least room to swing in)
+
+   +   +
+   | ^ |     walls left, right and behind the robot
+   +---+
+
+1. Robot in the middle of the cell (same gap each side by ruler), facing the open side.
+2. Run. It resets its sensors itself and turns left and right ten times, first at the speed the
+   turns were tuned at, then faster and faster. The fastest speed at which every turn still
+   ended on target becomes the speed of every turn on the spot from then on.`,
+`Walls to build (hardest case: the side walls change sides on the way)
+
+   +---+
+   |   |     cell 5: both side walls and the end wall
+   +   +
+       |     cell 4: right wall only
+   +   +
+             cell 3: no side walls
+   +   +
+   |         cell 2: left wall only
+   +   +
+   | ^ |     cell 1: both side walls and the end wall. Robot here.
+   +---+
+
+1. Robot centred in cell 1, facing along the corridor.
+2. Calibrate (it needs this cell's three walls).
+3. Run in 5 cells. It drives at the end walls faster each time: keep a hand ready to lift it.`,
+`Walls to build (hardest case: two five-cell straights, each ending in a U-turn,
+one to the right and one to the left). S = start, G = goal, dots = the route.
+
+   +---+---+---+
+   | .   . |
+   +   +   +
+   | . | . |
+   +   +   +---+
+   | . | . | G |
+   +   +   +   +
+   | . | . | . |
+   +   +   +   +
+   | S | .   . |
+   +---+---+---+
+
+The other cells do not matter, as long as nothing else opens onto the route.
+1. Maze size 5 x 5, then Forget this maze.
+2. Robot centred in S facing up. Calibrate.
+3. Search, and let it finish by itself back in S.
+4. Run step 3. After each run: Drive back to the start, then run again (it goes faster each time).`,
+`Walls to build (hardest case: a U-turn, a four-cell straight, then a staircase
+that the robot cuts across diagonally, close to the posts). S = start, G = goal.
+
+   +---+---+---+---+---+
+           | G   . |
+   +---+---+---+   +---+
+   | .   . |   | .   . |
+   +   +   +---+---+   +
+   | S | .   .   .   . |
+   +---+---+---+---+---+
+
+The other cells do not matter, as long as nothing else opens onto the route.
+1. Maze size 5 x 5, then Forget this maze (it is a different maze from step 3).
+2. Robot centred in S facing up. Calibrate.
+3. Search, and let it finish by itself back in S.
+4. Run step 4, Drive back to the start, run again.
+In the simulation this diagonal passes the posts with about 2 mm to spare, so watch it closely.`,
+`Set-up: any 8 x 8 maze (the bottom-left 8 x 8 of the full maze will do; its goal is the four
+middle cells, and everything outside counts as wall). Maze size 8 x 8, robot centred in the
+start cell facing in, Calibrate, Search until it stops by itself, then run step 5.`,
+`Set-up: the full 16 x 16 maze as it is. Maze size 16 x 16, robot centred in the start
+cell facing in, Calibrate, Search until the LED blinks green twice, then run step 6.`];
+const LADDER = ["Turns on the spot", "Straights", "Curves, 5x5 maze", "Diagonals, 5x5 maze", "Everything, 8x8 maze", "Everything, 16x16 maze"]; // Ladder's steps (ui/ladder)
 let stageCur = 0, stageDoneMask = 0, stageStep = 0, stageTapped = 0;
 const letterOf = i => String.fromCharCode(65 + i);
 STAGES.forEach((stage, i) => {
@@ -702,6 +788,15 @@ async function poll() {
     const askKey = ask ? ask.id + ":" + ask.text : "";
     if (ask && askKey != askAnswered) { $("askText").textContent = ask.text; askShown = askKey; $("ask").style.display = "block"; }
     else $("ask").style.display = "none";
+    const ladder = (status.status || {}).ladder;
+    if (ladder) {
+      $("ladderList").innerHTML = LADDER.map((name, i) => "<tr><td style='padding:4px 0'>" + (i + 1) + ". " + name + "</td><td style='text-align:right;color:" +
+        (i < ladder.cur ? "#3ddc84'>finished at " + ladder.best[i] + " %" + (i ? "" : " of the tuned turn speed") : i == ladder.cur ? "#7fb6ff'>open" + (ladder.best[i] ? ", clean at " + ladder.best[i] + " %" : "") : "#8f9aaa'>locked") + "</td></tr>").join("");
+      $("ladderSetup").textContent = LADDER_SETUP[ladder.cur] || "";
+      $("ladderNote").textContent = ladder.cur >= LADDER.length ? "Every step is finished." :
+        ladder.wait ? "Was the run at " + ladder.trial + " % clean?" : ladder.trial ? "Next run: " + ladder.trial + " %" : "";
+      $("ladderVerdict").style.display = (ladder.wait || ladder.trial) ? "grid" : "none";
+    }
     const stage = (status.status || {}).stage;
     if (stage && Date.now() - stageTapped > 1500 && (stage.cur != stageCur || stage.done != stageDoneMask)) {
       if (stage.cur != stageCur) stageReset();

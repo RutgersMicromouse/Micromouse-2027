@@ -1,0 +1,30 @@
+{
+  "note": "Kept by hand. A stage is 'done' only if the check named beside it was really run and passed; the date is when.",
+  "stages": [
+    { "stage": "A  Audit of the existing simulation", "status": "done",
+      "evidence": "2026-10-11: read the two firmware harnesses and the Python simulator; findings in AGENTS.md" },
+    { "stage": "B  Baseline of the existing tests", "status": "done",
+      "evidence": "2026-10-11: drive test 28 mazes pass; nav test passes but one batch (noisy 5x5, 48 checks, failing since 2026-10-10); Python simulator's 4 tests pass" },
+    { "stage": "C  Visual replay of the firmware-driven robot", "status": "done",
+      "evidence": "2026-10-11: viewer checked in a browser on a 5x5 trace (maze, path, beams, believed cell, numbers, events)" },
+    { "stage": "D  Physics controls (mass, friction, fan, battery, IR, IMU, encoders)", "status": "done",
+      "evidence": "2026-10-11: test_lab_models.py, 18 checks pass, each model moving the result the right way. Editable in the page (Lab bench tab, checked in a browser: a low-friction 3x3 run from the form)" },
+    { "stage": "E  Scenarios, trials, comparisons, sweeps, limits", "status": "done",
+      "evidence": "2026-10-11: all scenarios run on 5x5 (3 and 5 mazes each) and six of them on 16x16; curves and diagonals unblocked (moves=1, moves=2); sweeps of friction, IR noise and IMU failures found the breaking point (friction 0.3 and below, on diagonals)" },
+    { "stage": "F  Plots, event inspection, results history, export", "status": "partly",
+      "evidence": "2026-10-11: four chart groups, firmware map overlay, results tab, PNG / JSON export. Not shown: the controller's internals tick by tick, the planned path" },
+    { "stage": "G  Validation", "status": "partly",
+      "evidence": "2026-10-11: every existing test re-run after the changes with the same results as the baseline. Nothing here has been compared with the real robot" }
+  ],
+  "limits": [
+    "No number of the physics model was measured on the robot: mass, inertia, friction, motor force, tyre stiffness, fan force and sensor noise are all guesses.",
+    "The simulated firmware runs the tuning values in the code, which since 2026-10-11 are the set saved on the robot on 2026-10-10. If the team saves new values on the robot, the code and the simulation fall behind until they are copied over.",
+    "The force model has no sideways sliding, no weight shift under acceleration and no airflow; the fan is a fixed extra downward force.",
+    "With the tuning the code had before 2026-10-11, the force-model robot broke the lab's limits on 3 of 5 mazes; with the robot's saved set, on 0 of 5, and on 1 of 51 across all 17 scenarios. Passing nearly everything may mean the scenarios are too gentle at these speeds, not that the robot is safe.",
+    "The front level is never measured in a simulated maze, so the front-wall stop and the safety supervisor's front check do not act there.",
+    "Wall calls are scored for the 90 degree and front sensors at cell centres only; the 45 degree look-ahead is not scored, and it is switched off in the firmware.",
+    "Collisions test a circle around the axle (43.75 mm in the lab, 40 mm in the regression tests), not the robot's real outline.",
+    "Curves and diagonals are simulated for speed runs only (moves=1, moves=2); the search always turns on the spot. With diagonals the closest approach left no margin (50.1 mm against a limit of 49.75) on a model that cannot slide sideways.",
+    "Control-loop timing is not simulated: every tick takes no time."
+  ]
+}

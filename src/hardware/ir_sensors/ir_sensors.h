@@ -81,6 +81,17 @@ public:
     // is too weak. "Cannot be told" is NOT "the way is clear".
     bool getFrontGapMm(float& gap_mm) const;
 
+    // Distance from a 90 degree sensor's tip to the wall beside it, in mm, from that sensor's own
+    // centred reading and the same square-root rule the wall steering uses. False if it cannot be
+    // told: never calibrated, or no wall there. Only means anything while the robot is square to the maze.
+    bool getSideGapMm(bool left, float& gap_mm) const;
+
+    // With the robot standing between two side walls (the start cell): how the two 90 degree
+    // readings compare with what calibration recorded, as one ratio (1 = the same; being off
+    // centre raises one side and lowers the other, which cancels). True if it is so far from 1
+    // that the calibration cannot belong to these walls or this light: calibrate again.
+    bool calibrationLooksStale(float& ratio) const;
+
     // How far the robot is turned away from square to a wall in front of it, from the two front
     // sensors: positive = the left one is closer. Each sensor is first divided by what IT read
     // facing a wall squarely at calibration, because the two do not read alike (on this robot

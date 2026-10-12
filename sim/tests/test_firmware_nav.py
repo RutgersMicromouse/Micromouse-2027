@@ -592,7 +592,10 @@ def main():
         practice = [exe, '--size', '3']
 
         mazes = sorted(glob.glob(os.path.join(ROOT, 'sim', 'mazes', '*.num')))
-        if wanted:
+        if '--random' in flags:
+            # (options with values, e.g. --size 5 --random 1 --seed 2065 --noise 0.05: handed on as they are)
+            batches = [('Chosen random mazes', [exe] + sys.argv[1:])]
+        elif wanted:
             mazes = [m for m in mazes if any(w in os.path.basename(m) for w in wanted)]
             batches = [('Chosen mazes', full_size + flags + mazes)]
         else:
@@ -606,10 +609,8 @@ def main():
                                                                   practice + ['--quiet', '--random', '300', '--seed', '1000', '--noise', '0.05']),
                 ('200 random 5x5 practice mazes',                 [exe, '--size', '5', '--quiet', '--random', '200']),
                 ('200 random 5x5 practice mazes, sensors inventing walls',
-                                                                  # (seeds from 2000, not 1000 like the others: seed 1088 hits a
-                                                                  #  known weak spot that is not about the size, see AGENTS.md:
-                                                                  #  a wall invented in the start cell at the first look leaves
-                                                                  #  the search "trapped". About 1 noisy maze in 1000, any size.)
+                                                                  # (seeds from 2000: three of them, 2065, 2187 and 2191, invent a wall in the start cell
+                                                                  #  at the first look, which used to leave the search "trapped"; it now looks again)
                                                                   [exe, '--size', '5', '--quiet', '--random', '200', '--seed', '2000', '--noise', '0.05']),
             ]
 

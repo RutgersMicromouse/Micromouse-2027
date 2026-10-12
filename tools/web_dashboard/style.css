@@ -31,4 +31,7 @@ button.small{padding:6px 12px;font-size:13px;border-radius:10px}
 .results td.step{cursor:pointer;color:#8f9aaa}.results td.step.pass{background:#1f7a3f;color:#fff}.results td.step.fail{background:#c0392b;color:#fff}
 .outcomes{list-style:none;margin:0;padding:0;max-height:260px;overflow:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:#cfe3d4}
 .outcomes li{padding:3px 0;border-bottom:1px solid #1b212a;word-break:break-word}.outcomes li.alert{color:#ffb4a8}
+.todo{margin:0;padding-left:22px}.todo li{padding:9px 0;border-bottom:1px solid #232a34;font-size:14px}.todo li.open{background:rgba(127,182,255,.10);border-radius:8px}
+.todo pre.setup{margin:8px 0 0;padding:8px 10px;background:#07090c;border-radius:8px;font:12px/1.35 ui-monospace,Consolas,monospace;color:#c9d2de;overflow-x:auto}.todo li.done pre.setup,.todo li.locked pre.setup{display:none}
+.todo li.done b{color:#7cf29a}.todo li.locked{opacity:.5}.todo .go{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 @media(max-width:560px){.charts{grid-template-columns:1fr}}

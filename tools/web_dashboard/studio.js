@@ -133,7 +133,7 @@ const Studio = (() => {
   }
 
   // Every line that is the outcome of something, newest first
-  const RESULT_TAGS = /^\[(SAFE|SAFETY|SAFETY ALERT|TURNTEST|STRAIGHTTEST|STRAIGHT|MOVECHECK|MOTORCHECK|CURVETEST|CALIB|RESULT|NAV)\]/;
+  const RESULT_TAGS = /^\[(SAFE|SAFETY|SAFETY ALERT|LADDER|LIMITS|BRAKE|TURNTEST|STRAIGHTTEST|STRAIGHT|MOVECHECK|MOTORCHECK|CURVETEST|CALIB|RESULT|NAV)\]/;
   function result(line) {
     const item = document.createElement("li");
     item.textContent = new Date().toLocaleTimeString() + "  " + line.trim();
@@ -142,8 +142,25 @@ const Studio = (() => {
     while (el("results").children.length > 200) el("results").lastChild.remove();
   }
 
+  // Where the robot's checklist stands, from what it prints ("ladder" asks it to say)
+  function checklist(text) {
+    const open = text.match(/\[LADDER\] Step (\d) of \d open: ([^.]*)/), finished = text.match(/\[LADDER\] Step (\d) \(.*\) FINISHED at (\d+)%/);
+    const all = text.includes("[LADDER] Every step is finished"), reset = text.includes("[LADDER] Started over");
+    const at = all ? 7 : open ? Number(open[1]) : finished ? Number(finished[1]) + 1 : reset ? 1 : 0;
+    if (at) {
+      el("ladderNow").textContent = all ? "every step finished" : "step " + at + " is open" + (open ? " (" + open[2] + ")" : "");
+      document.querySelectorAll("[data-step]").forEach((li) => {
+        const step = Number(li.dataset.step);
+        li.className = step < at ? "done" : step === at ? "open" : "locked";
+      });
+    }
+    const maze = text.match(/(?:Maze size is now|MAZE:) (\d+)x\d+/);
+    if (maze) el("mazeNow").textContent = maze[1] + " x " + maze[1];
+  }
+
   function line(text) {
     const trimmed = text.replace(/^\s+/, "");
+    checklist(trimmed);
     if (trimmed.startsWith("[TEL]")) { telemetry(trimmed); return false; } // app.js shows the bars from it
     if (trimmed.startsWith("[SAF]")) { safety(trimmed); redraw(); return true; }
     if (trimmed.startsWith("[TURNTEST] done")) turnTest(trimmed);

@@ -4,6 +4,7 @@
 #include "ui/status_led/status_led.h"
 #include "ui/actions/actions.h"
 #include "ui/gestures/gestures.h"
+#include "ui/ladder/ladder.h"
 #include "ui/console/console.h"
 #include "wireless/ble_debug/ble_debug.h"
 #include "wireless/wifi_ota/wifi_ota.h"
@@ -19,6 +20,7 @@ static RunMode s_selected_mode = MODE_SEARCH;
 static const float kSpeedTierScale[3] = { SPEED_TIER_1_SCALE, SPEED_TIER_2_SCALE, SPEED_TIER_3_SCALE };
 static uint8_t s_speed_tier = 1; // 1..3
 static uint8_t s_next_run_percent = 0; // Hand-picked speed for the next speed run; 0 = use the tier
+static uint8_t s_speed_limit_percent = 100; // Ceiling for every speed run, found by the limits test (kept in flash)
 
 const char* modeName(RunMode mode) {
     switch (mode) {
@@ -86,16 +88,28 @@ void launchSelectedRun(bool one_move_at_a_time) {
     // The robot was placed by hand: forget where the last run left its heading and distance
     prepareForNewRun();
 
+    float ratio = 1.0f;
+    if (g_ir_sensors.calibrationLooksStale(ratio)) {
+        Serial.printf("[CALIB] WARNING: the side walls read %.1f times what they did at calibration. Different walls or light, or not in the start cell: CALIBRATE AGAIN before trusting this run.\n", ratio);
+        StatusLED::flash(StatusLED::RED, 2, 120);
+    }
+
     NavigatorLock lock; // The navigation task takes over from the first move onwards
     if (s_selected_mode != MODE_SEARCH) {
+        float scale = kSpeedTierScale[s_speed_tier - 1];
         if (s_next_run_percent > 0) {
             Serial.printf("[UI] Speed chosen by hand: %d%% (the tier is not used for this run)\n", (int)s_next_run_percent);
-            g_navigator->setSpeedScale((float)s_next_run_percent / 100.0f);
+            scale = (float)s_next_run_percent / 100.0f;
             s_next_run_percent = 0;
         } else {
-            Serial.printf("[UI] Speed tier %d of 3 (%.0f%% speed)\n", (int)s_speed_tier, kSpeedTierScale[s_speed_tier - 1] * 100.0f);
-            g_navigator->setSpeedScale(kSpeedTierScale[s_speed_tier - 1]);
+            Serial.printf("[UI] Speed tier %d of 3 (%.0f%% speed)\n", (int)s_speed_tier, scale * 100.0f);
         }
+        // Never above what the limits test found this robot can do
+        if (scale > (float)s_speed_limit_percent / 100.0f) {
+            scale = (float)s_speed_limit_percent / 100.0f;
+            Serial.printf("[UI] Held to the measured ceiling: %d%%\n", (int)s_speed_limit_percent);
+        }
+        g_navigator->setSpeedScale(scale);
     }
 
     switch (s_selected_mode) {
@@ -220,7 +234,7 @@ void clearSavedMaze() {
 
 bool setMazeSize(uint8_t size) {
 #ifdef MAZE_SIZE_SWITCHABLE
-    if (isRunActive() || (size != 3 && size != 5 && size != 16)) return false;
+    if (isRunActive() || (size != 3 && size != 5 && size != 8 && size != 16)) return false;
     {
         NavigatorLock lock;
         g_navigator->changeMazeSize(size);
@@ -240,9 +254,23 @@ int getStraightTrim() {
     return s_straight_trim_mm;
 }
 
+uint8_t getSpeedLimitPercent() {
+    return s_speed_limit_percent;
+}
+
+void setSpeedLimitPercent(uint8_t percent) {
+    s_speed_limit_percent = constrain(percent, (uint8_t)10, (uint8_t)100);
+    Preferences prefs;
+    if (prefs.begin("hand_cfg", false)) {
+        prefs.putUChar("limit", s_speed_limit_percent);
+        prefs.end();
+    }
+}
+
 void loadStraightTrim() {
     Preferences prefs;
     if (prefs.begin("hand_cfg", true)) {
+        s_speed_limit_percent = constrain(prefs.getUChar("limit", 100), (uint8_t)10, (uint8_t)100);
         s_straight_trim_mm = constrain(prefs.getInt("trim", 0), -STRAIGHT_TRIM_LIMIT_MM, STRAIGHT_TRIM_LIMIT_MM);
         prefs.end();
     }
@@ -311,6 +339,12 @@ bool launchCurveTest(const char* shape, uint8_t percent) {
     // The robot was placed by hand: forget where the last run left its heading and distance
     prepareForNewRun();
 
+    float ratio = 1.0f;
+    if (g_ir_sensors.calibrationLooksStale(ratio)) {
+        Serial.printf("[CALIB] WARNING: the side walls read %.1f times what they did at calibration. Different walls or light, or not in the start cell: CALIBRATE AGAIN before trusting this run.\n", ratio);
+        StatusLED::flash(StatusLED::RED, 2, 120);
+    }
+
     NavigatorLock lock; // The navigation task takes over from the first move onwards
     g_navigator->setSpeedScale((float)percent / 100.0f);
     s_test_run = true;
@@ -341,6 +375,7 @@ void onRunEnded(bool aborted) {
     }
     const NavState state = g_navigator->getState();
     const bool was_speed_run = (s_selected_mode != MODE_SEARCH);
+    if (was_speed_run) Ladder::onRunEnded(aborted, state == NAV_STATE_FINISHED); // (acts only on a checklist run)
 
     if (aborted) {
         if (was_speed_run && s_speed_tier > 1) {

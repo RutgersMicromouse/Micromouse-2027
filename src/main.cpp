@@ -33,6 +33,8 @@
 #include "ui/console/console.h"
 #include "ui/proposal/proposal.h"
 #include "ui/stages/stages.h"
+#include "ui/ladder/ladder.h"
+#include "ui/limits_test/limits_test.h"
 #include "wireless/ble_debug/ble_debug.h"
 #include "wireless/wifi_ota/wifi_ota.h"
 
@@ -218,6 +220,14 @@ static String buildAppStatus() {
     out += String((unsigned int)Stages::doneMask());
     out += "}";
 
+    // The checklist (see Ladder)
+    {
+        char ladder[96];
+        Ladder::statusJson(ladder, sizeof(ladder));
+        out += ",\"ladder\":";
+        out += ladder;
+    }
+
     // A question waiting for the operator's Yes or No (see Proposal); its text is already safe to quote
     if (Proposal::shownId() != 0) {
         out += ",\"ask\":{\"id\":";
@@ -316,7 +326,10 @@ void motionControlTask(void* pvParameters) {
             controller_stop_seen = controller_stop;
 
             const SafetySupervisor::Outputs allowed = g_safety.update(in, CONTROL_DT_S);
-            if (allowed.brake_now) g_motion_controller.safetyStop();
+            if (allowed.brake_now) {
+                g_motion_controller.safetyStop();
+                g_stop_count.fetch_add(1); // So whatever is waiting on a move (a test, calibration) sees it was cut short
+            }
             g_motors.setInhibited(allowed.inhibit);
             if (allowed.inhibit) g_motors.brake();
         }
@@ -523,6 +536,7 @@ void operatorTask(void* pvParameters) {
 
         // 2. Hand-wave controls, only while the robot is standing still between runs
         bool running = Actions::isRunActive();
+        Ladder::sample(); // (only does anything during a checklist speed run)
         if (was_running && !running) {
             Actions::onRunEnded(g_run_aborted.exchange(false)); // LED result + speed tier up / down
         }
@@ -681,6 +695,9 @@ void setup() {
     g_navigator = new Navigator(g_motion_cmd_queue, nullptr);
     g_navigator->begin();
     Actions::loadStraightTrim();
+    LimitsTest::begin();   // The braking strength measured on this robot, if it has been
+    Ladder::begin();   // What the checklist has proven so far decides which moves a speed run may use
+    Ladder::report();
 
     // 6. Wireless links
 #if ENABLE_BLE_DEBUG

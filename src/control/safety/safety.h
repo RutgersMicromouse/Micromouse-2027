@@ -94,9 +94,15 @@ public:
     // The stopping-distance formula on its own (also used by the PC test and the app's numbers)
     static float stoppingDistanceMm(float speed_mm_s);
 
+    // The deceleration that sum counts on. Starts at SAFETY_BRAKE_DECEL_MM_S2 (a guess); the
+    // braking test (LimitsTest::measureBraking) replaces it with what this robot really manages.
+    static void setBrakeDecel(float mm_s2) { brake_decel_mm_s2_ = mm_s2; }
+    static float getBrakeDecel() { return brake_decel_mm_s2_; }
+
 private:
     void enter(State state, Reason reason);
 
+    static float brake_decel_mm_s2_;
     Status status_;
     float in_state_s_;            // Time in the present state
     float front_trip_s_;          // How long the front wall has been inside the stopping distance

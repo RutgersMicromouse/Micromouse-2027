@@ -11,6 +11,8 @@
 #include "ui/motor_check/motor_check.h"
 #include "ui/move_check/move_check.h"
 #include "ui/straight_test/straight_test.h"
+#include "ui/limits_test/limits_test.h"
+#include "ui/ladder/ladder.h"
 #include "wireless/ble_debug/ble_debug.h"
 #include "wireless/wifi_ota/wifi_ota.h"
 
@@ -153,6 +155,41 @@ static void handle(String cmd, Source source) {
         if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
         const long cells = (cmd == "straighttest") ? 3 : cmd.substring(13).toInt();
         StraightTest::run(cells > 0 ? (int)cells : 3);
+        return;
+    }
+
+    // The checklist (see Ladder): "ladder", "ladder run [cells]", "ladder clean", "ladder fail", "ladder reset"
+    if (cmd == "ladder" || cmd.startsWith("ladder ")) {
+        if (cmd == "ladder") { Ladder::report(); return; }
+        if (running) { reply("ERR: A RUN IS UNDER WAY (STOP first)"); return; }
+        if (cmd.startsWith("ladder run")) {
+            const long cells = cmd.substring(10).toInt();
+            Ladder::run(cells >= 2 ? (int)cells : 4);
+        } else if (cmd == "ladder clean") Ladder::verdict(true);
+        else if (cmd == "ladder fail")  Ladder::verdict(false);
+        else if (cmd == "ladder reset") Ladder::reset();
+        else reply("ERR: USAGE 'ladder', 'ladder run [cells]', 'ladder clean', 'ladder fail', 'ladder reset'");
+        return;
+    }
+
+    // Limits test: "limits 4" shuttles in a closed corridor of 4 cells, harder each time, and holds
+    // speed runs to the last level that passed; "limits clear" removes that ceiling (see LimitsTest)
+    if (cmd == "limits" || cmd.startsWith("limits ")) {
+        if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
+        if (cmd == "limits clear") {
+            Actions::setSpeedLimitPercent(100);
+            reply("ACK: SPEED CEILING REMOVED (100%)");
+            return;
+        }
+        if (cmd == "limits brake") { LimitsTest::measureBraking(); return; }
+        const long cells = cmd.substring(6).toInt();
+        if (cells < 2) {
+            snprintf(buf, sizeof(buf), "Speed runs are held to %d%%. \"limits N\" tests in a closed corridor of N cells (2 or more); \"limits brake\" measures braking for the safety sum; \"limits clear\" removes the ceiling.",
+                     (int)Actions::getSpeedLimitPercent());
+            reply(buf);
+            return;
+        }
+        LimitsTest::run((int)cells);
         return;
     }
 
@@ -351,7 +388,7 @@ static void handle(String cmd, Source source) {
     if (cmd == "maze" || cmd.startsWith("maze ")) {
         const long size = cmd.substring(4).toInt();
         if (cmd != "maze" && !Actions::setMazeSize((uint8_t)size)) {
-            reply("ERR: MAZE SIZE NOT CHANGED (use 'maze 3', 'maze 5' or 'maze 16', not during a run; the competition and test3x3 builds are fixed)");
+            reply("ERR: MAZE SIZE NOT CHANGED (use 'maze 3', 'maze 5', 'maze 8' or 'maze 16', not during a run; the competition and test3x3 builds are fixed)");
         }
         snprintf(buf, sizeof(buf), "MAZE: %dx%d", (int)MAZE_ACTIVE_SIZE, (int)MAZE_ACTIVE_SIZE);
         reply(buf);

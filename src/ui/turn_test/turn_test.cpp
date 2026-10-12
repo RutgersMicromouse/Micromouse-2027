@@ -93,7 +93,7 @@ static void summarise(const char* name, const float* v, int n, char* out, size_t
     snprintf(out, size, "%s mean %+.1f sd %.1f worst %+.1f (n=%d)", name, mean, sqrtf(var / n), worst, n);
 }
 
-void run(int pairs, bool fast) {
+float run(int pairs, bool fast) {
     pairs = constrain(pairs, 1, 10);
     float lefts[10], rights[10];
     int n_left = 0, n_right = 0;
@@ -138,6 +138,10 @@ void run(int pairs, bool fast) {
                   mc.getTune(MotionController::TUNE_T_PUSH), mc.getTune(MotionController::TUNE_T_DAMP),
                   mc.getTune(MotionController::TUNE_T_KA),
                   mc.getTune(MotionController::TUNE_IMU_A));
+    if (n_left < pairs || n_right < pairs) return -1.0f;
+    float worst = 0.0f;
+    for (int i = 0; i < pairs; ++i) worst = fmaxf(worst, fmaxf(fabsf(lefts[i]), fabsf(rights[i])));
+    return worst;
 }
 
 } // namespace TurnTest

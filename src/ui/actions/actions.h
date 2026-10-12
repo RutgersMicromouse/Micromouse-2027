@@ -80,6 +80,12 @@ void setNextSpeedRunPercent(uint8_t percent);
 // adjustStraightTrim changes it by `delta_mm`, keeps it within STRAIGHT_TRIM_LIMIT_MM, saves it
 // in flash and returns the new value; refused (returns the old value) during a run.
 // loadStraightTrim reads the saved value at power-on.
+// Ceiling for every speed run, as a percentage of the SPEEDRUN_* speeds and accelerations: what
+// the limits test (ui/limits_test) found this robot can still stop and turn from. Kept in flash
+// with the straight trim, and read back by loadStraightTrim. 100 = no ceiling.
+uint8_t getSpeedLimitPercent();
+void setSpeedLimitPercent(uint8_t percent);
+
 int adjustStraightTrim(int delta_mm);
 int getStraightTrim();
 void loadStraightTrim();

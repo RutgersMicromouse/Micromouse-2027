@@ -20,6 +20,8 @@
 namespace TurnTest {
 
 // fast = at the speed-run turn speed and acceleration (SPEEDRUN_TURN_*) instead of the search's
-void run(int pairs, bool fast = false);
+// Returns how far off 90 degrees the worst turn ended (degrees, never negative), or -1 if the
+// test was stopped or gave up before every turn was done.
+float run(int pairs, bool fast = false);
 
 } // namespace TurnTest

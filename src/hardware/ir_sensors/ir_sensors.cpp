@@ -269,6 +269,21 @@ bool IRSensors::getFrontGapMm(float& gap_mm) const {
     return true;
 }
 
+bool IRSensors::getSideGapMm(bool left, float& gap_mm) const {
+    const uint16_t centred = left ? nominal_center_l90_ : nominal_center_r90_;
+    const uint16_t now = left ? readings_.left_90 : readings_.right_90;
+    const bool wall = left ? readings_.wall_left : readings_.wall_right;
+    if (centred == 0 || !wall || now == 0) return false;
+    gap_mm = SIDE_SENSOR_TO_WALL_MM * sqrtf((float)centred / (float)now);
+    return true;
+}
+
+bool IRSensors::calibrationLooksStale(float& ratio) const {
+    if (nominal_center_l90_ == 0 || nominal_center_r90_ == 0) return false; // Never calibrated: said elsewhere
+    ratio = sqrtf(((float)readings_.left_90 / (float)nominal_center_l90_) * ((float)readings_.right_90 / (float)nominal_center_r90_));
+    return ratio < IR_STALE_RATIO_LOW || ratio > IR_STALE_RATIO_HIGH;
+}
+
 bool IRSensors::calibrateInCell(uint16_t sample_count, bool keep_side_centre) {
     Serial.println("\n[CALIB] Starting In-Cell IR Auto-Calibration...");
     Serial.println("[CALIB] Ensure the mouse is placed squarely in the center of a cell with Left, Right, and Front walls!");

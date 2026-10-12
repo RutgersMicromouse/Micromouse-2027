@@ -20,7 +20,7 @@ static float moveTime(float dist, float v_max, float accel, float v0, float v1) 
 
 // Plans a whole speed run: turns the cell path into one unbroken chain of moves.
 //
-// WITH ENABLE_SMOOTH_CURVES 0 (as now) none of the curves below are used: every straight ends
+// WITH THE MOVE SET AT "turns on the spot" (Navigator::setMoveSet) none of the curves below are used: every straight ends
 // standing in the centre of the cell where the path bends, the robot turns 90 degrees on the
 // spot, and the next straight starts from rest.
 //
@@ -113,15 +113,15 @@ float Navigator::planSpeedRun(const Coordinate* path, uint8_t path_len, bool use
             continue;
         }
 
-#if !ENABLE_SMOOTH_CURVES
-        // Smooth curves are switched off: drive to the centre of the cell, stop, turn on the spot
-        // and carry on. The straights keep their speeds; only the turning is slow.
-        driveStraight(0.0f);
-        spinOnSpot(turn == 1 ? ACTION_TURN_RIGHT_90 : ACTION_TURN_LEFT_90, 90.0f);
-        pending = MAZE_CELL_SIZE_MM;
-        i++;
-        continue;
-#endif
+        if (move_set_ == MOVES_TURNS_ON_THE_SPOT) {
+            // No smooth curves: drive to the centre of the cell, stop, turn on the spot and carry
+            // on. The straights keep their speeds; only the turning is slow.
+            driveStraight(0.0f);
+            spinOnSpot(turn == 1 ? ACTION_TURN_RIGHT_90 : ACTION_TURN_LEFT_90, 90.0f);
+            pending = MAZE_CELL_SIZE_MM;
+            i++;
+            continue;
+        }
 
         // Cells i..j: a run of left / right turns with no straight cell in between
         uint8_t j = i;
@@ -201,13 +201,14 @@ void Navigator::startSpeedRun(SpeedrunStrategy strategy) {
     }
 
     bool use_diagonals = (strategy != SPEEDRUN_CURVES_ONLY);
-#if !ENABLE_SMOOTH_CURVES
-    // Only straights along the maze's two axes and 90 degree turns on the spot: there is nothing
-    // to choose between, whichever kind of speed run was asked for
-    use_diagonals = false;
-    strategy = SPEEDRUN_CURVES_ONLY;
-    Serial.println("[NAV] Speed run uses straights and 90 degree turns on the spot only (no curves, no diagonals).");
-#endif
+    if (move_set_ < MOVES_DIAGONALS) {
+        // Diagonals are not allowed yet, so there is nothing to choose between
+        use_diagonals = false;
+        strategy = SPEEDRUN_CURVES_ONLY;
+        Serial.println(move_set_ == MOVES_CURVES
+                       ? "[NAV] Speed run uses straights and smooth 90 degree curves (no diagonals)."
+                       : "[NAV] Speed run uses straights and 90 degree turns on the spot only (no curves, no diagonals).");
+    }
     if (strategy == SPEEDRUN_HYBRID_AUTO) {
         // Plan it both ways and keep whichever is quicker
         float t_curves = planSpeedRun(path, path_len, false);
@@ -235,7 +236,7 @@ bool Navigator::startPathTest(const Coordinate* path, uint8_t path_len, bool use
     current_strategy_ = use_diagonals ? SPEEDRUN_DIAGONALS_ONLY : SPEEDRUN_CURVES_ONLY;
     waiting_for_motion_ = false;
 
-    float run_time = planSpeedRun(path, path_len, use_diagonals);
+    float run_time = planSpeedRun(path, path_len, use_diagonals && move_set_ == MOVES_DIAGONALS);
     if (run_time < 0.0f || sub_cmd_count_ == 0) {
         sub_cmd_count_ = 0;
         return false;

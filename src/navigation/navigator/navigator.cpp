@@ -1,5 +1,8 @@
 #include "navigation/navigator/navigator.h"
 
+// See config.h (SEARCH_TURN_SPEED_DEG_S). It lives here because the navigator plans every turn on the spot.
+float g_turn_speed_scale = 1.0f;
+
 // Start-up, starting and stopping runs, and sending moves. The search stepping is in
 // navigator_search.cpp and the speed-run planner in navigator_speedrun.cpp.
 
@@ -34,7 +37,7 @@ Navigator::Navigator(QueueHandle_t motion_cmd_queue, QueueHandle_t telemetry_que
 // which is loaded here; the robot is taken to be in the start cell facing into the maze.
 // (Never called during a run: Actions::setMazeSize refuses.)
 void Navigator::changeMazeSize(int size) {
-    g_maze_size = (size == 16 || size == 5) ? size : 3;
+    g_maze_size = (size == 16 || size == 8 || size == 5) ? size : 3;
     Maze::saveSizeToNVS();
     begin();
     pose_.cell_x = 0;

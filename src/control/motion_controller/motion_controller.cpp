@@ -410,9 +410,12 @@ static const TuneItem kTune[MotionController::TUNE_COUNT] = {
     // --- Heading loop: degrees off course -> turning effort. This is what keeps the robot
     //     straight where there are no walls, and what finishes every turn.
     //     Heading I = 0.025 neutralizes motor/gearbox friction asymmetry within 150 ms
-    { "h_kp",   "Heading loop P",                       0.045f,   0.0f,  0.5f   },
-    { "h_ki",   "Heading loop I",                       0.025f,   0.0f,  0.3f   },
-    { "h_kd",   "Heading loop D",                       0.0012f,  0.0f,  0.02f  },
+    // (h_kp ... t_ka below marked [robot]: the set the team tuned and saved on the robot on 2026-10-10,
+    //  made the code's values on 2026-10-11 so a robot with nothing saved, and the PC tests, run the
+    //  same thing. The values before are in square brackets.)
+    { "h_kp",   "Heading loop P",                       0.005f,   0.0f,  0.5f   },  // [robot] [0.045]
+    { "h_ki",   "Heading loop I",                       0.03f,    0.0f,  0.3f   },  // [robot] [0.025]
+    { "h_kd",   "Heading loop D",                       0.0f,     0.0f,  0.02f  },  // [robot] [0.0012]
     { "k_sync", "Wheel sync (holds both wheels equal)", 0.0004f,  0.0f,  0.005f },
     { "enc_a",  "Wheel-speed smoothing (1 = none)",     ENCODER_SPEED_FILTER_ALPHA, 0.02f, 1.0f },
     { "imu_a",  "Heading smoothing (1 = none)",         IMU_FILTER_ALPHA,           0.1f,  1.0f },
@@ -430,12 +433,12 @@ static const TuneItem kTune[MotionController::TUNE_COUNT] = {
     { "ff_ks",  "Feedforward: effort to overcome friction",   FF_KS, 0.0f, 0.3f   },
     { "ff_kv",  "Feedforward: effort per mm/s of wheel speed", FF_KV, 0.0f, 0.01f  },
     { "ff_ka",  "Feedforward: effort per mm/s2",               FF_KA, 0.0f, 0.001f },
-    { "turn_ff", "Turn feedforward scale (lower if turns overshoot)", 1.0f, 0.0f, 3.0f },
+    { "turn_ff", "Turn feedforward scale (lower if turns overshoot)", 0.84f, 0.0f, 3.0f }, // [robot] [1.0]
     // --- Limits
     { "h_max",  "Heading loop: most effort it may use",       0.6f,   0.05f, 1.0f },
-    { "h_imax", "Heading loop: most of that from I",          0.12f,  0.0f,  1.0f },
-    { "w_max",  "Wall centring: most steering, degrees",      25.0f,  0.0f,  45.0f },
-    { "w_gyro", "Wall centring: turn-rate damping",           0.035f, 0.0f,  0.2f },
+    { "h_imax", "Heading loop: most of that from I",          0.05f,  0.0f,  1.0f },  // [robot] [0.12]
+    { "w_max",  "Wall centring: most steering, degrees",      10.0f,  0.0f,  45.0f }, // [robot] [25]
+    { "w_gyro", "Wall centring: turn-rate damping",           0.025f, 0.0f,  0.2f },  // [robot] [0.035]
     // --- Turn-rate damping and the nudge after a turn on the spot (they start at the values in config.h)
     { "s_damp", "Straights: turn-rate damping (0 = off)",     STRAIGHT_YAW_DAMPING, 0.0f, 0.005f },
     { "t_damp", "After a turn: turn-rate damping (0 = off)",  TURN_SETTLE_DAMPING,  0.0f, 0.005f },
@@ -444,7 +447,7 @@ static const TuneItem kTune[MotionController::TUNE_COUNT] = {
     { "c_kp",   "Curves: extra heading P (0 = off)",          0.0f,   0.0f,  0.2f },
     // --- Turns on the spot: effort per mm/s2 of planned wheel acceleration. Speeds the turn up
     //     at the start and brakes it at the end, so it does not coast past (0 = off)
-    { "t_ka",   "Turns: braking push (0 = off)",              0.0f,   0.0f,  0.002f },
+    { "t_ka",   "Turns: braking push (0 = off)",              0.000125f, 0.0f, 0.002f }, // [robot] [0]
     // --- Smooth curves only: scale on the wheel-speed difference fed forward for the turn, on top
     //     of turn_ff (which turns on the spot share). Lower it if curves turn ahead of their plan
     //     and end past their heading, cutting the corner (1 = no change)

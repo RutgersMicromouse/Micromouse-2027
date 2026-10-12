@@ -191,8 +191,9 @@
 #define SEARCH_SPEED_DEFAULT_MM_S     180.0f   // Search cruise speed (mm/s)                          [240]
 #define SEARCH_ACCEL_DEFAULT_MM_S2    600.0f   // Search linear acceleration / deceleration (mm/s^2)  [1500]
 #define SEARCH_CURVE_SPEED_MM_S       100.0f   // Smooth 90° turn speed during the search (mm/s)      [200]
-#define SEARCH_TURN_SPEED_DEG_S       120.0f   // In-place turn speed (deg/s)                         [360]
-#define SEARCH_TURN_ACCEL_DEG_S2      480.0f   // In-place turn acceleration (deg/s^2)                [1800]
+extern float g_turn_speed_scale;                // 1 = the speed the turns were tuned at; the checklist's first step raises it (Ladder)
+#define SEARCH_TURN_SPEED_DEG_S       (120.0f * g_turn_speed_scale)   // In-place turn speed (deg/s)                         [360]
+#define SEARCH_TURN_ACCEL_DEG_S2      (480.0f * g_turn_speed_scale)   // In-place turn acceleration (deg/s^2)                [1800]
 #define SEARCH_PROBE_SPEED_MM_S       120.0f   // Search speed when rolling into a cell it has never seen (may have to stop) [120]
 // Dynamic search speed: on a straight through cells it has already visited (most of the way back,
 // and any second search) the robot speeds up to this, and slows again in time for the first cell
@@ -301,7 +302,7 @@
 #define SETTLE_DWELL_TICKS     50       // Must stay on target and still for this many control ticks in a row (0.1 s)
 #define SETTLE_TIMEOUT_TICKS   150      // Give up waiting after this many control ticks (0.3 s)
 #define SETTLE_TIMEOUT_TURN_TICKS 500    // ...or this many after a turn on the spot (1 s): a wrong heading costs more than a pause
-#define TURN_SETTLE_PUSH       0.04f    // Extra effort (on top of ff_ks) that nudges the robot onto its heading after a turn
+#define TURN_SETTLE_PUSH       0.06f    // Extra effort (on top of ff_ks) that nudges the robot onto its heading after a turn
                                         // on the spot. Raise if turns still end a few degrees off, lower if it twitches. 0 = off.
 #define TURN_SETTLE_PUSH_MAX_RATE_DEG_S 10.0f // No nudge while already turning toward the heading faster than this
 #define TURN_SETTLE_PUSH_FULL_DEG 6.0f  // The nudge is at full strength this far off the heading and fades to ff_ks alone at zero
@@ -323,7 +324,9 @@
 // runs, is made standing still at a cell centre. 1 brings back the curves, diagonals and V turns
 // of the speed-run planner; the two search flags below bring back the search's curves.
 #define ENABLE_SMOOTH_CURVES    0
-#define ENABLE_SEARCH_LOOKAHEAD 0       // 0 = always decide at the cell centre and turn on the spot [1 with smooth curves]
+#define SEARCH_TRAPPED_LOOKS    4       // Walled in on every side even on a fresh map: look again this many times before giving up
+#define ENABLE_SEARCH_LOOKAHEAD 0       // (what Navigator::setSearchCurves starts at; the checklist switches it on)
+                                        // 0 = always decide at the cell centre and turn on the spot [1 with smooth curves]
 #define SEARCH_CONFIRM_WITH_90  0       // 1 = at the cell edge the 90° sensor must agree with the 45° look-ahead before a
                                         //   curve. Only right if the 90° sensors sit well ahead of the wheel axle, so that at
                                         //   the edge they are already beside the NEXT cell's wall. 0 = trust the 45° alone:
@@ -441,7 +444,7 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 // front wall less MIN_FRONT_GAP. *** DECEL and LATENCY are NOT MEASURED YET. *** 2600 is the
 // acceleration this firmware already plans speed runs with, so the check never asks for less
 // braking than the planner does; replace both with the results of a braking test.
-#define SAFETY_BRAKE_DECEL_MM_S2   2600.0f // Deceleration the robot is taken to manage with the motors braked
+#define SAFETY_BRAKE_DECEL_MM_S2   2600.0f // Deceleration the robot is taken to manage with the motors braked: a GUESS until "limits brake" has measured it
 #define SAFETY_LATENCY_S           0.020f  // From the wall being there to the brake biting: IR filter + control ticks + driver
 #define SAFETY_STOP_MARGIN_MM      5.0f    // Added to every stopping distance
 #define SAFETY_MIN_FRONT_GAP_MM    15.0f   // Front sensor tips may come no nearer a wall than this (at a cell centre they are 46 mm off)
@@ -459,6 +462,37 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define SAFETY_STILL_S             0.30f   // ...once it has lasted this long
 #define SAFETY_BRAKING_MAX_S       2.0f    // BRAKING gives way to RECOVERY after this even if the wheels never read still
 #define SAFETY_RECOVERY_S          0.70f   // Time held in RECOVERY before the robot may be driven again
+
+// Limits test (ui/limits_test/): shuttles in a closed corridor, harder each time, to find how
+// hard this robot can be driven. The tolerances are what "still good enough" means; they are a
+// choice, not a measurement.
+#define LIMITS_STEPS                 { 20, 30, 40, 50, 60, 70, 80, 90, 100 } // Percent of the speed run's speed and acceleration, in order
+#define LIMITS_STOP_TOLERANCE_MM     15.0f   // A run must stop within this of the cell centre (a turn on the spot needs the room)
+#define LIMITS_HEADING_TOLERANCE_DEG 4.0f    // ...pointing within this of straight
+#define LIMITS_TURN_TOLERANCE_DEG    3.0f    // ...and the turn round afterwards must end within this
+#define LIMITS_TILT_TOLERANCE_DEG    8.0f    // ...and the robot may not tip more than this: braking too hard dives the nose, pulling away too hard lifts it
+
+// Checklist (ui/ladder/): the steps the robot is taken through, each at the fastest clean speed
+#define LADDER_TURN_TOLERANCE_DEG    2.0f    // Step 1: every turn of the turn test must end within this of 90 degrees
+// The walls are all one colour, but that colour differs from maze to maze (brown, white). One
+// calibration in the maze covers it; these catch a run started on a calibration from elsewhere.
+#define IR_STALE_RATIO_LOW           0.5f    // Start-cell side readings under half of the calibrated ones...
+#define IR_STALE_RATIO_HIGH          2.0f    // ...or over twice them: the calibration does not belong to these walls
+
+#define LADDER_TURN_PERCENTS         { 100, 125, 150, 175, 200, 250 } // Step 1 tries the turns at these shares of the tuned turn speed, in order
+#define LADDER_START_PERCENT         20      // Steps 3 to 5: the first speed run is at this share of full speed...
+#define LADDER_STEP_PERCENT          10      // ...and each clean one is followed by one this much faster
+// What the robot itself calls a clean speed run (steps 3 to 5). Its own size is what turns a side
+// reading into room: the 90 degree sensor tips sit SIDE_SENSOR_OUT_MM from the centre line (PCB
+// drawing) and the body reaches ROBOT_WIDTH_MM / 2. These limits are a choice, not a measurement.
+#define SIDE_SENSOR_OUT_MM           36.0f   // 90 degree sensor tip, out from the robot's centre line (PCB drawing, 2026-10-08)
+#define SIDE_SENSOR_TO_WALL_MM       (HALF_CELL_SIZE_MM - 6.0f - SIDE_SENSOR_OUT_MM)   // ...so this far from the wall when centred (48)
+#define SIDE_BODY_BEYOND_SENSOR_MM   (ROBOT_WIDTH_MM / 2.0f - SIDE_SENSOR_OUT_MM)      // The tyres stick out this much further than the sensor tips (7.75)
+#define LADDER_MIN_SIDE_ROOM_MM      15.0f   // Least room between the body and a side wall (centred it has 40)
+#define LADDER_MIN_FRONT_GAP_MM      20.0f   // Nearest the front sensor tips may come to a wall (at a cell centre they are 46 off)
+#define LADDER_MAX_TILT_DEG          8.0f    // Most it may tip under braking or acceleration
+#define LADDER_MAX_POST_GUARD        0.5f    // On diagonals: most the post guard may object (1 = a post at twice the guard level)
+#define LADDER_SQUARE_DEG            8.0f    // Side and front readings are only used within this of a maze axis
 
 // ==============================================================================
 // 5. DEFAULT SENSOR THRESHOLDS (5 Sensors)

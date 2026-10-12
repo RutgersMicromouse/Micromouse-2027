@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Micromouse simulation lab</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, "Segoe UI", sans-serif; background: #0b0d10; color: #e8edf4; }
+    body { margin: 0; padding: 16px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .dim { color: #8f9aaa; font-size: 13px; }
+    .tabs { display: flex; gap: 8px; margin-top: 12px; }
+    .tabs button.on { background: #e8edf4; color: #0b0d10; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; margin-top: 12px; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+    .panel { background: #171c24; border: 1px solid #2c3440; border-radius: 12px; padding: 12px; }
+    canvas { display: block; width: 100%; background: #07090c; border-radius: 8px; }
+    #maze { aspect-ratio: 1; max-width: 68vh; margin: 0 auto; }
+    #chart { height: 150px; margin-top: 10px; cursor: pointer; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+    button, select { background: #1a2028; color: #eef2f7; border: 1px solid #303844; border-radius: 8px; padding: 7px 12px; font-size: 14px; }
+    button { cursor: pointer; }
+    #seek { flex: 1; min-width: 160px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td, th { padding: 4px 6px 4px 0; border-bottom: 1px solid #232a34; text-align: left; vertical-align: top; }
+    .numbers td:last-child { text-align: right; font-family: ui-monospace, Consolas, monospace; }
+    th { color: #8f9aaa; font-weight: 600; }
+    h2 { font-size: 13px; color: #8f9aaa; font-weight: 600; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
+    h2:first-child { margin-top: 0; }
+    #events { list-style: none; margin: 0; padding: 0; max-height: 190px; overflow: auto; font-size: 13px; }
+    #events li { padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+    #events li:hover, #history tr.row:hover { background: #232a34; }
+    #events li.bad, .bad { color: #ff8f80; }
+    .good { color: #7cf29a; }
+    .warn { color: #ffb454; }
+    #verdict { font-weight: 700; }
+    #history tr.row { cursor: pointer; }
+    #detail { white-space: pre-wrap; font: 12px/1.5 ui-monospace, Consolas, monospace; max-height: 420px; overflow: auto; }
+    .scroll { overflow-x: auto; }
+    .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .fields label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #8f9aaa; }
+    .fields input, .fields select { background: #07090c; color: #e8edf4; border: 1px solid #303844; border-radius: 6px; padding: 6px; font: 13px ui-monospace, Consolas, monospace; }
+    .fields input.changed { border-color: #ffb454; }
+    button:disabled { opacity: .45; cursor: wait; }
+  </style>
+</head>
+<body>
+  <h1>Micromouse simulation lab</h1>
+  <div class="dim">The real firmware driving a simulated robot. A simulation, not the robot: the physics numbers are guesses, so read differences between conditions, not absolute values.</div>
+  <div class="tabs">
+    <button id="tabReplay" class="on">Replay a run</button>
+    <button id="tabBench">Lab bench</button>
+    <button id="tabResults">Results and progress</button>
+  </div>
+
+  <div id="bench" hidden>
+    <div class="layout">
+      <div class="panel">
+        <div class="controls" style="margin-top:0">
+          <select id="benchPreset"></select>
+          <select id="benchLight"></select>
+          <button id="benchDefaults">Back to defaults</button>
+          <span id="benchNote" class="dim"></span>
+        </div>
+        <div id="benchForm"></div>
+      </div>
+      <div class="panel">
+        <h2>Run it</h2>
+        <div class="fields">
+          <label>Maze size<select id="benchSize"><option>3</option><option selected>5</option><option>8</option><option>16</option></select></label>
+          <label>Maze and noise seed<input id="benchSeed" type="number" min="1" max="1000000" value="1"></label>
+        </div>
+        <label class="dim" style="display:block;margin:10px 0"><input id="benchTuning" type="checkbox" checked> use the tuning saved on the robot (unticked: the values in the code)</label>
+        <div class="controls">
+          <button id="benchRun">Run a maze</button>
+          <button data-experiment="brake">Braking</button>
+          <button data-experiment="straight">A straight</button>
+          <button data-experiment="turns">Turns</button>
+          <button data-experiment="ircal">IR at known distances</button>
+        </div>
+        <h2>The robot's checklist, on the simulated robot</h2>
+        <table id="simChecklist"></table>
+        <div class="controls"><button id="simAll">Run all six in order</button></div>
+        <p class="dim">The same six steps the real robot is taken through, run with the settings on the left, the seed and the tuning above. It stops at the first step that does not pass. Each step loads into the Replay tab as it finishes, so every one can be watched. Passing here does not pass the step on the real robot.</p>
+        <h2>What happened</h2>
+        <div id="benchOut" class="dim" style="white-space:pre-wrap;font:12px/1.5 ui-monospace,Consolas,monospace">Change a setting (changed ones are outlined), then run. A search and six speed runs are driven on a random maze and judged against the lab's limits.</div>
+        <p class="dim">Every number here is a guess about the robot until it is measured. Compare one run with another; do not read a single result as what the robot will do.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="replay">
+    <div class="controls">
+      <label class="dim">Trace file: <input id="file" type="file" accept=".jsonl"></label>
+      <span id="loaded" class="dim"></span>
+    </div>
+    <div class="layout">
+      <div class="panel">
+        <canvas id="maze"></canvas>
+        <div class="controls">
+          <button id="play">Play</button>
+          <button id="reset">Reset</button>
+          <select id="rate" title="Playback speed"><option value="0.25">0.25x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="5">5x</option><option value="20">20x</option></select>
+          <select id="run" title="Which run in the trace"></select>
+          <input id="seek" type="range" min="0" max="0" value="0">
+          <span id="clock" class="dim"></span>
+        </div>
+        <div class="controls">
+          <label class="dim"><input id="showMap" type="checkbox" checked> the firmware's own map (blue = wall it believes, dotted = not yet known)</label>
+          <select id="group" title="What the chart shows"></select>
+          <button id="saveMaze">Save picture</button>
+          <button id="saveChart">Save chart</button>
+          <button id="saveFrame">Save this moment (JSON)</button>
+        </div>
+        <canvas id="chart"></canvas>
+        <div class="dim" id="legend"></div>
+      </div>
+
+      <div class="panel">
+        <h2>This run</h2>
+        <div id="verdict">No trace loaded</div>
+        <h2>Simulated robot (the truth)</h2>
+        <table class="numbers">
+          <tr><td>Position x, y</td><td id="pos">--</td></tr>
+          <tr><td>Heading</td><td id="heading">--</td></tr>
+          <tr><td>Turn rate</td><td id="gz">--</td></tr>
+          <tr><td>Wheel speed left, right</td><td id="wheels">--</td></tr>
+          <tr><td>Centre to nearest wall or post</td><td id="clr">--</td></tr>
+          <tr><td>Beam length L90 L45 FL FR R45 R90</td><td id="rng">--</td></tr>
+        </table>
+        <h2>What the firmware believes and commands</h2>
+        <table class="numbers">
+          <tr><td>Navigation state</td><td id="nav">--</td></tr>
+          <tr><td>Move under way</td><td id="act">--</td></tr>
+          <tr><td>Believed cell, facing</td><td id="cell">--</td></tr>
+          <tr><td>Position error (believed cell against true)</td><td id="poserr">--</td></tr>
+          <tr><td>Speed from the encoders</td><td id="spd">--</td></tr>
+          <tr><td>Heading error</td><td id="he">--</td></tr>
+          <tr><td>IR readings L90 L45 FL FR R45 R90</td><td id="ir">--</td></tr>
+          <tr><td>Walls it sees</td><td id="seen">--</td></tr>
+          <tr><td>Motor commands left, right (-800..800)</td><td id="motors">--</td></tr>
+          <tr><td>Safety supervisor</td><td id="safe">--</td></tr>
+        </table>
+        <h2>Events (click to jump to just before)</h2>
+        <ul id="events"></ul>
+      </div>
+    </div>
+  </div>
+
+  <div id="results" hidden>
+    <div class="layout">
+      <div class="panel">
+        <h2>Scenario runs, newest first (click one for its trials)</h2>
+        <div class="scroll"><table id="history"></table></div>
+        <div class="dim" id="historyNote" style="margin-top:8px"></div>
+      </div>
+      <div class="panel">
+        <h2>Development stages</h2>
+        <table id="stages"></table>
+        <h2>Known limits of the simulation</h2>
+        <ul id="limits" class="dim" style="padding-left:18px;margin:0"></ul>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2 id="detailTitle">Pick a run above</h2>
+      <div id="detail" class="dim"></div>
+    </div>
+  </div>
+
+  <script src="viewer.js"></script>
+  <script src="results.js"></script>
+  <script src="bench.js"></script>
+</body>
+</html>

@@ -62,6 +62,22 @@ public:
 
     // Millimetres added to every straight of a speed run (negative = shorter), set by hand when
     // the robot stops past or short of the cell centres. See Actions::adjustStraightTrim.
+    // Which moves a SPEED RUN may be planned with. The search is not affected (its curves are the
+    // ENABLE_SEARCH_* settings in config.h). Raised one step at a time by the checklist (ui/ladder)
+    // as each kind of move is proven on the robot.
+    enum MoveSet : uint8_t {
+        MOVES_TURNS_ON_THE_SPOT = 0,  // Straights along the maze's two axes and 90 degree turns standing still
+        MOVES_CURVES = 1,             // ...and smooth 90 degree curves through the corners
+        MOVES_DIAGONALS = 2           // ...and diagonals, with their 45 degree curves and V turns
+    };
+    void setMoveSet(uint8_t moves) { move_set_ = moves > MOVES_DIAGONALS ? (uint8_t)MOVES_DIAGONALS : moves; }
+    uint8_t getMoveSet() const { return move_set_; }
+
+    // Whether the SEARCH may curve through cells (look-ahead and curve after curve) or must
+    // stop at every cell centre and turn on the spot. The checklist switches it on once curves are proven.
+    void setSearchCurves(bool on) { search_curves_ = on; }
+    bool getSearchCurves() const { return search_curves_; }
+
     void setStraightTrimMm(float trim_mm) { straight_trim_mm_ = trim_mm; }
     float getStraightTrimMm() const { return straight_trim_mm_; }
 
@@ -118,6 +134,8 @@ private:
 
     float speed_scale_;
     float straight_trim_mm_ = 0.0f;
+    uint8_t move_set_ = ENABLE_SMOOTH_CURVES ? MOVES_DIAGONALS : MOVES_TURNS_ON_THE_SPOT;
+    bool search_curves_ = ENABLE_SEARCH_LOOKAHEAD;
     bool best_route_explored_;
     bool maze_changed_;          // New cells seen since the map was last written to flash
 

@@ -119,6 +119,18 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
                 step(ir, preview);
                 return;
             }
+            // Still walled in on a fresh map: then it is this very reading that invents a wall
+            // (a wall seen straight ahead from a cell centre is always believed). Stand still for
+            // a moment and decide again from new readings, a few times, before giving up.
+            if (trap_recovery_ < 2 + SEARCH_TRAPPED_LOOKS) {
+                trap_recovery_++;
+                Serial.println("[NAV] Walled in even on a fresh map. Standing still and looking again.");
+                maze_.reset();
+                maze_.setVisited(pose_.cell_x, pose_.cell_y);
+                maze_changed_ = true;
+                sendMotionCommand(ACTION_MOVE_DISTANCE, 0.0f, SEARCH_PROBE_SPEED_MM_S, SEARCH_ACCEL_DEFAULT_MM_S2); // A move of no length: it ends at once, with new readings
+                return;
+            }
             Serial.println("[NAV] Error: Trapped! No valid paths.");
             state_ = NAV_STATE_ERROR;
             return;
@@ -199,7 +211,7 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
         // About to drive through the opening ahead, which settles that it is one
         maze_.confirmOpen(pose_.cell_x, pose_.cell_y, d0);
 
-#if ENABLE_SEARCH_LOOKAHEAD
+        if (search_curves_) {
         // Look-ahead: if the next cell is new, or the plan turns there, drive only as far as its
         // edge. By then the 45° sensors have seen its side walls, and stepAtCellEdge() can curve
         // straight through it instead of stopping at its centre to turn on the spot.
@@ -217,7 +229,7 @@ void Navigator::step(const IRReadings& ir, const WallPreview& preview) {
             search_phase_ = PHASE_AT_EDGE;
             return;
         }
-#endif
+        }
         // Into a cell it has visited before, the robot may go faster than the search speed in
         // between (it still arrives at exit_v); into a new one it keeps to the search speed.
         const float cruise = maze_.isVisited(next_cell.x, next_cell.y)
@@ -370,14 +382,13 @@ void Navigator::stepAfterCurve(const IRReadings& ir, const WallPreview& preview)
         }
     }
 
-#if ENABLE_SEARCH_CHAINED_CURVES
     // The robot is now on the entry edge of the next cell, exactly where it would be after a
     // straight, and as the curve ended its 45° sensors read that cell's side walls. So decide
     // here like at any other cell edge: if the route turns again and that side is positively
     // clear it curves again at once (two in a row the same way is a U-turn in one motion);
     // otherwise stepAtCellEdge() carries on to the cell centre as before. The goal cell is
     // always entered to its centre, as it is from a straight.
-    if (!floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y)) {
+    if (search_curves_ && !floodfill_.isAtGoal(pose_.cell_x, pose_.cell_y)) {
 #if !SEARCH_CHAIN_CURVES_BY_SENSORS
         // ...but only where the map already knows the way. The side readings taken as a curve
         // ends are not good enough to curve again on: the robot is still swinging, and on the
@@ -398,9 +409,6 @@ void Navigator::stepAfterCurve(const IRReadings& ir, const WallPreview& preview)
         stepAtCellEdge(ir, preview);
         return;
     }
-#else
-    (void)ir;
-#endif
     driveToCellCentre();
 }
 
