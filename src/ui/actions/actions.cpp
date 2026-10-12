@@ -389,7 +389,8 @@ void onRunEnded(bool aborted) {
     }
     const NavState state = g_navigator->getState();
     const bool was_speed_run = (s_selected_mode != MODE_SEARCH);
-    if (was_speed_run) Ladder::onRunEnded(aborted, state == NAV_STATE_FINISHED); // (acts only on a checklist run)
+    // (acts only on a checklist run; a search has finished when it is back in the start cell, ready for speed runs)
+    Ladder::onRunEnded(aborted, state == (was_speed_run ? NAV_STATE_FINISHED : NAV_STATE_PREPARING_SPEED_RUN));
 
     if (aborted) {
         if (was_speed_run && s_speed_tier > 1) {

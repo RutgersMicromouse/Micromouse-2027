@@ -560,7 +560,8 @@ const TUNE = [["v_kp", "Speed loop P"], ["v_ki", "Speed loop I"], ["v_kd", "Spee
   ["s_damp", "Straights: turn-rate damping (0 = off)"], ["t_damp", "After a turn: turn-rate damping (0 = off)"],
   ["t_push", "After a turn: nudge onto the heading (0 = off)"], ["c_kp", "Curves: extra heading P (0 = off)"],
   ["t_ka", "Turns: braking push (0 = off)"], ["c_ff", "Curves: turn feedforward scale (lower if curves overshoot)"],
-  ["c_ka", "Curves: braking push (0 = off)"]];
+  ["c_ka", "Curves: braking push (0 = off)"],
+  ["t_hold", "Turns: hold the spot (per mm, 0 = off)"]];
 TUNE.forEach(([name, label]) => {
   $("tune").insertAdjacentHTML("beforeend", "<div>" + label + " <span class=dim>" + name + "</span></div>" +
     "<input id=t_" + name + " inputmode=decimal autocomplete=off>");

@@ -183,8 +183,9 @@
           <button class="secondary small" data-studio-cmd="ladder run 5">5 cells</button></span>
         </li>
         <li>
-          <b>How fast should the search drive?</b> <span class="dim">Straights only; 100 % is the careful bring-up speed (180 mm/s). The braking distance stays the same at every level. Saved on the robot, so it holds at a competition. Go up one level at a time and watch a whole search before going higher.</span>
-          <span class="go"><button class="secondary small" data-studio-cmd="searchspeed 100">100 %</button>
+          <b>How fast should the search drive?</b> <span class="dim">Straights only; 100 % is the careful bring-up speed (180 mm/s). The braking distance stays the same at every level. Saved on the robot, so it holds at a competition. Or let the robot find it: each press of "Find it" FORGETS THIS MAZE'S MAP, drives one whole search and judges it; clean = kept and the next press is 15 % faster, not clean = back to the last clean speed. Robot in the start cell, calibrated.</span>
+          <span class="go"><button class="secondary small" data-studio-cmd="ladder search">Find it: search once, faster each time</button>
+          <button class="secondary small" data-studio-cmd="searchspeed 100">100 %</button>
           <button class="secondary small" data-studio-cmd="searchspeed 130">130 %</button>
           <button class="secondary small" data-studio-cmd="searchspeed 160">160 %</button>
           <button class="secondary small" data-studio-cmd="searchspeed 200">200 %</button>

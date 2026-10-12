@@ -156,6 +156,12 @@ void MotionController::update(float dt_seconds) {
         const float wheel_accel = (wheel_mm_s - prev_turn_wheel_mm_s_) / dt_seconds;
         prev_turn_wheel_mm_s_ = wheel_mm_s;
         rotational_feedforward += tune_[TUNE_T_KA] * wheel_accel;
+
+        // Stay on the spot (t_hold): if one wheel has gone further than the other came back, the
+        // middle of the axle has moved, and the robot ends the turn off the cell centre, a little
+        // more every turn. The distance loop above already pulls it back, but gently; this adds
+        // a direct push, the same on both wheels, against however far it has moved.
+        forward_effort += tune_[TUNE_T_HOLD] * dist_err;
     } else {
         target_heading_setpoint = target_relative_angle_deg_;
 
@@ -236,7 +242,10 @@ void MotionController::update(float dt_seconds) {
     }
     // ...and whatever the robot is still turning at is braked, so it comes to rest on the
     // heading instead of swinging through it.
-    if (settling_turn) rotational_effort -= imu_.getGyroZ() * tune_[TUNE_T_DAMP];
+    if (settling_turn) {
+        rotational_effort -= imu_.getGyroZ() * tune_[TUNE_T_DAMP];
+        forward_effort += tune_[TUNE_T_HOLD] * dist_err; // (and it keeps holding the spot, as during the turn)
+    }
 
     // Differential Wheel Speed Lock: actively prevents wheel speed divergence during straight lines
     if (active_cmd_.action == ACTION_MOVE_FORWARD_CELLS || active_cmd_.action == ACTION_MOVE_DISTANCE ||

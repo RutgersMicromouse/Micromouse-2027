@@ -1127,10 +1127,11 @@ static void experimentTurns() {
     }
     traceEnd("ten turns on the spot");
     auto sd = [&](int k) { return sqrt(fmax(0.0, sq[k] / 5 - (sum[k] / 5) * (sum[k] / 5))); };
-    printf("  turns on the spot, degrees off 90: left mean %+.2f sd %.2f worst %+.2f | right mean %+.2f sd %.2f worst %+.2f\n",
-           sum[0] / 5, sd(0), worst[0], sum[1] / 5, sd(1), worst[1]);
-    if (g_metrics_file) fprintf(g_metrics_file, "{\"experiment\":\"turns\",\"left_mean_deg\":%.2f,\"left_sd_deg\":%.2f,\"left_worst_deg\":%.2f,\"right_mean_deg\":%.2f,\"right_sd_deg\":%.2f,\"right_worst_deg\":%.2f}\n",
-                                sum[0] / 5, sd(0), worst[0], sum[1] / 5, sd(1), worst[1]);
+    const double shifted = hypot(g_sim.x - 360.0, g_sim.y - 360.0); // How far the ten turns walked it off the spot
+    printf("  turns on the spot, degrees off 90: left mean %+.2f sd %.2f worst %+.2f | right mean %+.2f sd %.2f worst %+.2f | ended %.1f mm from where it began\n",
+           sum[0] / 5, sd(0), worst[0], sum[1] / 5, sd(1), worst[1], shifted);
+    if (g_metrics_file) fprintf(g_metrics_file, "{\"experiment\":\"turns\",\"left_mean_deg\":%.2f,\"left_sd_deg\":%.2f,\"left_worst_deg\":%.2f,\"right_mean_deg\":%.2f,\"right_sd_deg\":%.2f,\"right_worst_deg\":%.2f,\"shifted_mm\":%.1f}\n",
+                                sum[0] / 5, sd(0), worst[0], sum[1] / 5, sd(1), worst[1], shifted);
 }
 
 // The robot stood facing a wall at known distances and angles: what each front and 45 degree

@@ -456,6 +456,7 @@ static const TuneItem kTune[MotionController::TUNE_COUNT] = {
     //     Pushes the turn in at the start of a curve and brakes it at the end, as t_ka does for
     //     turns on the spot, so a fast curve does not coast past its heading (0 = off)
     { "c_ka",   "Curves: braking push (0 = off)",             0.0f,   0.0f,  0.002f },
+    { "t_hold", "Turns: hold the spot (per mm, 0 = off)",     0.0f,   0.0f,  0.05f },
 };
 
 const char* MotionController::tuneName(int index)        { return kTune[index].name; }

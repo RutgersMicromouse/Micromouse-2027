@@ -45,6 +45,7 @@
 //   ladder clean      the speed run just driven was clean
 //   ladder fail       it was not
 //   ladder reset      start over from step 1 (back to turns on the spot only, ceiling removed)
+//   ladder search     one search at the next search speed to try (see searchRun)
 //
 // Everything is kept in flash and printed as [LADDER] lines.
 namespace Ladder {
@@ -58,11 +59,20 @@ void run(int corridor_cells);         // Blocks for steps 1 and 2; for 3 to 6 it
 void verdict(bool clean);             // The owner's word on the speed run just driven
 void reset();
 
+// The search's speed, found the same way as the steps' speeds but not a numbered step, since it
+// can be done in any maze at any time. Each call FORGETS THE SAVED MAP OF THE MAZE SIZE IN USE
+// (a search over known ground is not the same test) and drives one whole search, out and back,
+// judged like a checklist speed run. Clean, and back in the start cell: that speed is kept and
+// the next call tries LADDER_SEARCH_STEP_PERCENT more. Not clean, or it did not finish: back to
+// the last speed that was clean (or the bring-up speed), which is then the search speed.
+void searchRun();
+
 // Call often while a run is on (the operator task does): gathers what the robot uses to judge a
 // checklist speed run. Does nothing unless such a run is under way.
 void sample();
 
 // Called by Actions when a run ends: a checklist run that was aborted is "not clean" without asking
+// (also when a search-speed trial ends: `reached_goal` then means the search finished back in the start cell)
 void onRunEnded(bool aborted, bool reached_goal);
 
 // For the app: {"cur":2,"best":[150,60,0,0,0,0],"trial":30,"wait":0}

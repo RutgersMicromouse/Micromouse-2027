@@ -168,6 +168,7 @@ static void handle(String cmd, Source source) {
         } else if (cmd == "ladder clean") Ladder::verdict(true);
         else if (cmd == "ladder fail")  Ladder::verdict(false);
         else if (cmd == "ladder reset") Ladder::reset();
+        else if (cmd == "ladder search") Ladder::searchRun();
         else reply("ERR: USAGE 'ladder', 'ladder run [cells]', 'ladder clean', 'ladder fail', 'ladder reset'");
         return;
     }

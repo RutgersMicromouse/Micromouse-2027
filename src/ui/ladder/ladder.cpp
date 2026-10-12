@@ -35,6 +35,9 @@ static bool running_ = false;         // A checklist speed run is under way
 static bool waiting_ = false;         // (kept for the app: a run is waiting to be judged; the robot now judges at once)
 static int16_t undo_best_ = -1;       // Best speed before the robot's last "clean", so the owner can overrule it (-1 = nothing to undo)
 static uint8_t undo_trial_ = 0;
+static bool search_running_ = false;  // A search-speed trial is under way
+static uint8_t search_trial_ = 0;     // Its speed, percent of the bring-up search speed (0 = none started yet)
+static uint8_t search_best_ = 0;      // The fastest search speed judged clean so far in this session
 
 // What the robot measured for itself during a checklist speed run. It knows its own width
 // (ROBOT_WIDTH_MM) and where its side sensors sit on it, so a side reading becomes room
@@ -80,7 +83,7 @@ void begin() {
 }
 
 void sample() {
-    if (!running_) return;
+    if (!running_ && !search_running_) return;
     judge_.tilt_deg = fmaxf(judge_.tilt_deg, g_imu.getTiltDeg());
     // How far the robot points from the nearest maze axis decides which sensors mean what
     const float heading = g_imu.getHeadingDeg();
@@ -198,7 +201,44 @@ void run(int corridor_cells) {
     }
 }
 
+void searchRun() {
+    if (Actions::isRunActive()) { Serial.println("[LADDER] A run is under way."); return; }
+    if (search_trial_ == 0) search_trial_ = Actions::getSearchSpeedPercent(); // The first trial proves the speed in force
+    Actions::clearSavedMaze();
+    Actions::setSearchSpeedPercent(search_trial_);
+    Serial.printf("[LADDER] Search-speed trial at %d%%: the map of this maze is forgotten, one whole search follows. Robot in the start cell, facing in.\n", (int)search_trial_);
+    search_running_ = true;
+    judgeStart();
+    Actions::selectMode(Actions::MODE_SEARCH);
+    Actions::launchSelectedRun();
+    if (!Actions::isRunActive()) { search_running_ = false; Serial.println("[LADDER] The search did not start."); }
+}
+
+static void searchEnded(bool finished) {
+    search_running_ = false;
+    const bool clean = finished && judgedClean();
+    if (clean) {
+        search_best_ = search_trial_;
+        if (search_trial_ >= SEARCH_SPEED_MAX_PERCENT) {
+            Serial.printf("[LADDER] Search clean at %d%%, the most there is: that is the search speed.\n", (int)search_trial_);
+            return;
+        }
+        search_trial_ = (uint8_t)min((int)search_trial_ + LADDER_SEARCH_STEP_PERCENT, (int)SEARCH_SPEED_MAX_PERCENT);
+        Serial.printf("[LADDER] Search CLEAN at %d%% (kept). Next: ladder search, at %d%%.\n", (int)search_best_, (int)search_trial_);
+        StatusLED::flash(StatusLED::GREEN, 3, 150);
+        return;
+    }
+    const uint8_t back = search_best_ ? search_best_ : (uint8_t)100;
+    Serial.printf("[LADDER] Search %s at %d%%: stepping back to %d%%, which is the search speed from now on.\n",
+                  finished ? "NOT CLEAN" : "did not finish", (int)search_trial_, (int)back);
+    Actions::setSearchSpeedPercent(back);
+    search_trial_ = 0;
+    search_best_ = 0;
+    StatusLED::flash(StatusLED::RED, 3, 150);
+}
+
 void onRunEnded(bool aborted, bool reached_goal) {
+    if (search_running_) { searchEnded(!aborted && reached_goal); return; }
     if (!running_) return;
     running_ = false;
     if (aborted || !reached_goal) {

@@ -18,8 +18,11 @@ static const uint32_t PAUSE_MS        = 400;   // Rest between turns
 // the number to tune by when the end nudge is off: the test alternates left and right, so each
 // turn starts from wherever the last one ended, and an error in one shows up with the opposite
 // sign in the next. How far each turn rotated does not depend on where it started.
+static float s_walked_mm = 0.0f; // Sum over the test of how far each turn moved the middle of the axle (by the wheels)
+
 static bool oneTurn(bool left, bool fast, int number, float& over_deg, float& turned_deg) {
     const float start = g_imu.getHeadingDeg();
+    const EncoderState wheels_before = g_encoders.getState();
     // The target the controller itself will use: a turn on the spot starts from the nearest grid
     // heading (a multiple of 45 degrees) if the robot is within 18 degrees of one, otherwise from
     // wherever it is pointing (MotionController::executeCommand), plus or minus 90
@@ -76,9 +79,15 @@ static bool oneTurn(bool left, bool fast, int number, float& over_deg, float& tu
         return false;
     }
 
-    Serial.printf("[TURN] #%d %s | turned %.1f | from %.1f, target %.1f | stopped at %.1f (%+.1f) | %.1f s later %.1f (%+.1f) | peak %.0f deg/s | took %.2f s | IMU failed reads %lu\n",
+    // A turn on the spot should move the wheels equal and opposite distances. Half their sum is
+    // how far the middle of the axle went instead, which is how far off the cell centre it ends.
+    const EncoderState wheels_after = g_encoders.getState();
+    const float walked = 0.5f * ((wheels_after.left_dist_mm - wheels_before.left_dist_mm) + (wheels_after.right_dist_mm - wheels_before.right_dist_mm));
+    s_walked_mm += fabsf(walked);
+
+    Serial.printf("[TURN] #%d %s | turned %.1f | from %.1f, target %.1f | stopped at %.1f (%+.1f) | %.1f s later %.1f (%+.1f) | peak %.0f deg/s | took %.2f s | walked %+.1f mm | IMU failed reads %lu\n",
                   number, left ? "LEFT " : "RIGHT", turned_deg, start, target, at_stop, over_at_stop, COAST_LOOK_MS / 1000.0f, later, over_deg,
-                  peak_rate, took_ms / 1000.0f, (unsigned long)(g_imu.getBadReadCount() - bad_reads_before));
+                  peak_rate, took_ms / 1000.0f, walked, (unsigned long)(g_imu.getBadReadCount() - bad_reads_before));
     return true;
 }
 
@@ -102,6 +111,7 @@ float run(int pairs, bool fast) {
     // controller still holds the heading it last aimed for and swings back to it before turning
     // (2026-10-10: carried a quarter turn after power-on, the first turn span the wrong way).
     prepareForNewRun();
+    s_walked_mm = 0.0f;
 
     const uint32_t bad_reads_before = g_imu.getBadReadCount();
     const uint32_t started = millis();
@@ -127,8 +137,9 @@ float run(int pairs, bool fast) {
     RobotTelemetry telemetry = {};
     getTelemetry(telemetry);
     const MotionController& mc = g_motion_controller;
-    Serial.printf("[TURNTEST] turned on average: LEFT %.1f, RIGHT %.1f degrees (90 is right; tune by this when t_push is 0)\n",
-                  n_left ? turned_left / n_left : 0.0f, n_right ? turned_right / n_right : 0.0f);
+    Serial.printf("[TURNTEST] turned on average: LEFT %.1f, RIGHT %.1f degrees (90 is right; tune by this when t_push is 0) | walked off the spot %.1f mm a turn on average (0 is right; t_hold=%.4g pulls it back)\n",
+                  n_left ? turned_left / n_left : 0.0f, n_right ? turned_right / n_right : 0.0f,
+                  (n_left + n_right) ? s_walked_mm / (n_left + n_right) : 0.0f, g_motion_controller.getTune(MotionController::TUNE_T_HOLD));
     Serial.printf("[TURNTEST] done | %s | %s | %s | took %.0f s | supply %.1f V battery %.2f V | IMU failed reads %lu | "
                   "h_kp=%.4g h_ki=%.4g h_kd=%.4g turn_ff=%.4g t_push=%.4g t_damp=%.4g t_ka=%.4g imu_a=%.4g\n",
                   fast ? "FAST" : "search speed", left_text, right_text, (millis() - started) / 1000.0f, g_motors.getSupplyVolts(), telemetry.vbat_volts,

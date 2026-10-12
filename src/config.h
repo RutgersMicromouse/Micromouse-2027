@@ -483,6 +483,7 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define IR_STALE_RATIO_HIGH          2.0f    // ...or over twice them: the calibration does not belong to these walls
 
 #define LADDER_TURN_PERCENTS         { 100, 125, 150, 175, 200, 250 } // Step 1 tries the turns at these shares of the tuned turn speed, in order
+#define LADDER_SEARCH_STEP_PERCENT   15      // "ladder search": each clean search is followed by one this much faster
 #define LADDER_START_PERCENT         20      // Steps 3 to 5: the first speed run is at this share of full speed...
 #define LADDER_STEP_PERCENT          10      // ...and each clean one is followed by one this much faster
 // What the robot itself calls a clean speed run (steps 3 to 5). Its own size is what turns a side
