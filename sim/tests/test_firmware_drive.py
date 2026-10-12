@@ -68,7 +68,10 @@ DRIVE_STUBS['Preferences.h'] = STUBS['Preferences.h'].replace('''    void putBoo
     float getFloat(const char* key, float fallback) { float v; return getBytes(key, &v, sizeof(v)) == sizeof(v) ? v : fallback; }
     void putUShort(const char* key, uint16_t v) { putBytes(key, &v, sizeof(v)); }
     uint16_t getUShort(const char* key, uint16_t fallback) { uint16_t v; return getBytes(key, &v, sizeof(v)) == sizeof(v) ? v : fallback; }
+    void putUChar(const char* key, uint8_t v) { putBytes(key, &v, sizeof(v)); }
+    uint8_t getUChar(const char* key, uint8_t fallback) { uint8_t v; return getBytes(key, &v, sizeof(v)) == sizeof(v) ? v : fallback; }
     void putBool(''')
+DRIVE_STUBS['Preferences.h'] = '#include <stdint.h>\n' + DRIVE_STUBS['Preferences.h']
 DRIVE_STUBS['Wire.h'] = r'''
 #pragma once
 #include <stdint.h>
@@ -133,10 +136,58 @@ void pcnt_counter_clear(pcnt_unit_t unit);
 void pcnt_get_counter_value(pcnt_unit_t unit, int16_t* count);
 '''
 
+DRIVE_STUBS['robot.h'] = r'''
+#pragma once
+// Stand-in for src/robot.h, so that the robot's own test code (src/ui/ladder, limits_test,
+// turn_test) can be compiled for the PC and run on the simulated robot. On the robot these names
+// are objects shared between tasks; here they reach the harness's simulated robot, and a
+// vTaskDelay() is what makes simulated time pass.
+#include <Arduino.h>
+#include <math.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "config.h"
+#include "types.h"
+#include "hardware/encoders/encoders.h"
+#include "hardware/motors/motors.h"
+#include "hardware/ir_sensors/ir_sensors.h"
+#include "hardware/imu/imu.h"
+#include "control/motion_controller/motion_controller.h"
+#include "control/safety/safety.h"
+#include "navigation/navigator/navigator.h"
+Encoders& uiEncoders();
+Motors& uiMotors();
+IRSensors& uiIr();
+IMU& uiImu();
+MotionController& uiMotion();
+SafetySupervisor& uiSafety();
+Navigator* uiNavigator();
+#define g_encoders          uiEncoders()
+#define g_motors            uiMotors()
+#define g_ir_sensors        uiIr()
+#define g_imu               uiImu()
+#define g_motion_controller uiMotion()
+#define g_safety            uiSafety()
+#define g_navigator         uiNavigator()
+#define g_motion_cmd_queue  ((QueueHandle_t)nullptr)
+struct NavigatorLock { NavigatorLock() {} ~NavigatorLock() {} };
+bool getTelemetry(RobotTelemetry& out);
+void requestStop();
+uint32_t stopCount();
+void prepareForNewRun();
+#define pdMS_TO_TICKS(ms) (ms)
+void vTaskDelay(int ms);
+'''
+
 # ----------------------------------------------------------------------------------------------
 # The simulated robot, and the firmware's main loop around it
 # ----------------------------------------------------------------------------------------------
 HARNESS = r'''
+#include "ui/status_led/status_led.h"
+#include "ui/actions/actions.h"
+#include "ui/turn_test/turn_test.h"
+#include "ui/limits_test/limits_test.h"
+#include "ui/ladder/ladder.h"
 #include <stdlib.h>
 #include <deque>
 #include <map>
@@ -262,7 +313,8 @@ static const float WALL_HALF_MM       = 6.0f;
 
 // Where each IR sensor sits on the robot (mm ahead of the axle, mm to the left) and where it points
 // (degrees, left positive). Order: L90, L45, FL, FR, R45, R90.
-static const float SENSOR_AHEAD[6] = { SIDE_SENSOR_AHEAD_MM, 46.0f, 50.0f, 50.0f, 46.0f, SIDE_SENSOR_AHEAD_MM }; // 90° ones as config.h says
+// 90° and front ones as config.h says (the front distances the firmware works out depend on it; the 45° ones are still a guess)
+static const float SENSOR_AHEAD[6] = { SIDE_SENSOR_AHEAD_MM, 46.0f, FRONT_SENSOR_AHEAD_MM, FRONT_SENSOR_AHEAD_MM, 46.0f, SIDE_SENSOR_AHEAD_MM };
 static const float SENSOR_LEFT[6]  = { 28.0f, 20.0f, 10.0f, -10.0f, -20.0f, -28.0f };
 static const float SENSOR_AIM[6]   = { 90.0f, 45.0f, 0.0f, 0.0f, -45.0f, -90.0f };
 static const int EMITTER_PIN[6]  = { PIN_IR_E1, PIN_IR_E2, PIN_IR_E3, PIN_IR_E4, PIN_IR_E5, PIN_IR_E6 };
@@ -627,6 +679,13 @@ static void firmwareTick() {
         controller_stop_seen = controller_stop;
         const SafetySupervisor::Outputs allowed = g_safety.update(in, CONTROL_DT_S);
         if (allowed.brake_now) { g_motion->safetyStop(); g_safety_brakings++; }
+        static uint16_t changes_seen = 0; // (what main.cpp's operator task prints on every change of state)
+        const SafetySupervisor::Status safe = g_safety.getStatus();
+        if (safe.changes != changes_seen) {
+            changes_seen = safe.changes;
+            if (g_verbose) printf("[SAFE] %s: %s | %.0f mm/s, needs %.0f mm, room %.0f mm | action %d, t=%.1f s\n", SafetySupervisor::stateName(safe.state),
+                                  SafetySupervisor::reasonText(safe.reason), safe.speed_mm_s, safe.stop_needed_mm, safe.stop_room_mm, g_current_action, g_sim.time_s);
+        }
         g_motors->setInhibited(allowed.inhibit);
         if (allowed.inhibit) g_motors->brake();
     }
@@ -1017,7 +1076,7 @@ static void safetySelfCheck() {
     run(0.5f);
     check(s.getState() == SafetySupervisor::NORMAL && !out.inhibit, name, "a far wall at 300 mm/s should be NORMAL");
 
-    in.front_gap_mm = 40.0f; // 25 mm of room; 300 mm/s needs about 28
+    in.front_gap_mm = 30.0f; // 22 mm of room (SAFETY_MIN_FRONT_GAP_MM is 8); 300 mm/s needs about 28
     run(0.1f);
     check(s.getState() == SafetySupervisor::BRAKING && braked && out.inhibit, name, "a wall inside the stopping distance should brake and hold the motors");
 
@@ -1246,6 +1305,249 @@ static void experimentLimits(bool hard) {
     if (g_metrics_file) fprintf(g_metrics_file, "{\"experiment\":\"limits\",\"hard\":%d,\"best_percent\":%d,\"ended\":\"%s\"}\n", hard ? 1 : 0, best, why);
 }
 
+// ================================================================ the robot's own tests, on the simulated robot
+// src/ui/ladder, limits_test and turn_test are compiled in as they are. What they reach through
+// robot.h (see the stand-in above) and through Actions is provided here. Their waits
+// (vTaskDelay) are what move simulated time on, so a test that blocks on the robot runs to its
+// end here too, in one thread.
+static bool g_ui_stop = false;
+static uint32_t g_ui_stops = 0;
+
+Encoders& uiEncoders() { return *g_encoders; }
+Motors& uiMotors() { return *g_motors; }
+IRSensors& uiIr() { return *g_ir; }
+IMU& uiImu() { return *g_imu; }
+MotionController& uiMotion() { return *g_motion; }
+SafetySupervisor& uiSafety() { return g_safety; }
+Navigator* uiNavigator() { return g_nav; }
+bool getTelemetry(RobotTelemetry& out) { out = RobotTelemetry{}; return true; }
+void requestStop() { g_ui_stops++; g_ui_stop = true; }
+uint32_t stopCount() { return g_ui_stops + (uint32_t)g_safety_brakings; } // (a safety braking counts, as in main.cpp)
+
+static void uiStep() {
+    if (g_ui_stop) { // What main.cpp does with a STOP: brake, drop what is queued, end the run
+        g_commands.clear();
+        g_motion->emergencyStop();
+        g_nav->stop();
+        g_ui_stop = false;
+    }
+    physicsStep(CONTROL_DT_S);
+    firmwareTick();
+    if (g_tick % 10 == 0) traceFrame();
+    if (g_tick % 5 == 0) Ladder::sample();
+}
+void vTaskDelay(int ms) { for (int i = 0; i < (ms + 1) / 2 || i < 1; i++) uiStep(); }
+void prepareForNewRun() { // (as main.cpp: wait for the safety supervisor to let go of the motors, then reset)
+    for (int i = 0; i < 1500 && g_motors->isInhibited(); i++) uiStep();
+    vTaskDelay(4);
+    g_motion->resetTracking();
+}
+
+namespace StatusLED { void flash(Color, int, int) {} }
+
+namespace Actions {
+static RunMode s_mode = MODE_SEARCH;
+static uint8_t s_next_percent = 0, s_limit_percent = 100;
+void selectMode(RunMode mode) { s_mode = mode; }
+bool isRunActive() { return isActive(g_nav->getState()); }
+void setNextSpeedRunPercent(uint8_t percent) { s_next_percent = percent; }
+uint8_t getSpeedLimitPercent() { return s_limit_percent; }
+void setSpeedLimitPercent(uint8_t percent) { s_limit_percent = constrain(percent, (uint8_t)10, (uint8_t)100); }
+uint8_t getSearchSpeedPercent() { return (uint8_t)lroundf(g_search_speed_scale * 100.0f); }
+void setSearchSpeedPercent(uint8_t percent) { g_search_speed_scale = constrain(percent, (uint8_t)100, (uint8_t)SEARCH_SPEED_MAX_PERCENT) / 100.0f; }
+void clearSavedMaze() { g_nav->clearSavedMaze(); }
+void launchSelectedRun(bool) {
+    prepareForNewRun();
+    if (s_mode == MODE_SEARCH) {
+        g_nav->startSearchRun();
+        g_nav->step(g_ir->getReadings(), g_motion->getWallPreview());
+    } else {
+        const uint8_t percent = min(s_next_percent ? s_next_percent : (uint8_t)100, s_limit_percent);
+        s_next_percent = 0;
+        g_nav->setSpeedScale(percent / 100.0f);
+        g_nav->startSpeedRun(SPEEDRUN_HYBRID_AUTO);
+    }
+}
+} // namespace Actions
+
+// Lets a run started by the robot's code drive to its end. False if it ran out of time.
+static bool uiRunUntilIdle(double time_limit_s) {
+    const double deadline = g_sim.time_s + time_limit_s;
+    int settle = 0;
+    while (g_sim.time_s < deadline) {
+        uiStep();
+        if (g_abort_reason) return true;
+        if (!isActive(g_nav->getState()) && g_commands.empty() && !g_was_busy) { if (++settle > 150) return true; }
+        else settle = 0;
+    }
+    // Out of time: say what everything was doing, since nothing else will
+    const SafetySupervisor::Status safe = g_safety.getStatus();
+    printf("      OUT OF TIME: nav state %d, move under way %d (action %d), moves waiting %d, motors held %d, safety %s (%s), speed %.0f mm/s\n",
+           (int)g_nav->getState(), g_was_busy ? 1 : 0, g_current_action, (int)g_commands.size(), g_motors->isInhibited() ? 1 : 0,
+           SafetySupervisor::stateName(safe.state), SafetySupervisor::reasonText(safe.reason), g_encoders->getState().linear_speed_mm_s);
+    return false;
+}
+
+static int ladderStep() { // The checklist's open step, 1-based (STEPS + 1 = all finished)
+    char text[96];
+    int cur = 0;
+    Ladder::statusJson(text, sizeof(text));
+    sscanf(text, "{\"cur\":%d", &cur);
+    return cur + 1;
+}
+
+// The corridor of the checklist's straights step, in column 2: 5 cells, closed at both ends
+static const int CORRIDOR_X = 2, CORRIDOR_Y = 1, CORRIDOR_CELLS = 5;
+static void buildCorridor(bool hard) {
+    emptyFloor();
+    for (int i = 0; i < CORRIDOR_CELLS; i++) {
+        setTrueWall(CORRIDOR_X, CORRIDOR_Y + i, 3, !hard || i == 0 || i == 1 || i == 4); // West = the robot's left going up
+        setTrueWall(CORRIDOR_X, CORRIDOR_Y + i, 1, !hard || i == 0 || i == 3 || i == 4);
+    }
+    setTrueWall(CORRIDOR_X, CORRIDOR_Y, 2, true);
+    setTrueWall(CORRIDOR_X, CORRIDOR_Y + CORRIDOR_CELLS - 1, 0, true);
+}
+
+// "Calibrate sensors" as the robot does it: measure, turn round, measure again, turn back
+static bool calibrateBothWays() {
+    MotionCommand turn = {};
+    turn.action = ACTION_TURN_AROUND_180; turn.param_value = 180.0f;
+    turn.max_speed_mm_s = SEARCH_TURN_SPEED_DEG_S; turn.acceleration = SEARCH_TURN_ACCEL_DEG_S2;
+    auto turnRound = [&] {
+        g_commands.push_back(turn);
+        for (int t = 0; t < 2; t++) uiStep();
+        for (int t = 0; t < 6000 && g_was_busy; t++) uiStep();
+        for (int t = 0; t < 200; t++) uiStep();
+    };
+    for (int t = 0; t < 200; t++) uiStep();
+    bool ok = g_ir->calibrateInCell(200);
+    turnRound();
+    ok = g_ir->calibrateInCell(200, true) && ok;
+    turnRound();
+    g_motion->resetTracking();
+    return ok;
+}
+
+// The whole checklist as the owner would take the robot through it, with the robot's own code
+// deciding everything: braking measured, turns, straights, curves, diagonals, the 8x8 and the
+// 16x16, and a search-speed trial. After every run the truth is printed beside the robot's own
+// verdict (how close it REALLY came to a wall), which is the check on its judge.
+static void experimentChecklist() {
+    g_fake_flash.clear();
+    auto truth = [](const char* what) {
+        printf("      truth: %s: closest approach %.1f mm (%s)\n", what, g_sim.min_clearance,
+               g_sim.min_clearance < MIN_OK_CLEARANCE ? "IT TOUCHED" : "touched nothing");
+    };
+    auto powerOn = [](int size) {
+        g_maze_size = size;
+        placeAtStart();
+        g_sim.time_s = 0;
+        bootFirmware();
+        Ladder::begin();
+        LimitsTest::begin();
+    };
+
+    printf("\n  == braking, measured by the robot (1.2 m of clear floor)\n");
+    g_maze_size = 8; emptyFloor(); powerOn(8);
+    traceMaze("checklist: braking on clear floor");
+    LimitsTest::measureBraking();
+    traceEnd("braking measured");
+
+    printf("\n  == step 1: turns on the spot, in a dead end\n");
+    g_maze_size = 8; emptyFloor(); setTrueWall(0, 0, 1, true); powerOn(8);
+    traceMaze("checklist step 1: turns on the spot in a dead end");
+    Ladder::run(0);
+    truth("step 1");
+    traceEnd("step 1");
+    if (ladderStep() < 2) { printf("  the checklist stopped at step 1\n"); return; }
+
+    printf("\n  == step 2: straights, in the corridor whose walls change sides\n");
+    g_maze_size = 8; buildCorridor(true); powerOn(8);
+    g_sim.x = CORRIDOR_X * 180.0; g_sim.y = CORRIDOR_Y * 180.0;
+    traceMaze("checklist step 2: straights in a closed corridor");
+    if (!calibrateBothWays()) printf("  calibration failed\n");
+    g_sim.min_clearance = 1e9f;
+    Ladder::run(CORRIDOR_CELLS);
+    truth("step 2");
+    traceEnd("step 2");
+    if (ladderStep() < 3) { printf("  the checklist stopped at step 2\n"); return; }
+
+    struct MazeStep { int step, size; const char* file; uint32_t seed; };
+    const MazeStep steps[] = { { 3, 5, SIM_MAZE_DIR "/checklist/curves_5x5.num", 0 }, { 4, 5, SIM_MAZE_DIR "/checklist/diagonals_5x5.num", 0 },
+                               { 5, 8, nullptr, 1 }, { 6, 16, nullptr, 1 } };
+    for (const MazeStep& maze : steps) {
+        printf("\n  == step %d: speed runs in the %dx%d maze\n", maze.step, maze.size, maze.size);
+        g_maze_size = maze.size;
+        if (maze.file) { if (!loadMaze(maze.file)) { printf("  could not read %s\n", maze.file); return; } }
+        else randomMaze(maze.seed);
+        g_fake_flash.erase("maze_votes"); g_fake_flash.erase("maze_small"); g_fake_flash.erase("maze_5x5"); g_fake_flash.erase("maze_8x8"); // "Forget this maze"
+        powerOn(maze.size);
+        char label[64];
+        snprintf(label, sizeof(label), "checklist step %d", maze.step);
+        traceMaze(label);
+        if (!calibrateBothWays()) printf("  calibration failed\n");
+
+        for (int pass = 1; pass <= 4; pass++) { // Search until the best route is proven
+            g_sim.min_clearance = 1e9f; g_abort_reason = nullptr;
+            Actions::selectMode(Actions::MODE_SEARCH);
+            Actions::launchSelectedRun(false);
+            const bool in_time = uiRunUntilIdle(1200.0);
+            printf("    search %d: %.0f s%s%s\n", pass, g_sim.time_s, in_time ? "" : ", RAN OUT OF TIME", g_abort_reason ? ", ABORTED" : "");
+            truth("search");
+            snprintf(label, sizeof(label), "step %d search %d", maze.step, pass);
+            traceEnd(label);
+            if (g_abort_reason || !in_time || g_nav->isBestRouteExplored()) break;
+        }
+        if (g_abort_reason || g_nav->getState() != NAV_STATE_PREPARING_SPEED_RUN) {
+            printf("  the search did not finish (%s): the checklist stopped at step %d\n", g_abort_reason ? g_abort_reason : "out of time", maze.step);
+            break;
+        }
+
+        if (maze.step == 3) { // The search speed, found the same way, in the first maze there is
+            printf("\n  == search-speed trials (each forgets the map and searches again)\n");
+            uint8_t tried_before = 0;
+            for (int trial = 0; trial < 8; trial++) {
+                placeAtStart(); for (int t = 0; t < 60; t++) uiStep();
+                const double from = g_sim.time_s;
+                Ladder::searchRun();
+                const uint8_t tried = Actions::getSearchSpeedPercent();
+                if (tried == tried_before) { g_nav->stop(); break; } // The same speed again: the last trial was its answer
+                tried_before = tried;
+                uiRunUntilIdle(1200.0);
+                Ladder::onRunEnded(g_abort_reason != nullptr, g_nav->getState() == NAV_STATE_PREPARING_SPEED_RUN);
+                printf("      (that search took %.0f s)\n", g_sim.time_s - from);
+                truth("search-speed trial");
+                if (Actions::getSearchSpeedPercent() < tried || tried >= SEARCH_SPEED_MAX_PERCENT) break;
+            }
+            traceEnd("search-speed trials");
+        }
+
+        for (int run = 0; run < 40 && ladderStep() == maze.step; run++) {
+            placeAtStart(); for (int t = 0; t < 60; t++) uiStep();
+            const double from = g_sim.time_s;
+            Ladder::run(0);
+            if (!Actions::isRunActive()) break;
+            const bool in_time = uiRunUntilIdle(600.0);
+            const bool reached = g_nav->getState() == NAV_STATE_FINISHED;
+            printf("      (that run took %.1f s%s)\n", g_sim.time_s - from, in_time ? "" : ", RAN OUT OF TIME");
+            truth("speed run");
+            Ladder::onRunEnded(g_abort_reason != nullptr || !in_time, reached);
+            if (!in_time) break;
+            char now[96]; Ladder::statusJson(now, sizeof(now));
+            if (ladderStep() == maze.step && strstr(now, "\"trial\":0")) break; // Not clean at the lowest speed: the step stays open
+            snprintf(label, sizeof(label), "step %d run %d", maze.step, run + 1);
+            traceEnd(label);
+        }
+        if (ladderStep() <= maze.step) { printf("  the checklist stopped at step %d\n", maze.step); break; }
+    }
+    char text[96];
+    Ladder::statusJson(text, sizeof(text));
+    printf("\n  checklist as the robot left it: %s | turn speed x%.2f | curve cap %.0f mm/s | search speed %d%% | safety counts on %.0f mm/s2\n",
+           text, g_turn_speed_scale, g_curve_speed_cap_mm_s, (int)Actions::getSearchSpeedPercent(), SafetySupervisor::getBrakeDecel());
+    printf("  (and after a delay of %.0f ms)\n", SafetySupervisor::getLatency() * 1000.0f);
+    if (g_metrics_file) fprintf(g_metrics_file, "{\"experiment\":\"checklist\",\"open_step\":%d,\"state\":%s}\n", ladderStep(), text);
+}
+
 int main(int argc, char** argv) {
     int random_count = 0;
     const char* experiment = nullptr;
@@ -1285,7 +1587,8 @@ int main(int argc, char** argv) {
         else if (strcmp(experiment, "ircal") == 0) experimentIrCalibration();
         else if (strcmp(experiment, "limits") == 0) experimentLimits(false);
         else if (strcmp(experiment, "limits_hard") == 0) experimentLimits(true);
-        else { printf("  no experiment '%s' (brake, straight, turns, ircal, limits, limits_hard)\n", experiment); return 2; }
+        else if (strcmp(experiment, "checklist") == 0) experimentChecklist();
+        else { printf("  no experiment '%s' (brake, straight, turns, ircal, limits, limits_hard, checklist)\n", experiment); return 2; }
         return 0;
     }
     safetySelfCheck();
@@ -1328,11 +1631,14 @@ def build(work):
 
     exe = os.path.join(work, 'drive.exe')
     src = os.path.join(ROOT, 'src')
-    command = compiler + ['-std=c++17', '-O2', '-D_USE_MATH_DEFINES', '-DMAZE_ACTIVE_SIZE=g_maze_size',
+    maze_dir = os.path.join(ROOT, 'sim', 'mazes').replace('\\', '/')
+    command = compiler + ['-std=c++17', '-O2', '-D_USE_MATH_DEFINES', '-DMAZE_ACTIVE_SIZE=g_maze_size', '-DSIM_MAZE_DIR="%s"' % maze_dir,
                           '-I', os.path.join(work, 'stubs'), '-I', src, '-I', os.path.join(ROOT, 'sim'), harness]
     for folder in ('hardware', 'control', 'navigation'):
         for path, _, names in sorted(os.walk(os.path.join(src, folder))):
             command += sorted(os.path.join(path, name) for name in names if name.endswith('.cpp'))
+    # The robot's own test code, run on the simulated robot by --experiment checklist
+    command += [os.path.join(src, 'ui', part, part + '.cpp') for part in ('turn_test', 'limits_test', 'ladder')]
     command += ['-o', exe]
     print('Compiling the firmware drivers, motion controller and navigator for this PC...')
     result = subprocess.run(command, capture_output=True, text=True)

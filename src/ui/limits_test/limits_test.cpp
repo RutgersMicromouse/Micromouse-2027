@@ -140,10 +140,11 @@ void begin() {
     Preferences prefs;
     prefs.begin("hand_cfg", true);
     const float saved = prefs.getFloat("brake", 0.0f);
+    const float delay_s = prefs.getFloat("lat", SAFETY_LATENCY_S);
     prefs.end();
     if (saved > 0.0f) {
-        SafetySupervisor::setBrakeDecel(saved);
-        Serial.printf("[LIMITS] Braking measured on this robot: the safety sum counts on %.0f mm/s2.\n", saved);
+        SafetySupervisor::setBrakeModel(saved, delay_s);
+        Serial.printf("[LIMITS] Braking measured on this robot: the safety sum counts on %.0f mm/s2 after %.0f ms.\n", saved, delay_s * 1000.0f);
     }
 }
 
@@ -156,7 +157,8 @@ static float wheelsMm() {
 void measureBraking() {
     static const uint8_t kLevels[] = { 40, 70, 100 };
     Serial.println("[BRAKE] Needs 1.2 m of clear floor straight ahead. Three runs, each a little further on: up to speed, then the brake the safety supervisor uses.");
-    float lowest = 0.0f;
+    float speeds[3], stops[3];
+    int measured = 0;
     for (uint8_t percent : kLevels) {
         prepareForNewRun();
         vTaskDelay(pdMS_TO_TICKS(60));
@@ -203,22 +205,40 @@ void measureBraking() {
             Serial.printf("[BRAKE] %d%%: only reached %.0f mm/s of %.0f, or did not move while braking: not counted.\n", (int)percent, speed, target);
             continue;
         }
-        const float decel = speed * speed / (2.0f * stop_mm); // (the delay before the brake bites is inside this figure)
-        Serial.printf("[BRAKE] %d%% | from %.0f mm/s | stopped in %.0f mm (%s) | that is %.0f mm/s2\n",
-                      (int)percent, speed, stop_mm, by_sensors ? "by the front sensors" : "by the wheels", decel);
-        if (lowest == 0.0f || decel < lowest) lowest = decel;
+        Serial.printf("[BRAKE] %d%% | from %.0f mm/s | stopped in %.0f mm (%s)\n",
+                      (int)percent, speed, stop_mm, by_sensors ? "by the front sensors" : "by the wheels");
+        speeds[measured] = speed;
+        stops[measured] = stop_mm;
+        measured++;
     }
-    if (lowest == 0.0f) { Serial.println("[BRAKE] done | nothing measured, the safety sum is unchanged"); return; }
-    // The weakest of the three, less a fifth for what a worn battery or a dusty floor take away
-    const float use = constrain(0.8f * lowest, 500.0f, 6000.0f);
-    const float was = SafetySupervisor::getBrakeDecel();
-    SafetySupervisor::setBrakeDecel(use);
+    if (measured < 2) { Serial.println("[BRAKE] done | fewer than two speeds measured, the safety sum is unchanged"); return; }
+    // A stop is a delay (the robot runs on at speed until the brake bites) and then the braking:
+    //   distance = speed x delay + speed^2 / (2 x deceleration)
+    // so distance / speed against speed is a straight line: it starts at the delay and climbs by
+    // 1 / (2 x deceleration). The line through the measured points gives both.
+    float sum_v = 0.0f, sum_y = 0.0f, sum_vv = 0.0f, sum_vy = 0.0f;
+    for (int i = 0; i < measured; ++i) {
+        const float y = stops[i] / speeds[i];
+        sum_v += speeds[i]; sum_y += y; sum_vv += speeds[i] * speeds[i]; sum_vy += speeds[i] * y;
+    }
+    const float spread = measured * sum_vv - sum_v * sum_v;
+    float climb = spread > 1.0f ? (measured * sum_vy - sum_v * sum_y) / spread : 0.0f;
+    climb = fmaxf(climb, 1.0f / (2.0f * 8000.0f)); // Never credit it with more than 8000 mm/s2
+    const float decel = 1.0f / (2.0f * climb);
+    const float delay_s = fmaxf(0.0f, (sum_y - climb * sum_v) / measured);
+    // A fifth taken off the braking and added to the delay, for a tired battery or a dusty floor
+    const float use_decel = constrain(0.8f * decel, 500.0f, 8000.0f);
+    const float use_delay = constrain(1.2f * delay_s, 0.010f, 0.200f);
+    const float was = SafetySupervisor::stoppingDistanceMm(500.0f);
+    SafetySupervisor::setBrakeModel(use_decel, use_delay);
     Preferences prefs;
     prefs.begin("hand_cfg", false);
-    prefs.putFloat("brake", use);
+    prefs.putFloat("brake", use_decel);
+    prefs.putFloat("lat", use_delay);
     prefs.end();
-    Serial.printf("[BRAKE] done | weakest braking %.0f mm/s2 | the safety sum now counts on %.0f (it was %.0f) | from 500 mm/s that allows %.0f mm | saved\n",
-                  lowest, use, was, SafetySupervisor::stoppingDistanceMm(500.0f));
+    Serial.printf("[BRAKE] done | measured: brakes at %.0f mm/s2 after a delay of %.0f ms | the safety sum now counts on %.0f mm/s2 after %.0f ms | "
+                  "from 500 mm/s that allows %.0f mm (it was %.0f) | saved\n",
+                  decel, delay_s * 1000.0f, use_decel, use_delay * 1000.0f, SafetySupervisor::stoppingDistanceMm(500.0f), was);
 }
 
 } // namespace LimitsTest

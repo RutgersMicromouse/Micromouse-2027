@@ -108,6 +108,12 @@ void prepareForNewRun() {
     for (int i = 0; i < 50 && g_stop_request.load(); ++i) {
         vTaskDelay(pdMS_TO_TICKS(2));
     }
+    // After a safety braking the supervisor holds the motors for about a second, and the motion
+    // task throws away any move sent meanwhile: a run started in that second would be left
+    // waiting for a first move that was never made. So wait for it to let go (3 s at most).
+    for (int i = 0; i < 1500 && g_motors.isInhibited(); ++i) {
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
     g_pending_resets.fetch_or(RESET_REQ_NEW_RUN);
     // Wait for the motion task to carry it out (it runs every 2 ms)
     for (int i = 0; i < 50 && (g_pending_resets.load() & RESET_REQ_NEW_RUN); ++i) {

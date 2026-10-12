@@ -402,7 +402,15 @@ bool IRSensors::calibrateInCell(uint16_t sample_count, bool keep_side_centre) {
     // on the 45° sensors. A dimmer reading is only a wall further down an open corridor, and must
     // not be used as the "wall in front" level (it would make every distant wall look close).
     const float side_level = ((float)avg_l45 + (float)avg_r45) * 0.5f;
-    if (front_wall_here) {
+    if (front_wall_here && avg_front >= IR_SATURATED_READING) {
+        // The front sensors are at the top of their range here, so they cannot tell this distance
+        // from a nearer one: every front DISTANCE worked out from this reading would be wrong,
+        // always on the side of "further than it is". Use it to tell wall from no wall only.
+        thresh_front_ = (uint16_t)(avg_front * 0.40f);
+        front_level_measured_ = false;
+        Serial.printf("[CALIB] WARNING: the front sensors read %d at the cell centre, the top of their range. Front distances cannot be trusted: "
+                      "the front-wall stop, the front-wall check and the safety layer's front check stay OFF. (Bright walls: lower the emitter power or the receiver gain.)\n", avg_front);
+    } else if (front_wall_here) {
         thresh_front_ = (uint16_t)(avg_front * 0.40f);
         front_level_measured_ = true;
         nominal_fl_ = avg_fl; // The robot is square to this wall, so this is how the two compare

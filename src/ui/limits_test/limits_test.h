@@ -35,9 +35,11 @@ int run(int cells);
 void begin();
 
 // Console "limits brake": on 1.2 m of clear floor, gets up to 40, 70 and 100 % of the speed
-// run's speed and brakes as the safety supervisor would, each time. The weakest braking it
-// measures, less a fifth, replaces the guessed SAFETY_BRAKE_DECEL_MM_S2 in the safety
-// supervisor's stopping-distance sum, and is saved. Prints [BRAKE] lines. Blocks.
+// run's speed and brakes as the safety supervisor would, each time. From the three stopping
+// distances it works out the delay before the brake bites and the braking itself, and those
+// (with a fifth of margin on each) replace the guessed SAFETY_LATENCY_S and
+// SAFETY_BRAKE_DECEL_MM_S2 in the safety supervisor's stopping-distance sum, and are saved.
+// Prints [BRAKE] lines. Blocks.
 void measureBraking();
 
 } // namespace LimitsTest

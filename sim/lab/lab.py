@@ -10,6 +10,7 @@ every run against fixed limits, not just "did it reach the goal".
     python3 sim/lab/lab.py sweep mass_kg 0.08,0.12,0.2,0.3
     python3 sim/lab/lab.py regression                              every scenario once
     python3 sim/lab/lab.py drift worst_case --size 16 --trials 3   does position error build up through a maze?
+    python3 sim/lab/lab.py experiment checklist                    the robot's own checklist code, all six steps (minutes)
     python3 sim/lab/lab.py experiment brake                        braking distance at several speeds
     python3 sim/lab/lab.py experiment turns --set mass_kg=0.2
     python3 sim/lab/lab.py experiment ircal --set ir_ambient=1500
@@ -79,6 +80,21 @@ SCENARIOS = {
                         ['ir_gain_r45=0.33', 'ir_drop_fl=0.3', 'ir_ambient=1500', 'ir_ambient_noise=0.02', 'imu_drop=0.6',
                          'friction=0.5', 'mass_kg=0.2', 'inertia_kg_m2=0.0002', 'motor_left=0.9', 'supply_volts=10', 'sag_volts=1']),
 }
+
+
+# The simulated IR as the real robot reads it: a fifth of the original model's brightness (side
+# walls read about 500 on the robot, 2200 in the original model, which puts the front sensors at
+# the top of their range at a cell centre) and the fall-off the robot measured (power 1.2). The
+# checklist needs it, because it calibrates against a front wall and then trusts front distances.
+REAL_IR = ['ir_gain_l90=0.2', 'ir_gain_l45=0.2', 'ir_gain_fl=0.2', 'ir_gain_fr=0.2', 'ir_gain_r45=0.2', 'ir_gain_r90=0.2', 'ir_falloff=1.2']
+
+CHECKLIST_KEEP = ('  ==', '[BRAKE] done', '[LADDER]', '[LIMITS] done', 'truth:', '(that', 'search ', 'checklist as', '(and after', '[SAFE] BRAKING',
+                  '[SAFE] FAULT', 'OUT OF TIME', 'stopped at step', 'did not finish', 'WARNING')
+
+
+def checklist_lines(output):
+    """The lines worth reading from `--experiment checklist --verbose`: what the robot's own code decided, and the truth beside it."""
+    return [line for line in output.splitlines() if line.strip().startswith(tuple(k.strip() for k in CHECKLIST_KEEP))]
 
 
 def program_arguments(sets):
@@ -287,15 +303,18 @@ def main():
             kind = opts.names[0] if opts.names else 'brake'
             sets = scenario_sets(opts.base, opts.sets)
             speeds = [150, 250, 350, 500, 700] if kind == 'brake' else [None]
+            if kind == 'checklist':  # The robot's own checklist code, start to finish
+                sets = REAL_IR + sets
             os.makedirs(RESULTS, exist_ok=True)
             out = os.path.join(RESULTS, '%s_experiment_%s.jsonl' % (datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'), kind))
             with open(out, 'w', encoding='utf-8') as collected:
                 for speed in speeds:
-                    command = [exe, '--experiment', kind, '--metrics', os.path.join(work, 'm.jsonl')]
+                    command = [exe, '--experiment', kind, '--metrics', os.path.join(work, 'm.jsonl')] + (['--verbose'] if kind == 'checklist' else [])
                     command += program_arguments(sets + (['exp_speed=%d' % speed] if speed else []))
                     for item in (ROBOT_TUNING if opts.robot_tuning else []):
                         command += ['--tune', item]
-                    print(subprocess.run(command, capture_output=True, text=True).stdout.rstrip())
+                    printed = subprocess.run(command, capture_output=True, text=True).stdout.rstrip()
+                    print('\n'.join(checklist_lines(printed)) if kind == 'checklist' else printed)
                     collected.write(open(os.path.join(work, 'm.jsonl'), encoding='utf-8').read())
             print('written to', os.path.relpath(out, ROOT))
             return 0

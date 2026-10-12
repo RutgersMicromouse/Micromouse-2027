@@ -452,8 +452,8 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define SAFETY_BRAKE_DECEL_MM_S2   2600.0f // Deceleration the robot is taken to manage with the motors braked: a GUESS until "limits brake" has measured it
 #define SAFETY_LATENCY_S           0.020f  // From the wall being there to the brake biting: IR filter + control ticks + driver
 #define SAFETY_STOP_MARGIN_MM      5.0f    // Added to every stopping distance
-#define SAFETY_MIN_FRONT_GAP_MM    15.0f   // Front sensor tips may come no nearer a wall than this (at a cell centre they are 46 mm off)
-#define SAFETY_MIN_SPEED_MM_S      40.0f   // Below this forward speed the front check does not act (creeping up to a wall is allowed)
+#define SAFETY_MIN_FRONT_GAP_MM    8.0f  /* was 15: with that the supervisor braked a search that was simply stopping at a wall (simulated checklist, 2026-10-12) */   // Front sensor tips may come no nearer a wall than this (at a cell centre they are 46 mm off)
+#define SAFETY_MIN_SPEED_MM_S      70.0f /* was 40 */   // Below this forward speed the front check does not act (creeping up to a wall is allowed)
 #define SAFETY_FRONT_TRIP_S        0.010f  // The front wall must be inside the stopping distance this long (5 ticks) to count
 #define SAFETY_FRONT_GAP_MIN_SHARE 0.10f   // A front reading under this share of the centred one gives no distance worth believing
 #define SAFETY_FRONT_PAIR_MIN_SHARE 0.15f  // One front sensor under this share of the other, with a wall in view = one is not working
@@ -481,6 +481,7 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define LADDER_TURN_TOLERANCE_DEG    2.0f    // Step 1: every turn of the turn test must end within this of 90 degrees
 // The walls are all one colour, but that colour differs from maze to maze (brown, white). One
 // calibration in the maze covers it; these catch a run started on a calibration from elsewhere.
+#define IR_SATURATED_READING         3800    // A reading this high is the top of the receiver's range (4095 less ambient): it no longer grows as the wall comes nearer
 #define IR_STALE_RATIO_LOW           0.5f    // Start-cell side readings under half of the calibrated ones...
 #define IR_STALE_RATIO_HIGH          2.0f    // ...or over twice them: the calibration does not belong to these walls
 
@@ -501,7 +502,7 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define LADDER_MIN_SIDE_ROOM_MM      15.0f   // Least room between the body and a side wall (centred it has 40)
 #define LADDER_MIN_FRONT_GAP_MM      20.0f   // Nearest the front sensor tips may come to a wall (at a cell centre they are 46 off)
 #define LADDER_MAX_TILT_DEG          8.0f    // Most it may tip under braking or acceleration
-#define LADDER_MAX_POST_GUARD        0.5f    // On diagonals: most the post guard may object (1 = a post at twice the guard level)
+#define LADDER_MAX_POST_GUARD        0.9f  /* was 0.5: a clean, slow simulated diagonal already reads 0.6 */    // On diagonals: most the post guard may object (1 = a post at twice the guard level)
 #define LADDER_SQUARE_DEG            8.0f    // Side and front readings are only used within this of a maze axis
 
 // ==============================================================================

@@ -26,7 +26,7 @@ import lab  # noqa: E402
 
 PORT = 8001
 SETTING = re.compile(r'^[a-z0-9_]+=-?[0-9.]+(e-?[0-9]+)?$')  # name=number, nothing else reaches the command line
-EXPERIMENTS = ('brake', 'straight', 'turns', 'ircal', 'limits', 'limits_hard')
+EXPERIMENTS = ('brake', 'straight', 'turns', 'ircal', 'limits', 'limits_hard', 'checklist')
 MAZES = ('curves_5x5', 'diagonals_5x5')  # The layouts the checklist tells the owner to build
 work = tempfile.mkdtemp(prefix='mouse_bench_')
 exe = None
@@ -46,13 +46,13 @@ def simulate(request):
 
     metrics = os.path.join(work, 'metrics.jsonl')
     command = [exe, '--metrics', metrics, '--set', 'noise_seed=%d' % seed]
-    command += lab.program_arguments(sets)
+    command += lab.program_arguments((lab.REAL_IR if experiment == 'checklist' else []) + sets)
     for item in (lab.ROBOT_TUNING if request.get('robot_tuning') else []):
         command += ['--tune', item]
     if experiment:
         # (a floor of 8 x 8 cells is room enough for the turns and the straight and still easy to see;
         #  braking from speed needs the full 16)
-        command += ['--experiment', experiment, '--size', '16' if experiment == 'brake' else '8']
+        command += ['--experiment', experiment, '--size', '16' if experiment == 'brake' else '8'] + (['--verbose'] if experiment == 'checklist' else [])
         if experiment != 'ircal':  # (that one places the robot by hand: nothing to watch)
             command += ['--trace', lab.VIEWER_TRACE]
     else:
@@ -64,7 +64,8 @@ def simulate(request):
         return {'error': 'the simulation did not finish in 15 minutes'}
     lines = lab.read_lines(metrics) if os.path.exists(metrics) else []
     runs = [dict(line, failures=lab.run_failures(line)) for line in lines if 'run' in line]
-    return {'output': done.stdout[-4000:], 'runs': runs, 'rows': [line for line in lines if 'experiment' in line],
+    output = '\n'.join(lab.checklist_lines(done.stdout)) if experiment == 'checklist' else done.stdout[-4000:]
+    return {'output': output, 'runs': runs, 'rows': [line for line in lines if 'experiment' in line],
             'failed': not experiment and (not runs or any(run['failures'] for run in runs))}
 
 

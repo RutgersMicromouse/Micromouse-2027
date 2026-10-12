@@ -80,8 +80,9 @@
         </div>
         <h2>The robot's checklist, on the simulated robot</h2>
         <table id="simChecklist"></table>
-        <div class="controls"><button id="simAll">Run all six in order</button></div>
-        <p class="dim">The same six steps the real robot is taken through, run with the settings on the left, the seed and the tuning above. It stops at the first step that does not pass. Each step loads into the Replay tab as it finishes, so every one can be watched. Passing here does not pass the step on the real robot.</p>
+        <div class="controls"><button id="simAll">Run all six in order</button>
+          <button data-experiment="checklist" title="src/ui/ladder, limits_test and turn_test, compiled as they are">Run the robot's OWN checklist code (a few minutes)</button></div>
+        <p class="dim">The same six steps the real robot is taken through, run with the settings on the left, the seed and the tuning above. It stops at the first step that does not pass. Each step loads into the Replay tab as it finishes, so every one can be watched. Passing here does not pass the step on the real robot.<br>The second button is different: it runs the very code the robot runs (braking measurement, all six steps and the search-speed trial, with the robot's own judge deciding), on sensor brightness set to what the real robot reads, and prints the truth beside each of the robot's verdicts.</p>
         <h2>What happened</h2>
         <div id="benchOut" class="dim" style="white-space:pre-wrap;font:12px/1.5 ui-monospace,Consolas,monospace">Change a setting (changed ones are outlined), then run. A search and six speed runs are driven on a random maze and judged against the lab's limits.</div>
         <p class="dim">Every number here is a guess about the robot until it is measured. Compare one run with another; do not read a single result as what the robot will do.</p>

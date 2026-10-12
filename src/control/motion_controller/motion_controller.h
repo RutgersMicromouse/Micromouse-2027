@@ -73,6 +73,7 @@ public:
     void safetyStop() { emergencyStop(); safety_stop_ = true; }
     bool safetyStopPending() const { return safety_stop_; }
     bool isMoveActive() const { return !isCommandFinished(); }
+    MotionAction getActiveAction() const { return isCommandFinished() ? ACTION_IDLE : active_cmd_.action; } // What it is carrying out right now
 
     // Reset reference frames
     void resetTracking();

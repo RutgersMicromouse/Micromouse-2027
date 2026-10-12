@@ -97,8 +97,10 @@ void sample() {
         if (g_ir_sensors.getSideGapMm(true, gap))  judge_.side_room_mm = fminf(judge_.side_room_mm, gap - SIDE_BODY_BEYOND_SENSOR_MM);
         if (g_ir_sensors.getSideGapMm(false, gap)) judge_.side_room_mm = fminf(judge_.side_room_mm, gap - SIDE_BODY_BEYOND_SENSOR_MM);
         if (g_ir_sensors.getFrontGapMm(gap))       judge_.front_gap_mm = fminf(judge_.front_gap_mm, gap);
-    } else if (fabsf(off_axis - 45.0f) < 10.0f) {
-        // On a diagonal the 45 degree sensors look along the maze's axes at the posts going by
+    } else if (g_motion_controller.getActiveAction() == ACTION_MOVE_DIAGONAL_HALF) {
+        // On a diagonal the 45 degree sensors look along the maze's axes at the posts going by.
+        // (Only while driving one: a turn on the spot also swings through 45 degrees, and then
+        // those sensors are looking at walls, not posts.)
         judge_.post_guard = fmaxf(judge_.post_guard, fabsf(g_ir_sensors.getDiagonalGuardError()));
     }
 }

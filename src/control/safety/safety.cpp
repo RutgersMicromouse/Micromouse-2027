@@ -46,11 +46,12 @@ const char* SafetySupervisor::reasonText(Reason reason) {
 //        + v t           what is covered before the brake bites (sensing + control + driver)
 //        + margin        for what the two terms above get wrong
 float SafetySupervisor::brake_decel_mm_s2_ = SAFETY_BRAKE_DECEL_MM_S2;
+float SafetySupervisor::latency_s_ = SAFETY_LATENCY_S;
 
 float SafetySupervisor::stoppingDistanceMm(float speed_mm_s) {
     if (speed_mm_s <= 0.0f) return SAFETY_STOP_MARGIN_MM;
     return speed_mm_s * speed_mm_s / (2.0f * brake_decel_mm_s2_)
-         + speed_mm_s * SAFETY_LATENCY_S
+         + speed_mm_s * latency_s_
          + SAFETY_STOP_MARGIN_MM;
 }
 
