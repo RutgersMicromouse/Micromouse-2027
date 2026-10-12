@@ -188,13 +188,14 @@
 // Search & Exploration Kinematic Limits (Safe bringup defaults)
 // SLOWED DOWN for bring-up at the owner's request (2026-10-07). The normal values are in brackets;
 // put them back once the robot drives a search cleanly.
-#define SEARCH_SPEED_DEFAULT_MM_S     180.0f   // Search cruise speed (mm/s)                          [240]
-#define SEARCH_ACCEL_DEFAULT_MM_S2    600.0f   // Search linear acceleration / deceleration (mm/s^2)  [1500]
+extern float g_search_speed_scale;              // 1 = these bring-up speeds; "searchspeed N" (percent) raises it, kept in flash (Actions)
+#define SEARCH_SPEED_DEFAULT_MM_S     (180.0f * g_search_speed_scale)   // Search cruise speed (mm/s)                          [240]
+#define SEARCH_ACCEL_DEFAULT_MM_S2    (600.0f * g_search_speed_scale * g_search_speed_scale)   // Search linear acceleration / deceleration (mm/s^2)  [1500]
 #define SEARCH_CURVE_SPEED_MM_S       100.0f   // Smooth 90° turn speed during the search (mm/s)      [200]
 extern float g_turn_speed_scale;                // 1 = the speed the turns were tuned at; the checklist's first step raises it (Ladder)
 #define SEARCH_TURN_SPEED_DEG_S       (120.0f * g_turn_speed_scale)   // In-place turn speed (deg/s)                         [360]
 #define SEARCH_TURN_ACCEL_DEG_S2      (480.0f * g_turn_speed_scale)   // In-place turn acceleration (deg/s^2)                [1800]
-#define SEARCH_PROBE_SPEED_MM_S       120.0f   // Search speed when rolling into a cell it has never seen (may have to stop) [120]
+#define SEARCH_PROBE_SPEED_MM_S       (120.0f * g_search_speed_scale)   // Search speed when rolling into a cell it has never seen (may have to stop) [120]
 // Dynamic search speed: on a straight through cells it has already visited (most of the way back,
 // and any second search) the robot speeds up to this, and slows again in time for the first cell
 // that is new or where the route turns. Smooth turns are always taken at SEARCH_CURVE_SPEED_MM_S
@@ -325,6 +326,7 @@ extern float g_turn_speed_scale;                // 1 = the speed the turns were 
 // of the speed-run planner; the two search flags below bring back the search's curves.
 #define ENABLE_SMOOTH_CURVES    0
 #define SEARCH_RETURN_DETOURS   30      // On the way back from the centre: at most this many unseen cells of the quickest possible route are gone to first (0 = straight home)
+#define SEARCH_SPEED_MAX_PERCENT 200     // The most "searchspeed" accepts (200 = 360 mm/s, 2400 mm/s2)
 #define SEARCH_TRAPPED_LOOKS    4       // Walled in on every side even on a fresh map: look again this many times before giving up
 #define ENABLE_SEARCH_LOOKAHEAD 0       // (what Navigator::setSearchCurves starts at; the checklist switches it on)
                                         // 0 = always decide at the cell centre and turn on the spot [1 with smooth curves]

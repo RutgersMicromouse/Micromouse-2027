@@ -174,6 +174,20 @@ static void handle(String cmd, Source source) {
 
     // Limits test: "limits 4" shuttles in a closed corridor of 4 cells, harder each time, and holds
     // speed runs to the last level that passed; "limits clear" removes that ceiling (see LimitsTest)
+    // "searchspeed 150": the search's straights at 150 % of the bring-up speeds, kept in flash.
+    // Plain "searchspeed" says what is in force.
+    if (cmd == "searchspeed" || cmd.startsWith("searchspeed ")) {
+        if (running) { reply("ERR: NOT_WHILE_RUNNING (STOP first)"); return; }
+        const long percent = cmd.substring(11).toInt();
+        if (percent >= 100) Actions::setSearchSpeedPercent((uint8_t)min(percent, (long)SEARCH_SPEED_MAX_PERCENT));
+        else {
+            snprintf(buf, sizeof(buf), "Search speed is %d%% (%.0f mm/s). \"searchspeed N\" sets it, 100 to %d.",
+                     (int)Actions::getSearchSpeedPercent(), (float)SEARCH_SPEED_DEFAULT_MM_S, (int)SEARCH_SPEED_MAX_PERCENT);
+            reply(buf);
+        }
+        return;
+    }
+
     if (cmd == "limits" || cmd.startsWith("limits ")) {
         if (running) { reply("ERR: CANNOT_TEST_WHILE_RUNNING (STOP first)"); return; }
         if (cmd == "limits clear") {

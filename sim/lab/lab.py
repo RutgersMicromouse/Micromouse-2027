@@ -9,6 +9,7 @@ every run against fixed limits, not just "did it reach the goal".
     python3 sim/lab/lab.py compare fan_off fan_on --set friction=0.4
     python3 sim/lab/lab.py sweep mass_kg 0.08,0.12,0.2,0.3
     python3 sim/lab/lab.py regression                              every scenario once
+    python3 sim/lab/lab.py drift worst_case --size 16 --trials 3   does position error build up through a maze?
     python3 sim/lab/lab.py experiment brake                        braking distance at several speeds
     python3 sim/lab/lab.py experiment turns --set mass_kg=0.2
     python3 sim/lab/lab.py experiment ircal --set ir_ambient=1500
@@ -219,9 +220,50 @@ def table(records):
     print('\nmean (worst) over every run of every trial. Details: sim/lab/results/. Viewer: sim/viewer (trace of the last or first failing trial).')
 
 
+def drift(exe, work, sets, opts):
+    """Does position error build up through a maze? Drives the first search of one full-size
+    maze per trial and looks at where the robot REALLY stood each time it began a turn on the
+    spot, in order: millimetres off the cell centre, split into across the old heading (what a
+    straight leaves behind, and what clips a wall in the turn) and along it (stopping short or
+    long). If the later turns are no worse than the early ones, nothing is building up."""
+    turns_on_the_spot = (5, 6, 13)  # MotionAction: left 90, right 90, round 180 (src/types.h)
+    worst = 0.0
+    for seed in range(1, opts.trials + 1):
+        trace = os.path.join(work, 'drift.jsonl')
+        command = [exe, '--quiet', '--size', str(opts.size), '--random', '1', '--seed', str(seed), '--trace', trace]
+        command += program_arguments(sets + ['noise_seed=%d' % seed])
+        subprocess.run(command, capture_output=True, text=True)
+        offsets, previous = [], None
+        for frame in read_lines(trace):
+            if 'end' in frame:
+                break  # (the first search only: the speed runs follow it in the trace)
+            if 't' not in frame:
+                continue
+            if frame['act'] in turns_on_the_spot and (previous is None or previous['act'] != frame['act']):
+                dx = frame['x'] - round(frame['x'] / 180.0) * 180.0
+                dy = frame['y'] - round(frame['y'] / 180.0) * 180.0
+                heading = math.radians(round(frame['h'] / 90.0) * 90.0)  # 0 = up the maze, counted to the left
+                along = -dx * math.sin(heading) + dy * math.cos(heading)
+                across = dx * math.cos(heading) + dy * math.sin(heading)
+                offsets.append((abs(across), abs(along)))
+            previous = frame
+        if len(offsets) < 6:
+            print('  maze %d: only %d turns on the spot, too few to say' % (seed, len(offsets)))
+            continue
+        third = len(offsets) // 3
+        parts = [offsets[:third], offsets[third:2 * third], offsets[2 * third:]]
+        text = ' | '.join('%s third: across %.1f (worst %.1f), along %.1f (worst %.1f)' % (
+            name, sum(a for a, _ in part) / len(part), max(a for a, _ in part), sum(b for _, b in part) / len(part), max(b for _, b in part))
+            for name, part in zip(('first', 'middle', 'last'), parts))
+        worst = max(worst, max(max(a, b) for a, b in offsets))
+        print('  maze %d, %d turns on the spot, mm off the cell centre when each began: %s' % (seed, len(offsets), text))
+    print('  worst of all: %.1f mm (a wall is %.1f mm from the body when the robot is centred)' % (worst, 84.0 - 6.0 - 43.75))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['list', 'run', 'compare', 'sweep', 'regression', 'experiment'])
+    parser.add_argument('command', choices=['list', 'run', 'compare', 'sweep', 'regression', 'experiment', 'drift'])
     parser.add_argument('names', nargs='*')
     parser.add_argument('--trials', type=int, default=1)
     parser.add_argument('--size', type=int, default=5, choices=[3, 5, 8, 16])
@@ -257,6 +299,9 @@ def main():
                     collected.write(open(os.path.join(work, 'm.jsonl'), encoding='utf-8').read())
             print('written to', os.path.relpath(out, ROOT))
             return 0
+
+        if opts.command == 'drift':
+            return drift(exe, work, scenario_sets(opts.names[0] if opts.names else opts.base, opts.sets), opts)
 
         if opts.command == 'sweep':
             parameter, values = opts.names[0], opts.names[1].split(',')

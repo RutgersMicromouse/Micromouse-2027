@@ -1263,6 +1263,7 @@ int main(int argc, char** argv) {
         if (strcmp(argv[i], "--experiment") == 0 && i + 1 < argc) { experiment = argv[++i]; continue; }
         if (strcmp(argv[i], "--list-params") == 0) { labList(P, stdout); return 0; }
         if (strcmp(argv[i], "--moves") == 0 && i + 1 < argc)  { g_moves = atoi(argv[++i]); continue; }
+        if (strcmp(argv[i], "--search-speed") == 0 && i + 1 < argc) { g_search_speed_scale = atoi(argv[++i]) / 100.0f; continue; } // Percent, as "searchspeed N"
         if (strcmp(argv[i], "--tune") == 0 && i + 1 < argc) {
             const char* arg = argv[++i];
             const char* equals = strchr(arg, '=');

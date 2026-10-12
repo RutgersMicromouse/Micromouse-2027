@@ -73,6 +73,8 @@ Each checklist row shows what walls to build for it (the hardest arrangement for
 
 **The robot judges steps 3 to 6 itself.** During each run it watches the room between its body and the side walls (at least 15 mm), how near the front sensors come to a wall (at least 20 mm), how far it tips under braking or acceleration (at most 8 degrees), how hard the diagonal post guard had to object, and whether the safety supervisor had to brake. All of that must hold, and the run must reach the centre, to count as clean. Its sensors cannot see a light brush against a post, so there is one red button, **"It touched something: not clean"**, to overrule a run it called clean. The limits are the `LADDER_*` lines in [`src/config.h`](src/config.h).
 
+**If the search is too slow for the time you have** (a competition gives ten minutes for everything): the row "How fast should the search drive?" raises the search's straight speed (`searchspeed 130`, saved on the robot), checklist step 1 raises the turn speed, and finishing step 3 lets the search curve through corners. In the simulator a full-size first search went from about 157 s to 101 s with curves and double straight speed; turns and stops, not straights, are most of the time. `SEARCH_RETURN_DETOURS` in `src/config.h` trades a longer way back for a proven best route.
+
 Typed commands do the same as the buttons: `ladder` (where it stands), `ladder run`, `ladder fail`, `ladder reset`, `limits 4`, `limits brake`, `limits clear`, `turntest`, `maze 5`, `health`, `tune`.
 
 ### Recording a session
@@ -133,6 +135,7 @@ sim\lab\lab.bat list                         the named scenarios
 sim\lab\lab.bat run baseline --trials 5      one scenario, several mazes
 sim\lab\lab.bat compare baseline low_friction heavy
 sim\lab\lab.bat sweep friction 0.2,0.4,0.7,1 one setting across several values
+sim\lab\lab.bat drift worst_case --size 16     does position error build up from turn to turn?
 sim\lab\lab.bat experiment brake             braking distance against the safety supervisor's sum
 sim\lab\lab.bat experiment limits_hard       the straights step in its corridor
 ```

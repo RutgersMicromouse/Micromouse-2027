@@ -86,6 +86,12 @@ void setNextSpeedRunPercent(uint8_t percent);
 uint8_t getSpeedLimitPercent();
 void setSpeedLimitPercent(uint8_t percent);
 
+// How fast the SEARCH drives its straights, as a percent of the bring-up speeds in config.h
+// (100 = 180 mm/s cruise, 120 into new cells). Its braking distance stays the same, because the
+// acceleration goes up with the square. Kept in flash, so it holds at a competition with no radio.
+uint8_t getSearchSpeedPercent();
+void setSearchSpeedPercent(uint8_t percent);
+
 int adjustStraightTrim(int delta_mm);
 int getStraightTrim();
 void loadStraightTrim();

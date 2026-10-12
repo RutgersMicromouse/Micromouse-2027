@@ -2,6 +2,8 @@
 
 // See config.h (SEARCH_TURN_SPEED_DEG_S). It lives here because the navigator plans every turn on the spot.
 float g_turn_speed_scale = 1.0f;
+// See config.h (SEARCH_SPEED_DEFAULT_MM_S): scales the search's straight speeds; its acceleration goes with the square
+float g_search_speed_scale = 1.0f;
 
 // Start-up, starting and stopping runs, and sending moves. The search stepping is in
 // navigator_search.cpp and the speed-run planner in navigator_speedrun.cpp.

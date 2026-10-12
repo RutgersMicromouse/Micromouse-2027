@@ -267,11 +267,25 @@ void setSpeedLimitPercent(uint8_t percent) {
     }
 }
 
+uint8_t getSearchSpeedPercent() { return (uint8_t)lroundf(g_search_speed_scale * 100.0f); }
+
+void setSearchSpeedPercent(uint8_t percent) {
+    percent = constrain(percent, (uint8_t)100, (uint8_t)SEARCH_SPEED_MAX_PERCENT);
+    g_search_speed_scale = (float)percent / 100.0f;
+    Preferences prefs;
+    prefs.begin("hand_cfg", false);
+    prefs.putUChar("search", percent);
+    prefs.end();
+    Serial.printf("[UI] Search speed is now %d%%: %.0f mm/s on straights, %.0f into new cells, %.0f mm/s2. Saved.\n",
+                  (int)percent, (float)SEARCH_SPEED_DEFAULT_MM_S, (float)SEARCH_PROBE_SPEED_MM_S, (float)SEARCH_ACCEL_DEFAULT_MM_S2);
+}
+
 void loadStraightTrim() {
     Preferences prefs;
     if (prefs.begin("hand_cfg", true)) {
         s_speed_limit_percent = constrain(prefs.getUChar("limit", 100), (uint8_t)10, (uint8_t)100);
         s_straight_trim_mm = constrain(prefs.getInt("trim", 0), -STRAIGHT_TRIM_LIMIT_MM, STRAIGHT_TRIM_LIMIT_MM);
+        g_search_speed_scale = (float)constrain(prefs.getUChar("search", 100), (uint8_t)100, (uint8_t)SEARCH_SPEED_MAX_PERCENT) / 100.0f;
         prefs.end();
     }
     g_navigator->setStraightTrimMm((float)s_straight_trim_mm);
