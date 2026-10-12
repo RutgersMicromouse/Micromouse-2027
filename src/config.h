@@ -434,6 +434,32 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define TILT_STOP_DEG              45.0f // Tipped this far out of level = picked up (lift + tip it up to stop a run)
 #define TILT_STOP_TICKS            150  // ...for this many control ticks (0.3 s, 6 tilt readings) before the run is aborted
 
+// Safety supervisor (control/safety/): the layer that may slow or stop the robot whatever the
+// navigator has planned. 0 switches the whole thing off (the stops above still act).
+#define ENABLE_SAFETY_SUPERVISOR   1
+// Stopping distance = v^2 / (2 x DECEL) + v x LATENCY + MARGIN, compared with the gap to the
+// front wall less MIN_FRONT_GAP. *** DECEL and LATENCY are NOT MEASURED YET. *** 2600 is the
+// acceleration this firmware already plans speed runs with, so the check never asks for less
+// braking than the planner does; replace both with the results of a braking test.
+#define SAFETY_BRAKE_DECEL_MM_S2   2600.0f // Deceleration the robot is taken to manage with the motors braked
+#define SAFETY_LATENCY_S           0.020f  // From the wall being there to the brake biting: IR filter + control ticks + driver
+#define SAFETY_STOP_MARGIN_MM      5.0f    // Added to every stopping distance
+#define SAFETY_MIN_FRONT_GAP_MM    15.0f   // Front sensor tips may come no nearer a wall than this (at a cell centre they are 46 mm off)
+#define SAFETY_MIN_SPEED_MM_S      40.0f   // Below this forward speed the front check does not act (creeping up to a wall is allowed)
+#define SAFETY_FRONT_TRIP_S        0.010f  // The front wall must be inside the stopping distance this long (5 ticks) to count
+#define SAFETY_FRONT_GAP_MIN_SHARE 0.10f   // A front reading under this share of the centred one gives no distance worth believing
+#define SAFETY_FRONT_PAIR_MIN_SHARE 0.15f  // One front sensor under this share of the other, with a wall in view = one is not working
+#define SAFETY_PAIR_MISMATCH_S     0.30f   // ...for this long
+#define SAFETY_LOW_SUPPLY_V        10.0f   // Motor supply under this (and above 1 V, i.e. switched on) = CAUTION
+#define SAFETY_CAUTION_ON_S        0.10f   // A doubt must stand this long before CAUTION
+#define SAFETY_CAUTION_OFF_S       0.50f   // ...and be gone this long before NORMAL again
+#define SAFETY_CAUTION_SPEED_SCALE 0.60f   // Share of its speed a straight move may use in CAUTION
+#define SAFETY_DRIVER_FAULT_S      0.20f   // Motor driver silent this long during a move = FAULT
+#define SAFETY_STILL_SPEED_MM_S    15.0f   // Slower than this counts as standing still...
+#define SAFETY_STILL_S             0.30f   // ...once it has lasted this long
+#define SAFETY_BRAKING_MAX_S       2.0f    // BRAKING gives way to RECOVERY after this even if the wheels never read still
+#define SAFETY_RECOVERY_S          0.70f   // Time held in RECOVERY before the robot may be driven again
+
 // ==============================================================================
 // 5. DEFAULT SENSOR THRESHOLDS (5 Sensors)
 // ==============================================================================

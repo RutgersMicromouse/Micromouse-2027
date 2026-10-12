@@ -147,6 +147,7 @@ HARNESS = r'''
 #include "hardware/ir_sensors/ir_sensors.h"
 #include "hardware/imu/imu.h"
 #include "control/motion_controller/motion_controller.h"
+#include "control/safety/safety.h"
 #include "navigation/navigator/navigator.h"
 
 SerialStub Serial;
@@ -473,6 +474,8 @@ static Motors*           g_motors;
 static IRSensors*        g_ir;
 static IMU*              g_imu;
 static MotionController* g_motion;
+static SafetySupervisor g_safety;
+static int g_safety_brakings = 0;
 static Navigator*        g_nav;
 
 static bool g_was_busy = false;
@@ -488,14 +491,40 @@ static void firmwareTick() {
     float yaw_rate = (enc.right_speed_mm_s - enc.left_speed_mm_s) / WHEEL_BASE_MM * (180.0f / PI);
     g_imu->update(CONTROL_DT_S, yaw_rate, enc.linear_speed_mm_s);
 
-    if (!g_commands.empty()) {
+    if (g_motors->isInhibited()) {
+        g_commands.clear(); // (as main.cpp does: the safety supervisor is holding the robot)
+    } else if (!g_commands.empty()) {
         MotionCommand cmd = g_commands.front();
         g_commands.pop_front();
+        g_safety.limitCommand(cmd);
         g_motion->executeCommand(cmd);
         g_current_action = (int)cmd.action;
         g_was_busy = true;
     }
     g_motion->update(CONTROL_DT_S);
+
+    // The safety supervisor, wired exactly as in main.cpp's motion task
+    {
+        static bool controller_stop_seen = false;
+        const IRReadings ir_now = g_ir->getReadings();
+        SafetySupervisor::Inputs in = {};
+        in.speed_mm_s = enc.linear_speed_mm_s;
+        in.front_gap_known = g_ir->getFrontGapMm(in.front_gap_mm);
+        in.front_left = ir_now.front_left;
+        in.front_right = ir_now.front_right;
+        in.front_wall_level = g_ir->isFrontLevelMeasured() ? g_ir->getThresholdFront() : 0;
+        in.heading_sensor_ok = g_imu->isHardwareConnected() && !g_imu->isUsingFallback();
+        in.motor_driver_ok = g_motors->isConnected();
+        in.supply_volts = g_motors->getSupplyVolts();
+        in.move_active = g_motion->isMoveActive();
+        const bool controller_stop = g_motion->safetyStopPending();
+        in.controller_stopped = controller_stop && !controller_stop_seen;
+        controller_stop_seen = controller_stop;
+        const SafetySupervisor::Outputs allowed = g_safety.update(in, CONTROL_DT_S);
+        if (allowed.brake_now) { g_motion->safetyStop(); g_safety_brakings++; }
+        g_motors->setInhibited(allowed.inhibit);
+        if (allowed.inhibit) g_motors->brake();
+    }
 
     bool motion_done = false;
     if (g_was_busy && g_motion->isCommandFinished()) {
@@ -562,6 +591,7 @@ static void bootFirmware() {
     g_ir->begin();
     g_imu->begin();
     g_motion->begin();
+    g_safety.reset();
     // The code's distance scale (dist_k) makes up for the real tyres rolling a little larger than
     // measured. The simulated wheels are exactly the configured size, so here it has to be 1.
     g_motion->setTune(MotionController::TUNE_DIST_K, 1.0f);
@@ -677,7 +707,59 @@ static void testMaze(const char* name) {
     }
 }
 
+// The safety supervisor on made-up measurements (the simulated robot never has a measured front
+// level, so the mazes below do not exercise its front-wall check)
+static void safetySelfCheck() {
+    const char* name = "safety supervisor";
+    SafetySupervisor s;
+    SafetySupervisor::Inputs in = {};
+    in.heading_sensor_ok = true; in.motor_driver_ok = true; in.supply_volts = 12.0f; in.move_active = true;
+    SafetySupervisor::Outputs out = {};
+    bool braked = false;
+    auto run = [&](float seconds) {
+        braked = false;
+        for (float t = 0.0f; t < seconds; t += CONTROL_DT_S) { out = s.update(in, CONTROL_DT_S); braked = braked || out.brake_now; }
+    };
+
+    in.speed_mm_s = 300.0f; in.front_gap_known = true; in.front_gap_mm = 300.0f;
+    run(0.5f);
+    check(s.getState() == SafetySupervisor::NORMAL && !out.inhibit, name, "a far wall at 300 mm/s should be NORMAL");
+
+    in.front_gap_mm = 40.0f; // 25 mm of room; 300 mm/s needs about 28
+    run(0.1f);
+    check(s.getState() == SafetySupervisor::BRAKING && braked && out.inhibit, name, "a wall inside the stopping distance should brake and hold the motors");
+
+    in.speed_mm_s = 0.0f;
+    run(0.4f);
+    check(s.getState() == SafetySupervisor::RECOVERY && out.inhibit, name, "once still, BRAKING should give way to RECOVERY, motors still held");
+    in.front_gap_mm = 300.0f;
+    run(1.2f);
+    check(s.getState() == SafetySupervisor::NORMAL && !out.inhibit, name, "RECOVERY should end by itself once the robot has stood still");
+
+    in.speed_mm_s = 30.0f; in.front_gap_mm = 20.0f; // creeping up to a wall is allowed
+    run(0.2f);
+    check(s.getState() == SafetySupervisor::NORMAL, name, "creeping toward a wall below the minimum speed should not brake");
+
+    in.speed_mm_s = 300.0f; in.front_gap_known = false; // no distance: no front check (a known limit)
+    run(0.2f);
+    check(s.getState() == SafetySupervisor::NORMAL, name, "with no front distance there is no front check");
+
+    in.heading_sensor_ok = false;
+    run(0.3f);
+    MotionCommand straight = {}; straight.action = ACTION_MOVE_DISTANCE; straight.max_speed_mm_s = 400.0f; straight.exit_speed_mm_s = 400.0f;
+    MotionCommand turn = {};     turn.action = ACTION_TURN_LEFT_90;      turn.max_speed_mm_s = 120.0f;
+    s.limitCommand(straight); s.limitCommand(turn);
+    check(s.getState() == SafetySupervisor::CAUTION && fabsf(straight.max_speed_mm_s - 400.0f * SAFETY_CAUTION_SPEED_SCALE) < 0.1f &&
+          straight.exit_speed_mm_s <= straight.max_speed_mm_s && turn.max_speed_mm_s == 120.0f,
+          name, "a heading sensor in fault should mean CAUTION: straights slowed, turns left alone");
+
+    in.heading_sensor_ok = true; in.motor_driver_ok = false;
+    run(0.4f);
+    check(s.getState() == SafetySupervisor::FAULT && out.inhibit, name, "a silent motor driver during a move should be a FAULT");
+}
+
 int main(int argc, char** argv) {
+    safetySelfCheck();
     int random_count = 0;
     uint32_t first_seed = 1;
     std::vector<const char*> files;

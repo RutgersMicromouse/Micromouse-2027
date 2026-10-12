@@ -75,6 +75,12 @@ public:
     uint16_t getThresholdFront() const { return thresh_front_; }
     bool isFrontLevelMeasured() const { return front_level_measured_; } // false = only an estimate so far
 
+    // Distance from the front sensor tips to a wall ahead, in mm, from the same fall-off rule as
+    // front_offset_mm but as far out as the reading can be believed (about a cell and a half).
+    // False if it cannot be told: no front level measured against a real wall yet, or the reading
+    // is too weak. "Cannot be told" is NOT "the way is clear".
+    bool getFrontGapMm(float& gap_mm) const;
+
     // How far the robot is turned away from square to a wall in front of it, from the two front
     // sensors: positive = the left one is closer. Each sensor is first divided by what IT read
     // facing a wall squarely at calibration, because the two do not read alike (on this robot

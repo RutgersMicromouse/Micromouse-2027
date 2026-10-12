@@ -133,6 +133,7 @@ void Motors::setRawEffort(float left_effort, float right_effort) {
 
 void Motors::sendEfforts(float left_effort, float right_effort) {
     if (!power_enabled_) return;
+    if (inhibited_) { brake(); return; } // The safety supervisor has the last word
 
     if (invert_left_)  left_effort  = -left_effort;
     if (invert_right_) right_effort = -right_effort;

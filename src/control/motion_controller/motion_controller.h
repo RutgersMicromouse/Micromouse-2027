@@ -68,6 +68,12 @@ public:
     bool isCommandFinished() const;
     void emergencyStop();
 
+    // The same, asked for by the safety supervisor: also flags the run as aborted, exactly as the
+    // controller's own stops do, so the navigator sends no further move
+    void safetyStop() { emergencyStop(); safety_stop_ = true; }
+    bool safetyStopPending() const { return safety_stop_; }
+    bool isMoveActive() const { return !isCommandFinished(); }
+
     // Reset reference frames
     void resetTracking();
 

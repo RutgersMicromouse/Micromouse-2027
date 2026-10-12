@@ -68,6 +68,63 @@
       <p class="dim hint">Hold a hand a few centimetres in front of one sensor: only that bar should jump. A bar that never moves means that sensor is not working.</p>
     </section>
 
+    <!-- Tuning studio (studio.js): what the control and safety code is doing, from the "[SAF]" lines -->
+    <section class="sensors">
+      <div class="console-head">
+        <p>Safety supervisor</p>
+        <p class="dim">Speed allowed: <strong id="safeScale">--</strong> &nbsp; Turn rate: <strong id="safeTurnRate">--</strong> °/s &nbsp; Tilt: <strong id="safeTilt">--</strong>° &nbsp; Motor supply: <strong id="safeSupply">--</strong> V</p>
+      </div>
+      <p><span id="safeState" class="badge">no data yet</span> <span id="safeReason" class="dim"></span></p>
+      <div class="stop">
+        <span>Needs <strong id="safeNeed">--</strong> mm to stop</span>
+        <div class="track"><div id="barNeed" class="need"></div></div>
+        <span>Room to the front wall: <strong id="safeRoom">--</strong></span>
+        <div class="track"><div id="barRoom" class="room"></div></div>
+      </div>
+      <p class="dim hint">It brakes the robot when the red bar would pass the blue one. "Not known" means the front sensors give no distance it can believe, and then there is no such check.</p>
+    </section>
+
+    <section class="sensors">
+      <div class="console-head"><p>Last 30 seconds</p><p class="dim">needs "stream on" (sent when you connect)</p></div>
+      <div class="charts">
+        <div><p class="dim">Heading</p><canvas id="chartHeading"></canvas></div>
+        <div><p class="dim">Speed: <b style="color:#e8edf4">robot</b> <b style="color:#3ddc84">left wheel</b> <b style="color:#ffb454">right wheel</b></p><canvas id="chartSpeed"></canvas></div>
+        <div><p class="dim">Side walls: <b style="color:#3ddc84">left 90°</b> <b style="color:#ffb454">right 90°</b></p><canvas id="chartSides"></canvas></div>
+        <div><p class="dim">Stopping: <b style="color:#ff5d5d">needed</b> <b style="color:#7fb6ff">room</b></p><canvas id="chartStop"></canvas></div>
+      </div>
+    </section>
+
+    <section class="sensors">
+      <div class="console-head">
+        <p>Turn test results <span class="dim">(degrees off 90: + too far, - not far enough)</span></p>
+        <span>
+          <button class="secondary small" data-studio-cmd="turntest">Run turn test</button>
+          <button class="secondary small" data-studio-cmd="straighttest 3">Straight, 3 cells</button>
+          <button class="secondary small" data-studio-cmd="health">Health</button>
+          <button class="secondary small" data-studio-cmd="tune">Settings</button>
+        </span>
+      </div>
+      <table class="results">
+        <thead><tr><th>Time</th><th>Left mean</th><th>sd</th><th>worst</th><th>Right mean</th><th>sd</th><th>worst</th><th>Left - right</th><th>Settings</th></tr></thead>
+        <tbody id="turnRows"></tbody>
+      </table>
+      <p class="dim hint">Green = every turn within 2°, amber within 5°, red worse. A steady gap between left and right in the "Left - right" column is what separate left and right settings would be for.</p>
+    </section>
+
+    <section class="sensors">
+      <div class="console-head"><p>Trials</p><p class="dim">click a square: not tried, passed, failed</p></div>
+      <table id="ladder" class="results"></table>
+      <p class="dim hint">Work down a column before moving right, and finish a row before the next maze size. Smooth curves and diagonals are switched off in the firmware for now, and it has no 8 x 8 maze size yet.</p>
+    </section>
+
+    <section class="sensors">
+      <div class="console-head">
+        <p>Outcomes <span class="dim">(tests, safety stops, calibration, navigation)</span></p>
+        <label class="dim">Replay a recording from logs/: <input id="replayFile" type="file" accept=".log,.txt"> <span id="replayNote"></span></label>
+      </div>
+      <ul id="results" class="outcomes"></ul>
+    </section>
+
     <!-- Everything the robot prints (the same text as the serial monitor), plus a box to send it commands -->
     <section class="console">
       <div class="console-head">
@@ -82,6 +139,7 @@
       </form>
     </section>
   </main>
+  <script src="studio.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

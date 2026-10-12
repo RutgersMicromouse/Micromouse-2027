@@ -260,6 +260,15 @@ float IRSensors::getFrontSkew() const {
     return (average > 0.15f) ? (fl - fr) / average : 0.0f; // Too faint to compare = no opinion
 }
 
+bool IRSensors::getFrontGapMm(float& gap_mm) const {
+    if (!front_level_measured_ || thresh_front_ == 0) return false;
+    const float centred_reading = (float)thresh_front_ / 0.40f;
+    const float now = (float)readings_.front_center;
+    if (now < SAFETY_FRONT_GAP_MIN_SHARE * centred_reading) return false;
+    gap_mm = FRONT_SENSOR_TO_WALL_MM * powf(centred_reading / now, 1.0f / FRONT_FALLOFF_EXPONENT);
+    return true;
+}
+
 bool IRSensors::calibrateInCell(uint16_t sample_count, bool keep_side_centre) {
     Serial.println("\n[CALIB] Starting In-Cell IR Auto-Calibration...");
     Serial.println("[CALIB] Ensure the mouse is placed squarely in the center of a cell with Left, Right, and Front walls!");

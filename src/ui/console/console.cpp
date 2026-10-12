@@ -428,6 +428,13 @@ static void handle(String cmd, Source source) {
                  (unsigned long)g_imu.getReadsOk(), (unsigned long)g_imu.getReadsNoAnswer(), (unsigned long)g_imu.getReadsShort(),
                  (unsigned long)g_imu.getReadsBadValue(), (unsigned long)g_imu.getSlowestReadUs());
         reply(buf);
+        {
+            const SafetySupervisor::Status safe = g_safety.getStatus();
+            snprintf(buf, sizeof(buf), "SAFETY: %s (%s) | brakings %u, faults %u | at this speed it needs %.0f mm to stop; front room %.0f mm (-1 = not known) | speed allowed x%.2f",
+                     SafetySupervisor::stateName(safe.state), SafetySupervisor::reasonText(safe.reason),
+                     (unsigned)safe.brakings, (unsigned)safe.faults, safe.stop_needed_mm, safe.stop_room_mm, safe.speed_scale);
+            reply(buf);
+        }
         snprintf(buf, sizeof(buf), "TILT: %.0f degrees out of level (a run stops above %.0f; hands are ignored above %.0f)",
                  g_imu.getTiltDeg(), (float)TILT_STOP_DEG, (float)GESTURE_LIFTED_DEG);
         reply(buf);

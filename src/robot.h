@@ -23,6 +23,7 @@
 #include "hardware/ir_sensors/ir_sensors.h"
 #include "hardware/imu/imu.h"
 #include "control/motion_controller/motion_controller.h"
+#include "control/safety/safety.h"
 #include "navigation/navigator/navigator.h"
 
 extern Encoders         g_encoders;
@@ -30,6 +31,7 @@ extern Motors           g_motors;
 extern IRSensors        g_ir_sensors;
 extern IMU              g_imu;
 extern MotionController g_motion_controller;
+extern SafetySupervisor g_safety;           // Updated by the motion task only; others read getStatus()
 extern Navigator*       g_navigator;
 
 // Motion commands travelling from Core 0 to Core 1

@@ -39,6 +39,10 @@ public:
     // Actively brakes both motors
     void brake();
 
+    // Held by the safety supervisor: while set, every effort asked for is answered with the brake
+    void setInhibited(bool inhibited) { inhibited_ = inhibited; }
+    bool isInhibited() const { return inhibited_; }
+
     // Freewheel / coast both motors (0 duty)
     void coast();
 
@@ -59,6 +63,7 @@ public:
     float getSupplyVolts() const { return supply_volts_; }
 
 private:
+    bool inhibited_ = false;
     // (Re)applies all Motoron settings; returns true if the driver answered and is ready to drive
     bool configureMotoron();
 

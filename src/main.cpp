@@ -44,6 +44,7 @@ Motors           g_motors;
 IRSensors        g_ir_sensors;
 IMU              g_imu;
 MotionController g_motion_controller(g_encoders, g_motors, g_ir_sensors, g_imu);
+SafetySupervisor g_safety;
 Navigator*       g_navigator        = nullptr;
 QueueHandle_t    g_motion_cmd_queue = nullptr;
 
@@ -280,13 +281,46 @@ void motionControlTask(void* pvParameters) {
             xQueueReset(g_motion_cmd_queue);
             g_motion_controller.emergencyStop();
             was_busy = false;
+        } else if (g_motors.isInhibited()) {
+            // The safety supervisor is holding the robot: nothing new is taken up
+            xQueueReset(g_motion_cmd_queue);
         } else if (xQueueReceive(g_motion_cmd_queue, &current_cmd, 0) == pdTRUE) {
+#if ENABLE_SAFETY_SUPERVISOR
+            g_safety.limitCommand(current_cmd); // In CAUTION a straight starts with a lower top speed
+#endif
             g_motion_controller.executeCommand(current_cmd);
             was_busy = true;
         }
 
         // 4. Update Motion PID + Wall Centering
         g_motion_controller.update(CONTROL_DT_S);
+
+#if ENABLE_SAFETY_SUPERVISOR
+        // 4b. Safety supervisor: sees this tick's measurements after the controller has acted, and
+        // may end the move and hold the motors braked. It only ever takes motion away.
+        {
+            static bool controller_stop_seen = false;
+            const IRReadings ir_now = g_ir_sensors.getReadings();
+            SafetySupervisor::Inputs in = {};
+            in.speed_mm_s = enc.linear_speed_mm_s;
+            in.front_gap_known = g_ir_sensors.getFrontGapMm(in.front_gap_mm);
+            in.front_left = ir_now.front_left;
+            in.front_right = ir_now.front_right;
+            in.front_wall_level = g_ir_sensors.isFrontLevelMeasured() ? g_ir_sensors.getThresholdFront() : 0;
+            in.heading_sensor_ok = g_imu.isHardwareConnected() && !g_imu.isUsingFallback();
+            in.motor_driver_ok = g_motors.isConnected();
+            in.supply_volts = g_motors.getSupplyVolts();
+            in.move_active = g_motion_controller.isMoveActive();
+            const bool controller_stop = g_motion_controller.safetyStopPending();
+            in.controller_stopped = controller_stop && !controller_stop_seen; // (only the moment it trips)
+            controller_stop_seen = controller_stop;
+
+            const SafetySupervisor::Outputs allowed = g_safety.update(in, CONTROL_DT_S);
+            if (allowed.brake_now) g_motion_controller.safetyStop();
+            g_motors.setInhibited(allowed.inhibit);
+            if (allowed.inhibit) g_motors.brake();
+        }
+#endif
 
         // 5. Signal movement completion: wakes the navigation task at once, with this tick's readings
         if (was_busy && g_motion_controller.isCommandFinished()) {
@@ -468,6 +502,19 @@ void operatorTask(void* pvParameters) {
                           (unsigned long)g_imu.getBadReadCount(), (unsigned int)g_motion_controller.getLateHandovers());
         }
 
+        // Say every change of the safety supervisor's state, with the numbers behind it
+        {
+            static uint16_t safety_changes_said = 0;
+            const SafetySupervisor::Status safe = g_safety.getStatus();
+            if (safe.changes != safety_changes_said) {
+                safety_changes_said = safe.changes;
+                Serial.printf("[SAFE] %s: %s | speed %.0f mm/s, needs %.0f mm to stop, has %.0f mm (-1 = front distance not known) | brakings %u, faults %u\n",
+                              SafetySupervisor::stateName(safe.state), SafetySupervisor::reasonText(safe.reason),
+                              safe.speed_mm_s, safe.stop_needed_mm, safe.stop_room_mm,
+                              (unsigned)safe.brakings, (unsigned)safe.faults);
+            }
+        }
+
         // Say what the robot is doing whenever that changes
         if (g_navigator->getState() != last_state) {
             last_state = g_navigator->getState();
@@ -563,6 +610,14 @@ void telemetryTask(void* pvParameters) {
                           snap.ir.wall_left ? 'L' : '.',
                           snap.ir.wall_front ? 'F' : '.',
                           snap.ir.wall_right ? 'R' : '.');
+            // Its companion for the tuning app (tools/pid_studio): what the safety supervisor sees,
+            // each wheel's speed, the turn rate and the tilt. Keep the two in step with the app's parser.
+            const SafetySupervisor::Status safe = g_safety.getStatus();
+            Serial.printf("[SAF] %s | reason %d | v %.0f | need %.0f | room %.0f | scale %.2f | wl %.0f | wr %.0f | gz %.0f | tilt %.0f | supply %.1f\n",
+                          SafetySupervisor::stateName(safe.state), (int)safe.reason, safe.speed_mm_s,
+                          safe.stop_needed_mm, safe.stop_room_mm, safe.speed_scale,
+                          snap.encoders.left_speed_mm_s, snap.encoders.right_speed_mm_s,
+                          snap.imu.gyro_z_deg_s, g_imu.getTiltDeg(), g_motors.getSupplyVolts());
         }
     }
 }

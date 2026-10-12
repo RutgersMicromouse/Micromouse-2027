@@ -982,13 +982,16 @@ function handleRobotText(text) {
   while ((newline = robotTextBuffer.indexOf("\n")) >= 0) {
     const line = robotTextBuffer.slice(0, newline);
     robotTextBuffer = robotTextBuffer.slice(newline + 1);
+    const dataLine = Studio.line(line); // The tuning studio (studio.js) reads every line too
     if (line.startsWith("[TEL]")) {
       showSensors(line);
-    } else {
+    } else if (!dataLine) {
       appendLog(line + "\n");
     }
   }
 }
+
+Studio.start(handleRobotText, sendTypedCommand);
 
 // Say how fresh the readings are, so stale numbers are not mistaken for live ones
 setInterval(() => {
