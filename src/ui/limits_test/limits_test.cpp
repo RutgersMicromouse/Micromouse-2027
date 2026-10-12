@@ -190,7 +190,8 @@ void measureBraking() {
 
         // Standing still = the wheels have not moved for a tenth of a second
         float last_mm = now_mm;
-        for (int still = 0; still < 5; ) {
+        const uint32_t braked_at = millis(); // (and never wait for it longer than 3 s, whatever the encoders say)
+        for (int still = 0; still < 5 && millis() - braked_at < 3000; ) {
             vTaskDelay(pdMS_TO_TICKS(20));
             const float mm = wheelsMm();
             still = (fabsf(mm - last_mm) < 0.3f) ? still + 1 : 0;

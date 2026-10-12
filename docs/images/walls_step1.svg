@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 98 120" width="98" height="120" font-family="Segoe UI, Arial, sans-serif">
+<rect width="98" height="120" rx="10" fill="#0f1319"/>
+<rect x="26" y="26" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<line x1="72" y1="26" x2="72" y2="72" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="72" x2="72" y2="72" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="26" x2="26" y2="72" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<circle cx="49" cy="49" r="11" fill="none" stroke="#7fb6ff" stroke-width="2.5"/>
+<line x1="49" y1="49" x2="49" y2="32" stroke="#7fb6ff" stroke-width="2.5" stroke-linecap="round"/>
+<text x="49" y="108" fill="#8f9aaa" font-size="13" text-anchor="middle">Step 1: a dead end</text>
+</svg>

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 190 304" width="190" height="304" font-family="Segoe UI, Arial, sans-serif">
+<rect width="190" height="304" rx="10" fill="#0f1319"/>
+<rect x="26" y="210" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="26" y="164" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="26" y="118" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="26" y="72" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="26" y="26" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="72" y="210" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="72" y="164" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="72" y="118" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="72" y="72" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="72" y="26" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="118" y="210" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="118" y="164" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="118" y="118" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="118" y="72" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<rect x="118" y="26" width="46" height="46" fill="#161c25" stroke="#222a36" stroke-width="1"/>
+<polyline points="49,233 49,187 49,141 49,95 49,49 95,49 95,95 95,141 95,187 95,233 141,233 141,187 141,141" fill="none" stroke="#3ddc84" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>
+<line x1="72" y1="210" x2="72" y2="256" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="256" x2="72" y2="256" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="210" x2="26" y2="256" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="164" x2="72" y2="210" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="164" x2="26" y2="210" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="118" x2="72" y2="164" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="118" x2="26" y2="164" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="72" x2="72" y2="118" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="72" x2="26" y2="118" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="26" x2="72" y2="26" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="26" y1="26" x2="26" y2="72" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="256" x2="118" y2="256" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="210" x2="72" y2="256" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="118" y1="164" x2="118" y2="210" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="164" x2="72" y2="210" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="118" y1="118" x2="118" y2="164" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="118" x2="72" y2="164" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="118" y1="72" x2="118" y2="118" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="72" x2="72" y2="118" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="72" y1="26" x2="118" y2="26" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="118" y1="26" x2="118" y2="72" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="164" y1="210" x2="164" y2="256" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="118" y1="256" x2="164" y2="256" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="164" y1="164" x2="164" y2="210" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="118" y1="164" x2="118" y2="210" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="118" y1="118" x2="164" y2="118" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="164" y1="118" x2="164" y2="164" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<line x1="118" y1="118" x2="118" y2="164" stroke="#e8edf4" stroke-width="5" stroke-linecap="round"/>
+<text x="49" y="238" fill="#ffb454" font-size="15" font-weight="700" text-anchor="middle">S</text>
+<text x="141" y="146" fill="#ffb454" font-size="15" font-weight="700" text-anchor="middle">G</text>
+<text x="95" y="292" fill="#8f9aaa" font-size="13" text-anchor="middle">Step 3: curves</text>
+</svg>
