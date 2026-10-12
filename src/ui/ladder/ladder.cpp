@@ -28,6 +28,7 @@ static const Step kSteps[STEPS] = {
 
 static uint8_t current_ = 0;          // The open step (STEPS = all finished)
 static const uint8_t kTurnPercents[] = LADDER_TURN_PERCENTS;
+static const float kHoldValues[] = LADDER_HOLD_VALUES;
 
 static uint8_t best_[STEPS] = {};     // Fastest clean speed of each step, percent (step 1: of the tuned turn speed)
 static uint8_t trial_ = 0;            // Speed of the run now being driven or judged, percent
@@ -151,6 +152,32 @@ void run(int corridor_cells) {
         // keeps the fastest speed at which every turn was still on target
         uint8_t best = 0;
         float worst = -1.0f;
+
+        // First, at the tuned speed: does a turn stay on the spot? If the middle of the axle
+        // walks, the robot ends each turn a little further off the cell centre. Try stronger
+        // values of t_hold until it stays put, and keep the one that walked least with every
+        // turn still on target. (A value that makes the turns worse ends the search.)
+        g_turn_speed_scale = 1.0f;
+        const float hold_before = g_motion_controller.getTune(MotionController::TUNE_T_HOLD);
+        float hold_best = hold_before, walk_best = 1e9f;
+        for (float hold : kHoldValues) {
+            if (hold < hold_before) continue; // (never weaker than what the team has set)
+            g_motion_controller.setTune(MotionController::TUNE_T_HOLD, hold);
+            worst = TurnTest::run(5);
+            if (worst < 0.0f) break;
+            const float walked = TurnTest::lastWalkedMm();
+            const bool on_target = worst <= LADDER_TURN_TOLERANCE_DEG;
+            Serial.printf("[LADDER] Staying on the spot, t_hold %.3f: a turn walks %.1f mm, turns %s\n", hold, walked, on_target ? "on target" : "NOT on target");
+            if (on_target && walked < walk_best - 0.3f) { walk_best = walked; hold_best = hold; }
+            if (!on_target || walked <= LADDER_WALK_OK_MM) break;
+        }
+        g_motion_controller.setTune(MotionController::TUNE_T_HOLD, hold_best);
+        if (worst < 0.0f) { Serial.println("[LADDER] The turn test did not finish: step 1 stays open."); return; }
+        if (hold_best != hold_before) {
+            g_motion_controller.saveToNVS();
+            Serial.printf("[LADDER] t_hold is now %.3f (it was %.3f): a turn walks %.1f mm. Saved with the rest of the tuning.\n", hold_best, hold_before, walk_best);
+        }
+
         for (uint8_t percent : kTurnPercents) {
             g_turn_speed_scale = (float)percent / 100.0f;
             worst = TurnTest::run(5);

@@ -12,7 +12,9 @@
 // Six steps, in order. A step is only open when the one before it is finished, and a finished
 // step fixes what the robot is allowed to do in every later run:
 //
-//   1 Turns on the spot      the turn test, at the tuned turn speed and then faster (LADDER_TURN_PERCENTS);
+//   1 Turns on the spot      first it finds the t_hold that keeps a turn on the spot (LADDER_HOLD_VALUES) and
+//                            SAVES it with the tuning; then
+//                            the turn test, at the tuned turn speed and then faster (LADDER_TURN_PERCENTS);
 //                            a speed passes if every turn ends within LADDER_TURN_TOLERANCE_DEG, and the
 //                            fastest that passed becomes the speed of every turn on the spot
 //   2 Straights              the limits test in a closed corridor; its best level becomes the speed ceiling

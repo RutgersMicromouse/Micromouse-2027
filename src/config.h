@@ -482,6 +482,8 @@ extern int g_maze_size;                 // Lives in navigation/maze/maze.cpp
 #define IR_STALE_RATIO_LOW           0.5f    // Start-cell side readings under half of the calibrated ones...
 #define IR_STALE_RATIO_HIGH          2.0f    // ...or over twice them: the calibration does not belong to these walls
 
+#define LADDER_HOLD_VALUES           { 0.0f, 0.005f, 0.01f, 0.02f, 0.03f } // Step 1 first tries these for t_hold (staying on the spot in a turn), in order
+#define LADDER_WALK_OK_MM            1.0f    // ...and stops at the first that leaves a turn walking less than this
 #define LADDER_TURN_PERCENTS         { 100, 125, 150, 175, 200, 250 } // Step 1 tries the turns at these shares of the tuned turn speed, in order
 #define LADDER_SEARCH_STEP_PERCENT   15      // "ladder search": each clean search is followed by one this much faster
 #define LADDER_START_PERCENT         20      // Steps 3 to 5: the first speed run is at this share of full speed...

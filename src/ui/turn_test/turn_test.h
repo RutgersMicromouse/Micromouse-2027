@@ -24,4 +24,8 @@ namespace TurnTest {
 // test was stopped or gave up before every turn was done.
 float run(int pairs, bool fast = false);
 
+// From the last run: how far a turn moved the middle of the axle off the spot, on average, in mm
+// (by the wheels: half the sum of their two distances). 0 is right.
+float lastWalkedMm();
+
 } // namespace TurnTest

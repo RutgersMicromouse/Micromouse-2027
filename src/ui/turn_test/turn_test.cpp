@@ -19,6 +19,9 @@ static const uint32_t PAUSE_MS        = 400;   // Rest between turns
 // turn starts from wherever the last one ended, and an error in one shows up with the opposite
 // sign in the next. How far each turn rotated does not depend on where it started.
 static float s_walked_mm = 0.0f; // Sum over the test of how far each turn moved the middle of the axle (by the wheels)
+static float s_walked_mean_mm = 0.0f;
+
+float lastWalkedMm() { return s_walked_mean_mm; }
 
 static bool oneTurn(bool left, bool fast, int number, float& over_deg, float& turned_deg) {
     const float start = g_imu.getHeadingDeg();
@@ -131,6 +134,7 @@ float run(int pairs, bool fast) {
         vTaskDelay(pdMS_TO_TICKS(PAUSE_MS));
     }
 
+    s_walked_mean_mm = (n_left + n_right) ? s_walked_mm / (n_left + n_right) : 0.0f;
     char left_text[80], right_text[80];
     summarise("LEFT", lefts, n_left, left_text, sizeof(left_text));
     summarise("RIGHT", rights, n_right, right_text, sizeof(right_text));
