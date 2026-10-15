@@ -397,53 +397,105 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
         
         bool isCentered = false;
 
-        if ((state.x == 7 || state.y == 8) && (state.x == 7 || state.y == 8)) {
-            isCentered == true;
+        if ((state.x == 7 || state.x == 8) && (state.y == 7 || state.y == 8)) {
+            isCentered = true;
         } else {
             Serial1.print("Left: "); Serial1.print(left()); Serial1.print(" | Front: "); Serial1.print(front()); Serial1.print(" | Right: "); Serial1.println(right());
             
             std::vector<Direction> forks;
 
-            for (int i = 0; i < 4; ++i)
+            if (state.x <= 7 && state.y <= 7 && state.x < state.y)
             {
-                if (i != static_cast<int>(state.heading)) {
-                    
-                }
+                forks.push_back(static_cast<Direction>(1));
+                forks.push_back(static_cast<Direction>(0));
+                forks.push_back(static_cast<Direction>(2));
+                forks.push_back(static_cast<Direction>(3));
+            }
+            else if (state.x <= 7 && state.y <= 7 && state.x >= state.y)
+            {
+                forks.push_back(static_cast<Direction>(0));
+                forks.push_back(static_cast<Direction>(1));
+                forks.push_back(static_cast<Direction>(3));
+                forks.push_back(static_cast<Direction>(2));
+            }
+            else if (state.x > 7 && state.y <= 7 && 16 - state.x < state.y)
+            {
+                forks.push_back(static_cast<Direction>(0));
+                forks.push_back(static_cast<Direction>(3));
+                forks.push_back(static_cast<Direction>(1));
+                forks.push_back(static_cast<Direction>(2));
+            }
+            else if (state.x > 7 && state.y <= 7 && 16 - state.x >= state.y)
+            {
+                forks.push_back(static_cast<Direction>(3));
+                forks.push_back(static_cast<Direction>(0));
+                forks.push_back(static_cast<Direction>(2));
+                forks.push_back(static_cast<Direction>(1));
+            }
+            else if (state.x <= 7 && state.y > 7 && state.x < 16 - state.y)
+            {
+                forks.push_back(static_cast<Direction>(1));
+                forks.push_back(static_cast<Direction>(2));
+                forks.push_back(static_cast<Direction>(0));
+                forks.push_back(static_cast<Direction>(3));
+            }
+            else if (state.x <= 7 && state.y > 7 && state.x >= 16 - state.y)
+            {
+                forks.push_back(static_cast<Direction>(2));
+                forks.push_back(static_cast<Direction>(1));
+                forks.push_back(static_cast<Direction>(3));
+                forks.push_back(static_cast<Direction>(0));
+            }
+            else if (state.x > 7 && state.y > 7 && state.x < state.y)
+            {
+                forks.push_back(static_cast<Direction>(2));
+                forks.push_back(static_cast<Direction>(3));
+                forks.push_back(static_cast<Direction>(1));
+                forks.push_back(static_cast<Direction>(0));
+            }
+            else if (state.x > 7 && state.y > 7 && state.x >= state.y)
+            {
+                forks.push_back(static_cast<Direction>(3));
+                forks.push_back(static_cast<Direction>(2));
+                forks.push_back(static_cast<Direction>(0));
+                forks.push_back(static_cast<Direction>(1));
             }
 
-            // left is 90 degrees CCW
-    // Direction leftDir = static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4);
-    // if (left() > WALL_THRESHOLD_MM) {
-    //     // Serial1.println(static_cast<int>(leftDir));
-    //     exits.push_back(leftDir);
-    // }
-            
-            if (front() > WALL_THRESHOLD_MM) {
-                Serial1.println("Move forward");
-                pidForward(CELL_SIZE_MM, isTof);
-                updatePosition(1);
-                steps++;
-                out_instructions.push_back({InstructionType::FORWARD, 1});
-            } else if (right() > WALL_THRESHOLD_MM) {
-                Serial1.println("Move right");
-                pidRotate(-90);
-                state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 1) % 4);
-                smart_delay(25);
-                pidForward(CELL_SIZE_MM, isTof);
-                updatePosition(1);
-                steps+=2;
-                out_instructions.push_back({InstructionType::ROTATE_RELATIVE, -90});
-                out_instructions.push_back({InstructionType::FORWARD, 1});
-            } else {
-                Serial1.println("Move left");
-                pidRotate(90);
-                state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4);
-                smart_delay(25);
-                pidForward(CELL_SIZE_MM, isTof);
-                updatePosition(1);
-                steps+=2;
-                out_instructions.push_back({InstructionType::ROTATE_RELATIVE, 90});
-                out_instructions.push_back({InstructionType::FORWARD, 1});
+
+            for (int i = 0; i < 4; ++i)
+            {
+                if (forks[i] == state.heading && front() > WALL_THRESHOLD_MM)
+                {
+                    Serial1.println("Move forward");
+                    pidForward(CELL_SIZE_MM, isTof);
+                    updatePosition(1);
+                    steps++;
+                    out_instructions.push_back({InstructionType::FORWARD, 1});
+                }
+                else if (forks[i] == static_cast<Direction>((static_cast<int>(state.heading) + 1) % 4)  && right() > WALL_THRESHOLD_MM)
+                {
+                    Serial1.println("Move right");
+                    pidRotate(-90);
+                    state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 1) % 4);
+                    smart_delay(25);
+                    pidForward(CELL_SIZE_MM, isTof);
+                    updatePosition(1);
+                    steps+=2;
+                    out_instructions.push_back({InstructionType::ROTATE_RELATIVE, -90});
+                    out_instructions.push_back({InstructionType::FORWARD, 1});
+                }
+                else if(forks[i] == static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4)  && left() > WALL_THRESHOLD_MM)
+                {
+                    Serial1.println("Move left");
+                    pidRotate(90);
+                    state.heading = static_cast<Direction>((static_cast<int>(state.heading) + 3) % 4);
+                    smart_delay(25);
+                    pidForward(CELL_SIZE_MM, isTof);
+                    updatePosition(1);
+                    steps+=2;
+                    out_instructions.push_back({InstructionType::ROTATE_RELATIVE, 90});
+                    out_instructions.push_back({InstructionType::FORWARD, 1});
+                }
             }
         }
 
@@ -474,6 +526,12 @@ int Explorer::traverseCorridor(Direction dir, std::vector<Instruction>& out_inst
         // check if we've reached a junction (more than one exit)
         Serial1.print("Left: "); Serial1.print(left()); Serial1.print("Front: "); Serial1.print(front()); Serial1.print("Right: "); Serial1.println(right()); 
         bool isDeadEnd = exits.empty();
+        if (isDeadEnd) {
+            pidRotate(180);
+            pidReverse(100);
+            pidForward(60);
+            pidRotate(180);
+        }
         Serial1.print("Exit Sizes: ");
         Serial1.println(exits.size());
         bool isJunction = exits.size() > 1;
