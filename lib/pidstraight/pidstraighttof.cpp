@@ -7,7 +7,7 @@ namespace {
     double max_speed = 100;
 
     // PID for distance
-    double Kp_dist  = 6.0;
+    double Kp_dist  = 2.0;
     double Ki_dist  = 0;
     double Kd_dist  = 0;
 
@@ -18,8 +18,8 @@ namespace {
     double Kd_angle = 0.4;
 
     // PID for lateral correction
-    double Kp_lat = 2.00;
-    double Kd_lat = 0.4;
+    double Kp_lat = 0.10;
+    double Kd_lat = 0.02;
 
     double lat_error_old = 0;
 

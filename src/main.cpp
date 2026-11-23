@@ -150,12 +150,12 @@ void setup() {
                 return;
             } else if (handState == 2) {
                 explorer.isTof = true;
-                pidForward(90, true);
+                pidForward(50, true);
                 delay(2000);
                 Serial1.println("Tof Mode Selected");
 
             } else if (handState == 1) {
-                pidForward(90);
+                pidForward(50);
                 Serial1.println("Encoder Mode Selected");
             }
             break;
